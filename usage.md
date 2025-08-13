@@ -136,7 +136,7 @@ If the mapping failed due to failure to partition deep circuits (which often sho
 ## Simulate the Design
 Run the following. Replace `NUM_BLOCKS` with twice the number of physical streaming multiprocessors (SMs) of your GPU. If ports in your `input.vcd` are not in top-level, add a `--input-vcd-scope` to specify it.
 ``` sh
-cargo run -r --features cuda --bin cuda_test -- path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS
+cargo run -r --features cuda --bin cuda_test -- path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input_vcd_scope input/vcd/scope --output_vcd_scope desired/output/scope
 ```
 
 The simulated output ports value will be stored in `output.vcd`.
