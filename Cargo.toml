@@ -28,6 +28,19 @@ ucc = { version = "0.2.5", path = "eda-infra-rs/ucc" }
 
 [features]
 cuda = ["ulib/cuda"]
+metal = ["ulib/metal", "dep:metal", "dep:objc", "dep:block"]
+
+[dependencies.metal]
+version = "0.29"
+optional = true
+
+[dependencies.objc]
+version = "0.2"
+optional = true
+
+[dependencies.block]
+version = "0.1"
+optional = true
 
 [[bin]]
 name = "cuda_test"
@@ -36,3 +49,7 @@ required-features = ["cuda"]
 [[bin]]
 name = "cuda_dummy_test"
 required-features = ["cuda"]
+
+[[bin]]
+name = "metal_test"
+required-features = ["metal"]
