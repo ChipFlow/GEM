@@ -298,4 +298,153 @@ mod tests {
         assert_eq!(buf.len(), 0);
         assert!(!buf.had_overflow());
     }
+
+    // Helper to manually add an event to the buffer (simulates GPU write)
+    fn add_event(buf: &mut EventBuffer, event_type: EventType, cycle: u32) {
+        let idx = buf.count.fetch_add(1, Ordering::AcqRel) as usize;
+        if idx < MAX_EVENTS {
+            buf.events[idx].event_type = event_type as u32;
+            buf.events[idx].cycle = cycle;
+            buf.events[idx].message_id = 0;
+        }
+    }
+
+    #[test]
+    fn test_process_events_empty() {
+        let buf = EventBuffer::new();
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(stats.stop_count, 0);
+        assert_eq!(stats.assertion_failures, 0);
+    }
+
+    #[test]
+    fn test_process_events_stop() {
+        let mut buf = EventBuffer::new();
+        add_event(&mut buf, EventType::Stop, 42);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Pause);
+        assert_eq!(stats.stop_count, 1);
+    }
+
+    #[test]
+    fn test_process_events_finish() {
+        let mut buf = EventBuffer::new();
+        add_event(&mut buf, EventType::Finish, 100);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Terminate);
+    }
+
+    #[test]
+    fn test_process_events_assert_log() {
+        let mut buf = EventBuffer::new();
+        add_event(&mut buf, EventType::AssertFail, 50);
+        add_event(&mut buf, EventType::AssertFail, 51);
+
+        let config = AssertConfig {
+            on_failure: AssertAction::Log,
+            max_failures: None,
+        };
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(stats.assertion_failures, 2);
+    }
+
+    #[test]
+    fn test_process_events_assert_terminate() {
+        let mut buf = EventBuffer::new();
+        add_event(&mut buf, EventType::AssertFail, 50);
+
+        let config = AssertConfig {
+            on_failure: AssertAction::Terminate,
+            max_failures: None,
+        };
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Terminate);
+        assert_eq!(stats.assertion_failures, 1);
+    }
+
+    #[test]
+    fn test_process_events_max_failures() {
+        let mut buf = EventBuffer::new();
+        add_event(&mut buf, EventType::AssertFail, 1);
+        add_event(&mut buf, EventType::AssertFail, 2);
+        add_event(&mut buf, EventType::AssertFail, 3);
+
+        let config = AssertConfig {
+            on_failure: AssertAction::Log,
+            max_failures: Some(2),
+        };
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        // Should terminate after 2 failures
+        assert_eq!(control, SimControl::Terminate);
+        assert_eq!(stats.assertion_failures, 2);
+    }
+
+    #[test]
+    fn test_process_events_display_callback() {
+        let mut buf = EventBuffer::new();
+        // Manually set up a display event with message_id
+        let idx = buf.count.fetch_add(1, Ordering::AcqRel) as usize;
+        buf.events[idx].event_type = EventType::Display as u32;
+        buf.events[idx].cycle = 25;
+        buf.events[idx].message_id = 42;
+        buf.events[idx].data = [1, 2, 3, 4];
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+        let mut captured_msg_id = 0u32;
+        let mut captured_cycle = 0u32;
+
+        let control = process_events(&buf, &config, &mut stats, |msg_id, cycle, _data| {
+            captured_msg_id = msg_id;
+            captured_cycle = cycle;
+        });
+
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(captured_msg_id, 42);
+        assert_eq!(captured_cycle, 25);
+    }
+
+    #[test]
+    fn test_finish_takes_priority() {
+        let mut buf = EventBuffer::new();
+        // Stop comes first, then Finish
+        add_event(&mut buf, EventType::Stop, 10);
+        add_event(&mut buf, EventType::Finish, 11);
+        add_event(&mut buf, EventType::Stop, 12); // This shouldn't be processed
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        // Finish should cause immediate termination
+        assert_eq!(control, SimControl::Terminate);
+        // Only one stop was processed before finish
+        assert_eq!(stats.stop_count, 1);
+    }
 }
