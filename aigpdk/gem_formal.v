@@ -73,3 +73,55 @@ module _techmap_assume (A, EN);
         .A(A)
     );
 endmodule
+
+// Convert $print cells to GEM_DISPLAY
+// $print has: TRG (trigger), EN (enable), ARGS (format arguments)
+// FORMAT parameter contains the format string
+// GEM_DISPLAY stores the format in an attribute and passes ARGS as MSG_ID (truncated to 32 bits)
+// The full ARGS and FORMAT are reconstructed from the original $print cell
+//
+// Note: For full $display support, we need to track:
+// 1. Format string (from FORMAT parameter)
+// 2. Argument signals (from ARGS connection)
+// 3. Argument widths (from ARGS_WIDTH or inferred from FORMAT)
+//
+// The GEM_DISPLAY cell uses MSG_ID to index into a message table built at compile time.
+// For now, we use a simplified approach: MSG_ID[31:0] = first 32 bits of ARGS
+
+(* techmap_celltype = "$print" *)
+module _techmap_print (TRG, EN, ARGS);
+    parameter TRG_WIDTH = 1;
+    parameter TRG_ENABLE = 1;
+    parameter TRG_POLARITY = 1'b1;
+    parameter PRIORITY = 0;
+    parameter ARGS_WIDTH = 32;
+    parameter FORMAT = "";
+
+    input [TRG_WIDTH-1:0] TRG;
+    input EN;
+    input [ARGS_WIDTH-1:0] ARGS;
+
+    // For GEM_DISPLAY, we pass the first 32 bits of ARGS as MSG_ID
+    // The actual formatting is done on the CPU side using the message table
+    wire [31:0] msg_id;
+
+    generate
+        if (TRG_ENABLE && TRG_WIDTH == 1) begin
+            if (ARGS_WIDTH >= 32) begin
+                assign msg_id = ARGS[31:0];
+            end else begin
+                assign msg_id = {{(32-ARGS_WIDTH){1'b0}}, ARGS};
+            end
+
+            // Create GEM_DISPLAY with FORMAT preserved as attribute
+            (* gem_format = FORMAT *)
+            (* gem_args_width = ARGS_WIDTH *)
+            GEM_DISPLAY _TECHMAP_REPLACE_ (
+                .CLK(TRG[0]),
+                .EN(EN),
+                .MSG_ID(msg_id)
+            );
+        end
+        // Non-triggered $print cells are not supported yet
+    endgenerate
+endmodule
