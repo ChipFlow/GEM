@@ -1,0 +1,12 @@
+# Synthesis outputs
+*_synth.gv
+*_synth_slang.gv
+*.tcl
+
+# VCD outputs
+gem_output*.vcd
+*.vcd
+
+# Compiled outputs
+*.vvp
+*.gemparts
