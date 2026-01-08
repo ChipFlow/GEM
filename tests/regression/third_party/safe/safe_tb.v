@@ -97,26 +97,37 @@ module safe_tb;
     input [15:0] password;
     begin
       digit_count = 0;
-      din_valid = 1;
+      din_valid = 0;
+      din = 4'h0;
 
-      // Send 4 digits
+      // Wait for a clock edge, then set up signals
+      @(posedge clk);
+      #1;  // Small delay after clock edge
+
+      // Now set up first digit
       din = password[15:12];
+      din_valid = 1;
       $display("  Digit 0: %h", password[15:12]);
       @(posedge clk);
+      #1;
 
       din = password[11:8];
       $display("  Digit 1: %h", password[11:8]);
       @(posedge clk);
+      #1;
 
       din = password[7:4];
       $display("  Digit 2: %h", password[7:4]);
       @(posedge clk);
+      #1;
 
       din = password[3:0];
       $display("  Digit 3: %h", password[3:0]);
       @(posedge clk);
+      #1;
 
       din_valid = 0;
+      din = 4'h0;
       @(posedge clk);
     end
   endtask
