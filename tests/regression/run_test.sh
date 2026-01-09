@@ -24,6 +24,11 @@ TEST_NAME=$(basename "$TEST_FILE" .v)
 TEST_DIR=$(dirname "$TEST_FILE")
 WORK_DIR="$TEST_DIR/${TEST_NAME}_work"
 
+# Get absolute path to GEM root (where aigpdk/ lives)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GEM_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+AIGPDK_DIR="$GEM_ROOT/aigpdk"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -74,8 +79,9 @@ else
 fi
 
 cat > synth.tcl <<EOF
-# Read Verilog with slang frontend (supports $display in always blocks)
-read_verilog -sv ../${TEST_NAME}.v
+# Read Verilog with SystemVerilog support and FORMAL/SYNTHESIS defines
+# -DFORMAL enables assertion code, -DSYNTHESIS enables synthesis-compatible code
+read_verilog -sv -DFORMAL -DSYNTHESIS ../${TEST_NAME}.v
 
 # Hierarchy
 hierarchy -check -auto-top
@@ -96,14 +102,14 @@ opt_dff
 opt_clean
 
 # Map formal cells to GEM cells
-techmap -map ../../../../aigpdk/gem_formal.v
+techmap -map ${AIGPDK_DIR}/gem_formal.v
 
 # Write output with GEM cells (before ABC which may fail in yowasp)
 write_verilog ${TEST_NAME}_gem.gv
 write_json ${TEST_NAME}_gem.json
 
 # Technology mapping to AIGPDK (optional, may fail in yowasp)
-dfflibmap -liberty ../../../../aigpdk/aigpdk_nomem.lib
+dfflibmap -liberty ${AIGPDK_DIR}/aigpdk_nomem.lib
 opt_clean -purge
 
 # Try ABC, but don't fail if it doesn't work
@@ -166,8 +172,8 @@ echo "  - Synthesized Verilog: ${TEST_NAME}_synth.gv"
 echo "  - Synthesized JSON: ${TEST_NAME}_synth.json"
 echo ""
 
-# Check for test completion
-if grep -q "PASS\|SUCCESS\|test complete" iverilog_output.txt; then
+# Check for test completion (case insensitive)
+if grep -qi "PASS\|SUCCESS\|test.* complete" iverilog_output.txt; then
     echo -e "${GREEN}✓✓✓ TEST PASSED ✓✓✓${NC}"
     exit 0
 elif grep -q "FAIL\|ERROR" iverilog_output.txt; then
