@@ -2,6 +2,47 @@
 
 This guide helps debug VCD input problems where GEM simulations produce incorrect results or warn about missing signals.
 
+## VCD Scope Auto-Detection (Recommended)
+
+**NEW**: GEM now automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify `--input-vcd-scope` manually.
+
+### How Auto-Detection Works
+
+When you run `metal_test` or `cuda_test` without specifying `--input-vcd-scope`, GEM:
+
+1. Extracts the list of required input ports from your synthesized design
+2. Searches the VCD file for scopes containing all required ports
+3. Tries common DUT scope names first: `dut`, `uut`, `DUT`, `UUT`, or your module name
+4. Falls back to any scope that contains all required ports
+5. Logs which scope was selected for transparency
+
+### Example Output
+
+```
+INFO No VCD scope specified - attempting auto-detection
+DEBUG Searching for VCD scope containing 4 input ports
+DEBUG Required ports: {"din_valid", "clk", "reset", "din"}
+INFO Auto-detected VCD scope: safe_tb/uut (matched common pattern 'uut')
+```
+
+### Manual Override
+
+If auto-detection fails or selects the wrong scope, use `--input-vcd-scope` to specify manually:
+
+```bash
+# Slash-separated path to the DUT scope
+metal_test design.gv design.gemparts input.vcd output.vcd 8 \
+    --input-vcd-scope "testbench/dut"
+
+# For nested hierarchies
+metal_test design.gv design.gemparts input.vcd output.vcd 8 \
+    --input-vcd-scope "top_tb/subsystem/my_module"
+```
+
+**Note**: Use slash separators (`/`), not dots (`.`).
+
+---
+
 ## Symptom: Missing Primary Input Warnings
 
 ```

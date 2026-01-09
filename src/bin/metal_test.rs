@@ -159,6 +159,107 @@ fn find_top_scope<'i>(
     None
 }
 
+/// Recursively collect all scope paths from VCD header
+fn collect_all_scopes<'a>(items: &'a [ScopeItem], prefix: &str, scopes: &mut Vec<(String, &'a Scope)>) {
+    for item in items {
+        if let ScopeItem::Scope(scope) = item {
+            let scope_path = if prefix.is_empty() {
+                scope.identifier.to_string()
+            } else {
+                format!("{}/{}", prefix, scope.identifier)
+            };
+            scopes.push((scope_path.clone(), scope));
+            collect_all_scopes(&scope.children[..], &scope_path, scopes);
+        }
+    }
+}
+
+/// Get required input port names from netlistdb
+fn get_required_input_ports(netlistdb: &NetlistDB) -> HashSet<String> {
+    let mut ports = HashSet::new();
+    for i in netlistdb.cell2pin.iter_set(0) {
+        if netlistdb.pindirect[i] != Direction::I {
+            // pinnames[i] is (HierName, CompactString, Option<isize>)
+            // Field 1 is the pin name
+            let port_name = netlistdb.pinnames[i].1.to_string();
+            ports.insert(port_name);
+        }
+    }
+    ports
+}
+
+/// Check if a VCD scope contains all required ports
+fn check_scope_contains_ports(scope: &Scope, required_ports: &HashSet<String>) -> bool {
+    let mut found_ports = HashSet::new();
+    for item in &scope.children {
+        if let ScopeItem::Var(var) = item {
+            found_ports.insert(var.reference.to_string());
+        }
+    }
+
+    // Check if all required ports are present
+    for port in required_ports {
+        if !found_ports.contains(port) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Auto-detect VCD scope containing the DUT
+fn auto_detect_vcd_scope<'i>(
+    items: &'i [ScopeItem],
+    netlistdb: &NetlistDB,
+    top_module_name: &str,
+) -> Option<(String, &'i Scope)> {
+    // Get required input ports
+    let required_ports = get_required_input_ports(netlistdb);
+
+    if required_ports.is_empty() {
+        clilog::warn!("No input ports found in design - cannot auto-detect VCD scope");
+        return None;
+    }
+
+    // Collect all scopes
+    let mut all_scopes = Vec::new();
+    collect_all_scopes(items, "", &mut all_scopes);
+
+    if all_scopes.is_empty() {
+        clilog::warn!("No scopes found in VCD file");
+        return None;
+    }
+
+    clilog::debug!("Searching for VCD scope containing {} input ports", required_ports.len());
+    clilog::debug!("Required ports: {:?}", required_ports);
+
+    // Try common DUT scope names first
+    let common_names = ["dut", "uut", "DUT", "UUT", top_module_name];
+    for name in &common_names {
+        for (path, scope) in &all_scopes {
+            if path.ends_with(name) && check_scope_contains_ports(scope, &required_ports) {
+                clilog::info!("Auto-detected VCD scope: {} (matched common pattern '{}')", path, name);
+                return Some((path.clone(), *scope));
+            }
+        }
+    }
+
+    // Try any scope that contains all required ports
+    for (path, scope) in &all_scopes {
+        if check_scope_contains_ports(scope, &required_ports) {
+            clilog::info!("Auto-detected VCD scope: {} (contains all required ports)", path);
+            return Some((path.clone(), *scope));
+        }
+    }
+
+    // No suitable scope found - provide helpful error message
+    clilog::error!("Could not auto-detect VCD scope. Available scopes:");
+    for (path, _) in &all_scopes {
+        clilog::error!("  - {}", path);
+    }
+    clilog::error!("Please specify scope manually with --input-vcd-scope");
+    None
+}
+
 /// CPU prototype partition executor for script version 1.
 /// Used for validation against Metal results.
 fn simulate_block_v1(
@@ -737,10 +838,24 @@ fn main() {
     vcd_file.seek(SeekFrom::Start(0)).unwrap();
     let mut vcdflow = FastFlow::new(vcd_file, 65536);
 
-    let top_scope = find_top_scope(
-        &header.items[..],
-        args.input_vcd_scope.as_deref().unwrap_or("")
-    ).expect("Specified top scope not found in VCD.");
+    // Find or auto-detect VCD scope
+    let top_scope = if let Some(scope_path) = &args.input_vcd_scope {
+        // User specified scope - use it directly
+        clilog::info!("Using user-specified VCD scope: {}", scope_path);
+        find_top_scope(&header.items[..], scope_path)
+            .expect("Specified top scope not found in VCD.")
+    } else {
+        // Auto-detect scope
+        let top_module_name = args.top_module.as_deref().unwrap_or("top");
+        clilog::info!("No VCD scope specified - attempting auto-detection");
+
+        match auto_detect_vcd_scope(&header.items[..], &netlistdb, top_module_name) {
+            Some((_path, scope)) => scope,
+            None => {
+                panic!("Failed to auto-detect VCD scope. Please specify --input-vcd-scope manually.");
+            }
+        }
+    };
 
     let mut vcd2inp = HashMap::new();
     let mut inp_port_given = HashSet::new();
