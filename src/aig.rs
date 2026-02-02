@@ -4,9 +4,9 @@
 //!
 //! An AIG is derived from netlistdb synthesized in AIGPDK.
 
-use netlistdb::{NetlistDB, GeneralPinName, Direction};
-use indexmap::{IndexMap, IndexSet};
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
+use indexmap::{IndexMap, IndexSet};
+use netlistdb::{Direction, GeneralPinName, NetlistDB};
 
 /// A DFF.
 #[derive(Debug, Default, Clone)]
@@ -103,14 +103,16 @@ impl EndpointGroup<'_> {
     /// The enumerated inputs may have duplicates.
     pub fn for_each_input(self, mut f_nz: impl FnMut(usize)) {
         let mut f = |i| {
-            if i >= 1 { f_nz(i); }
+            if i >= 1 {
+                f_nz(i);
+            }
         };
         match self {
             Self::PrimaryOutput(idx) => f(idx >> 1),
             Self::DFF(dff) => {
                 f(dff.en_iv >> 1);
                 f(dff.d_iv >> 1);
-            },
+            }
             Self::RAMBlock(ram) => {
                 f(ram.port_r_en_iv >> 1);
                 for i in 0..13 {
@@ -121,16 +123,16 @@ impl EndpointGroup<'_> {
                     f(ram.port_w_wr_en_iv[i] >> 1);
                     f(ram.port_w_wr_data_iv[i] >> 1);
                 }
-            },
+            }
             Self::SimControl(ctrl) => {
                 f(ctrl.condition_iv >> 1);
-            },
+            }
             Self::Display(disp) => {
                 f(disp.enable_iv >> 1);
                 for &arg_iv in &disp.args_iv {
                     f(arg_iv >> 1);
                 }
-            },
+            }
             Self::StagedIOPin(idx) => f(idx),
         }
     }
@@ -155,11 +157,11 @@ pub enum DriverType {
     /// Driven by a 13-bit by 32-bit RAM block (with its index)
     SRAM(usize),
     /// Tie0: tied to zero. Only the 0-th aig pin is allowed to have this.
-    Tie0
+    Tie0,
 }
 
 /// An AIG associated with a netlistdb.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AIG {
     /// The number of AIG pins.
     ///
@@ -201,6 +203,60 @@ pub struct AIG {
     pub fanouts_start: Vec<usize>,
     /// The fanout CSR array.
     pub fanouts: Vec<usize>,
+
+    // === Timing Analysis Fields ===
+
+    /// Arrival times for each AIG pin: (min_ps, max_ps).
+    /// Computed during STA traversal. Index 0 is unused (Tie0 has arrival 0).
+    /// Empty until `compute_timing()` is called.
+    pub arrival_times: Vec<(u64, u64)>,
+
+    /// Gate delays for each AIG pin: (rise_ps, fall_ps).
+    /// Loaded from Liberty library. Used during timing propagation.
+    pub gate_delays: Vec<(u64, u64)>,
+
+    /// Setup slack for each DFF (indexed by position in `dffs`).
+    /// Negative values indicate timing violations.
+    /// Computed as: clock_arrival - data_arrival - setup_time
+    pub setup_slacks: Vec<i64>,
+
+    /// Hold slack for each DFF (indexed by position in `dffs`).
+    /// Negative values indicate timing violations.
+    /// Computed as: data_arrival - clock_arrival - hold_time
+    pub hold_slacks: Vec<i64>,
+
+    /// DFF timing constraints loaded from Liberty.
+    pub dff_timing: Option<crate::liberty_parser::DFFTiming>,
+
+    /// Clock period in picoseconds (for STA calculations).
+    /// Default is 1000ps (1ns) if not specified.
+    pub clock_period_ps: u64,
+}
+
+impl Default for AIG {
+    fn default() -> Self {
+        Self {
+            num_aigpins: 0,
+            pin2aigpin_iv: Vec::new(),
+            clock_pin2aigpins: IndexMap::new(),
+            drivers: Vec::new(),
+            and_gate_cache: IndexMap::new(),
+            primary_outputs: IndexSet::new(),
+            dffs: IndexMap::new(),
+            srams: IndexMap::new(),
+            simcontrols: IndexMap::new(),
+            displays: IndexMap::new(),
+            fanouts_start: Vec::new(),
+            fanouts: Vec::new(),
+            // Timing fields
+            arrival_times: Vec::new(),
+            gate_delays: Vec::new(),
+            setup_slacks: Vec::new(),
+            hold_slacks: Vec::new(),
+            dff_timing: None,
+            clock_period_ps: 1000, // Default 1ns clock period
+        }
+    }
 }
 
 impl AIG {
@@ -214,13 +270,13 @@ impl AIG {
         assert_ne!(a | 1, usize::MAX);
         assert_ne!(b | 1, usize::MAX);
         if a == 0 || b == 0 {
-            return 0
+            return 0;
         }
         if a == 1 {
-            return b
+            return b;
         }
         if b == 1 {
-            return a
+            return a;
         }
         let (a, b) = if a < b { (a, b) } else { (b, a) };
         if let Some(o) = self.and_gate_cache.get(&(a, b)) {
@@ -240,7 +296,8 @@ impl AIG {
     fn trace_clock_pin(
         &mut self,
         netlistdb: &NetlistDB,
-        pinid: usize, is_negedge: bool,
+        pinid: usize,
+        is_negedge: bool,
         // should we ignore cklnqd in this tracing.
         // if set to true, we will treat cklnqd as a simple buffer.
         // otherwise, we assert that cklnqd/en is already built in
@@ -250,43 +307,43 @@ impl AIG {
         if netlistdb.pindirect[pinid] == Direction::I {
             let netid = netlistdb.pin2net[pinid];
             if Some(netid) == netlistdb.net_zero || Some(netid) == netlistdb.net_one {
-                return Ok(0)
+                return Ok(0);
             }
-            let root = netlistdb.net2pin.items[
-                netlistdb.net2pin.start[netid]
-            ];
-            return self.trace_clock_pin(
-                netlistdb, root, is_negedge,
-                ignore_cklnqd
-            )
+            let root = netlistdb.net2pin.items[netlistdb.net2pin.start[netid]];
+            return self.trace_clock_pin(netlistdb, root, is_negedge, ignore_cklnqd);
         }
         let cellid = netlistdb.pin2cell[pinid];
         if cellid == 0 {
-            let clkentry = self.clock_pin2aigpins.entry(pinid)
+            let clkentry = self
+                .clock_pin2aigpins
+                .entry(pinid)
                 .or_insert((usize::MAX, usize::MAX));
             let clksignal = match is_negedge {
                 false => clkentry.0,
-                true => clkentry.1
+                true => clkentry.1,
             };
             if clksignal != usize::MAX {
-                return Ok(clksignal << 1)
+                return Ok(clksignal << 1);
             }
             let aigpin = self.add_aigpin(DriverType::InputClockFlag(pinid, is_negedge as u8));
             let clkentry = self.clock_pin2aigpins.get_mut(&pinid).unwrap();
             let clksignal = match is_negedge {
                 false => &mut clkentry.0,
-                true => &mut clkentry.1
+                true => &mut clkentry.1,
             };
             *clksignal = aigpin;
-            return Ok(aigpin << 1)
+            return Ok(aigpin << 1);
         }
         let mut pin_a = usize::MAX;
         let mut pin_cp = usize::MAX;
         let mut pin_en = usize::MAX;
         let celltype = netlistdb.celltypes[cellid].as_str();
         if !matches!(celltype, "INV" | "BUF" | "CKLNQD") {
-            clilog::error!("cell type {} supported on clock path. expecting only INV, BUF, or CKLNQD", celltype);
-            return Err(pinid)
+            clilog::error!(
+                "cell type {} supported on clock path. expecting only INV, BUF, or CKLNQD",
+                celltype
+            );
+            return Err(pinid);
         }
         for ipin in netlistdb.cell2pin.iter_set(cellid) {
             if netlistdb.pindirect[ipin] == Direction::I {
@@ -296,7 +353,7 @@ impl AIG {
                     "E" => pin_en = ipin,
                     i @ _ => {
                         clilog::error!("input pin {} unexpected for ck element {}", i, celltype);
-                        return Err(ipin)
+                        return Err(ipin);
                     }
                 }
             }
@@ -304,33 +361,24 @@ impl AIG {
         match celltype {
             "INV" => {
                 assert_ne!(pin_a, usize::MAX);
-                self.trace_clock_pin(
-                    netlistdb, pin_a, !is_negedge,
-                    ignore_cklnqd
-                )
-            },
+                self.trace_clock_pin(netlistdb, pin_a, !is_negedge, ignore_cklnqd)
+            }
             "BUF" => {
                 assert_ne!(pin_a, usize::MAX);
-                self.trace_clock_pin(
-                    netlistdb, pin_a, is_negedge,
-                    ignore_cklnqd
-                )
-            },
+                self.trace_clock_pin(netlistdb, pin_a, is_negedge, ignore_cklnqd)
+            }
             "CKLNQD" => {
                 assert_ne!(pin_cp, usize::MAX);
                 assert_ne!(pin_en, usize::MAX);
-                let ck_iv = self.trace_clock_pin(
-                    netlistdb, pin_cp, is_negedge,
-                    ignore_cklnqd
-                )?;
+                let ck_iv = self.trace_clock_pin(netlistdb, pin_cp, is_negedge, ignore_cklnqd)?;
                 if ignore_cklnqd {
-                    return Ok(ck_iv)
+                    return Ok(ck_iv);
                 }
                 let en_iv = self.pin2aigpin_iv[pin_en];
                 assert_ne!(en_iv, usize::MAX, "clken not built");
                 Ok(self.add_and_gate(ck_iv, en_iv))
-            },
-            _ => unreachable!()
+            }
+            _ => unreachable!(),
         }
     }
 
@@ -347,14 +395,16 @@ impl AIG {
         netlistdb: &NetlistDB,
         topo_vis: &mut Vec<bool>,
         topo_instack: &mut Vec<bool>,
-        pinid: usize
+        pinid: usize,
     ) {
         if topo_instack[pinid] {
-            panic!("circuit has a loop around pin {}",
-                   netlistdb.pinnames[pinid].dbg_fmt_pin());
+            panic!(
+                "circuit has a loop around pin {}",
+                netlistdb.pinnames[pinid].dbg_fmt_pin()
+            );
         }
         if topo_vis[pinid] {
-            return
+            return;
         }
         topo_vis[pinid] = true;
         topo_instack[pinid] = true;
@@ -364,31 +414,20 @@ impl AIG {
         if netlistdb.pindirect[pinid] == Direction::I {
             if Some(netid) == netlistdb.net_zero {
                 self.pin2aigpin_iv[pinid] = 0;
-            }
-            else if Some(netid) == netlistdb.net_one {
+            } else if Some(netid) == netlistdb.net_one {
                 self.pin2aigpin_iv[pinid] = 1;
-            }
-            else {
-                let root = netlistdb.net2pin.items[
-                    netlistdb.net2pin.start[netid]
-                ];
-                self.dfs_netlistdb_build_aig(
-                    netlistdb, topo_vis, topo_instack,
-                    root
-                );
+            } else {
+                let root = netlistdb.net2pin.items[netlistdb.net2pin.start[netid]];
+                self.dfs_netlistdb_build_aig(netlistdb, topo_vis, topo_instack, root);
                 self.pin2aigpin_iv[pinid] = self.pin2aigpin_iv[root];
                 if cellid == 0 {
                     self.primary_outputs.insert(self.pin2aigpin_iv[pinid]);
                 }
             }
-        }
-        else if cellid == 0 {
-            let aigpin = self.add_aigpin(
-                DriverType::InputPort(pinid)
-            );
+        } else if cellid == 0 {
+            let aigpin = self.add_aigpin(DriverType::InputPort(pinid));
             self.pin2aigpin_iv[pinid] = aigpin << 1;
-        }
-        else if matches!(celltype, "DFF" | "DFFSR") {
+        } else if matches!(celltype, "DFF" | "DFFSR") {
             let q = self.add_aigpin(DriverType::DFF(cellid));
             let dff = self.dffs.entry(cellid).or_default();
             dff.q = q;
@@ -397,39 +436,35 @@ impl AIG {
             let mut q_out = q << 1;
             for pinid in netlistdb.cell2pin.iter_set(cellid) {
                 if !matches!(netlistdb.pinnames[pinid].1.as_str(), "S" | "R") {
-                    continue
+                    continue;
                 }
-                self.dfs_netlistdb_build_aig(
-                    netlistdb, topo_vis, topo_instack, pinid
-                );
+                self.dfs_netlistdb_build_aig(netlistdb, topo_vis, topo_instack, pinid);
                 let prev = self.pin2aigpin_iv[pinid];
                 match netlistdb.pinnames[pinid].1.as_str() {
                     "S" => ap_s_iv = prev,
                     "R" => ap_r_iv = prev,
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 }
             }
             q_out = self.add_and_gate(q_out ^ 1, ap_s_iv) ^ 1;
             q_out = self.add_and_gate(q_out, ap_r_iv);
             self.pin2aigpin_iv[pinid] = q_out;
-        }
-        else if celltype == "LATCH" {
-            panic!("latches are intentionally UNSUPPORTED by GEM, \
+        } else if celltype == "LATCH" {
+            panic!(
+                "latches are intentionally UNSUPPORTED by GEM, \
                     except in identified gated clocks. \n\
                     you can link a FF&MUX-based LATCH module, \
                     but most likely that is NOT the right solution. \n\
                     check all your assignments inside always@(*) block \
-                    to make sure they cover all scenarios.");
-        }
-        else if celltype == "$__RAMGEM_SYNC_" {
+                    to make sure they cover all scenarios."
+            );
+        } else if celltype == "$__RAMGEM_SYNC_" {
             let o = self.add_aigpin(DriverType::SRAM(cellid));
             self.pin2aigpin_iv[pinid] = o << 1;
-            assert_eq!(netlistdb.pinnames[pinid].1.as_str(),
-                       "PORT_R_RD_DATA");
+            assert_eq!(netlistdb.pinnames[pinid].1.as_str(), "PORT_R_RD_DATA");
             let sram = self.srams.entry(cellid).or_default();
             sram.port_r_rd_data[netlistdb.pinnames[pinid].2.unwrap() as usize] = o;
-        }
-        else if celltype == "CKLNQD" {
+        } else if celltype == "CKLNQD" {
             let mut prev_cp = usize::MAX;
             let mut prev_en = usize::MAX;
             for pinid in netlistdb.cell2pin.iter_set(cellid) {
@@ -442,27 +477,19 @@ impl AIG {
             assert_ne!(prev_cp, usize::MAX);
             assert_ne!(prev_en, usize::MAX);
             for prev in [prev_cp, prev_en] {
-                self.dfs_netlistdb_build_aig(
-                    netlistdb, topo_vis, topo_instack,
-                    prev
-                );
+                self.dfs_netlistdb_build_aig(netlistdb, topo_vis, topo_instack, prev);
             }
             // do not define pin2aigpin_iv[pinid] which is CKLNQD/Q and unused in logic.
-        }
-        else if celltype == "GEM_ASSERT" || celltype == "GEM_DISPLAY" {
+        } else if celltype == "GEM_ASSERT" || celltype == "GEM_DISPLAY" {
             // These are side-effect only cells with no outputs
             // Visit all input pins to build their AIG representations
             for input_pinid in netlistdb.cell2pin.iter_set(cellid) {
                 if netlistdb.pindirect[input_pinid] == Direction::I {
-                    self.dfs_netlistdb_build_aig(
-                        netlistdb, topo_vis, topo_instack,
-                        input_pinid
-                    );
+                    self.dfs_netlistdb_build_aig(netlistdb, topo_vis, topo_instack, input_pinid);
                 }
             }
             // No output pin to define
-        }
-        else {
+        } else {
             let mut prev_a = usize::MAX;
             let mut prev_b = usize::MAX;
             for pinid in netlistdb.cell2pin.iter_set(cellid) {
@@ -474,10 +501,7 @@ impl AIG {
             }
             for prev in [prev_a, prev_b] {
                 if prev != usize::MAX {
-                    self.dfs_netlistdb_build_aig(
-                        netlistdb, topo_vis, topo_instack,
-                        prev
-                    );
+                    self.dfs_netlistdb_build_aig(netlistdb, topo_vis, topo_instack, prev);
                 }
             }
             match celltype {
@@ -493,16 +517,16 @@ impl AIG {
                         self.pin2aigpin_iv[prev_b] ^ (iv_b as usize),
                     ) ^ (iv_y as usize);
                     self.pin2aigpin_iv[pinid] = apid;
-                },
+                }
                 "INV" => {
                     assert_ne!(prev_a, usize::MAX);
                     self.pin2aigpin_iv[pinid] = self.pin2aigpin_iv[prev_a] ^ 1;
-                },
+                }
                 "BUF" => {
                     assert_ne!(prev_a, usize::MAX);
                     self.pin2aigpin_iv[pinid] = self.pin2aigpin_iv[prev_a];
-                },
-                _ => unreachable!()
+                }
+                _ => unreachable!(),
             }
         }
         topo_instack[pinid] = false;
@@ -517,26 +541,29 @@ impl AIG {
         };
 
         for cellid in 1..netlistdb.num_cells {
-            if !matches!(netlistdb.celltypes[cellid].as_str(),
-                         "DFF" | "DFFSR" | "$__RAMGEM_SYNC_") {
-                continue
+            if !matches!(
+                netlistdb.celltypes[cellid].as_str(),
+                "DFF" | "DFFSR" | "$__RAMGEM_SYNC_"
+            ) {
+                continue;
             }
             for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                if !matches!(netlistdb.pinnames[pinid].1.as_str(),
-                            "CLK" | "PORT_R_CLK" | "PORT_W_CLK") {
-                    continue
-                }
-                if let Err(pinid) = aig.trace_clock_pin(
-                    netlistdb, pinid, false,
-                    true
+                if !matches!(
+                    netlistdb.pinnames[pinid].1.as_str(),
+                    "CLK" | "PORT_R_CLK" | "PORT_W_CLK"
                 ) {
+                    continue;
+                }
+                if let Err(pinid) = aig.trace_clock_pin(netlistdb, pinid, false, true) {
                     use netlistdb::GeneralHierName;
-                    panic!("Tracing clock pin of cell {} error: \
+                    panic!(
+                        "Tracing clock pin of cell {} error: \
                             there is a multi-input cell driving {} \
                             that clocks this sequential element. \
                             Clock gating need to be manually patched atm.",
-                           netlistdb.cellnames[cellid].dbg_fmt_hier(),
-                           netlistdb.pinnames[pinid].dbg_fmt_pin());
+                        netlistdb.cellnames[cellid].dbg_fmt_hier(),
+                        netlistdb.pinnames[pinid].dbg_fmt_pin()
+                    );
                 }
             }
         }
@@ -547,7 +574,7 @@ impl AIG {
                 match (flagr, flagf) {
                     (_, usize::MAX) => "posedge",
                     (usize::MAX, _) => "negedge",
-                    _ => "posedge & negedge"
+                    _ => "posedge & negedge",
                 }
             );
         }
@@ -556,10 +583,7 @@ impl AIG {
         let mut topo_instack = vec![false; netlistdb.num_pins];
 
         for pinid in 0..netlistdb.num_pins {
-            aig.dfs_netlistdb_build_aig(
-                netlistdb, &mut topo_vis, &mut topo_instack,
-                pinid
-            );
+            aig.dfs_netlistdb_build_aig(netlistdb, &mut topo_vis, &mut topo_instack, pinid);
         }
 
         for cellid in 0..netlistdb.num_cells {
@@ -574,10 +598,10 @@ impl AIG {
                         "D" => ap_d_iv = pin_iv,
                         "S" => ap_s_iv = pin_iv,
                         "R" => ap_r_iv = pin_iv,
-                        "CLK" => ap_clken_iv = aig.trace_clock_pin(
-                            netlistdb, pinid, false,
-                            false
-                        ).unwrap(),
+                        "CLK" => {
+                            ap_clken_iv =
+                                aig.trace_clock_pin(netlistdb, pinid, false, false).unwrap()
+                        }
                         _ => {}
                     }
                 }
@@ -591,8 +615,7 @@ impl AIG {
                 dff.en_iv = ap_clken_iv;
                 dff.d_iv = d_in;
                 assert_ne!(dff.q, 0);
-            }
-            else if netlistdb.celltypes[cellid].as_str() == "$__RAMGEM_SYNC_" {
+            } else if netlistdb.celltypes[cellid].as_str() == "$__RAMGEM_SYNC_" {
                 let mut sram = aig.srams.entry(cellid).or_default().clone();
                 let mut write_clken_iv = 0;
                 for pinid in netlistdb.cell2pin.iter_set(cellid) {
@@ -601,46 +624,39 @@ impl AIG {
                     match netlistdb.pinnames[pinid].1.as_str() {
                         "PORT_R_ADDR" => {
                             sram.port_r_addr_iv[bit.unwrap()] = pin_iv;
-                        },
+                        }
                         "PORT_R_CLK" => {
-                            sram.port_r_en_iv = aig.trace_clock_pin(
-                                netlistdb, pinid, false,
-                                false
-                            ).unwrap();
-                        },
+                            sram.port_r_en_iv =
+                                aig.trace_clock_pin(netlistdb, pinid, false, false).unwrap();
+                        }
                         "PORT_W_ADDR" => {
                             sram.port_w_addr_iv[bit.unwrap()] = pin_iv;
                         }
                         "PORT_W_CLK" => {
-                            write_clken_iv = aig.trace_clock_pin(
-                                netlistdb, pinid, false,
-                                false
-                            ).unwrap();
-                        },
+                            write_clken_iv =
+                                aig.trace_clock_pin(netlistdb, pinid, false, false).unwrap();
+                        }
                         "PORT_W_WR_DATA" => {
                             sram.port_w_wr_data_iv[bit.unwrap()] = pin_iv;
-                        },
+                        }
                         "PORT_W_WR_EN" => {
                             sram.port_w_wr_en_iv[bit.unwrap()] = pin_iv;
-                        },
+                        }
                         _ => {}
                     }
                 }
                 for i in 0..32 {
                     let or_en = sram.port_w_wr_en_iv[i];
-                    let or_en = aig.add_and_gate(
-                        or_en, write_clken_iv
-                    );
+                    let or_en = aig.add_and_gate(or_en, write_clken_iv);
                     sram.port_w_wr_en_iv[i] = or_en;
                 }
                 *aig.srams.get_mut(&cellid).unwrap() = sram;
-            }
-            else if netlistdb.celltypes[cellid].as_str() == "GEM_ASSERT" {
+            } else if netlistdb.celltypes[cellid].as_str() == "GEM_ASSERT" {
                 // Parse GEM_ASSERT cells for assertion checking
                 // GEM_ASSERT has: CLK (trigger), EN (enable), A (condition)
                 // Assertion fails when EN is high and A is low
-                let mut ap_en_iv = 1;  // Default: always enabled
-                let mut ap_a_iv = 1;   // Default: always passing
+                let mut ap_en_iv = 1; // Default: always enabled
+                let mut ap_a_iv = 1; // Default: always passing
                 let mut ap_clken_iv = 1; // Default: always triggered
 
                 for pinid in netlistdb.cell2pin.iter_set(cellid) {
@@ -650,9 +666,7 @@ impl AIG {
                         "A" => ap_a_iv = pin_iv,
                         "CLK" => {
                             // Try to trace clock, but if it's tied to 1, use constant
-                            if let Ok(clken) = aig.trace_clock_pin(
-                                netlistdb, pinid, false, false
-                            ) {
+                            if let Ok(clken) = aig.trace_clock_pin(netlistdb, pinid, false, false) {
                                 ap_clken_iv = clken;
                             }
                         }
@@ -673,15 +687,18 @@ impl AIG {
 
                 clilog::debug!(
                     "Found GEM_ASSERT cell {} (condition_iv={}, en_iv={}, a_iv={}, clken_iv={})",
-                    cellid, fire_condition, ap_en_iv, ap_a_iv, ap_clken_iv
+                    cellid,
+                    fire_condition,
+                    ap_en_iv,
+                    ap_a_iv,
+                    ap_clken_iv
                 );
-            }
-            else if netlistdb.celltypes[cellid].as_str() == "GEM_DISPLAY" {
+            } else if netlistdb.celltypes[cellid].as_str() == "GEM_DISPLAY" {
                 // Parse GEM_DISPLAY cells for $display/$write support
                 // GEM_DISPLAY has: CLK (trigger), EN (enable), MSG_ID[31:0] (argument values)
                 // Plus attributes: gem_format (format string), gem_args_width (arg width)
-                let mut dp_en_iv = 1;      // Default: always enabled
-                let mut dp_clken_iv = 1;   // Default: always triggered
+                let mut dp_en_iv = 1; // Default: always enabled
+                let mut dp_clken_iv = 1; // Default: always triggered
                 let mut dp_args_iv = Vec::new();
 
                 for pinid in netlistdb.cell2pin.iter_set(cellid) {
@@ -690,9 +707,7 @@ impl AIG {
                         "EN" => dp_en_iv = pin_iv,
                         "CLK" => {
                             // Try to trace clock for edge detection
-                            if let Ok(clken) = aig.trace_clock_pin(
-                                netlistdb, pinid, false, false
-                            ) {
+                            if let Ok(clken) = aig.trace_clock_pin(netlistdb, pinid, false, false) {
                                 dp_clken_iv = clken;
                             }
                         }
@@ -724,7 +739,11 @@ impl AIG {
 
                 clilog::debug!(
                     "Found GEM_DISPLAY cell {} '{}' (enable_iv={}, clken_iv={}, args={})",
-                    cellid, display.cell_name, fire_condition, dp_clken_iv, display.args_iv.len()
+                    cellid,
+                    display.cell_name,
+                    fire_condition,
+                    dp_clken_iv,
+                    display.args_iv.len()
                 );
             }
         }
@@ -769,9 +788,15 @@ impl AIG {
     ) -> Vec<usize> {
         let mut vis = IndexSet::new();
         let mut ret = Vec::new();
-        fn dfs_topo(aig: &AIG, vis: &mut IndexSet<usize>, ret: &mut Vec<usize>, is_primary_input: Option<&IndexSet<usize>>, u: usize) {
+        fn dfs_topo(
+            aig: &AIG,
+            vis: &mut IndexSet<usize>,
+            ret: &mut Vec<usize>,
+            is_primary_input: Option<&IndexSet<usize>>,
+            u: usize,
+        ) {
             if vis.contains(&u) {
-                return
+                return;
             }
             vis.insert(u);
             if let DriverType::AndGate(a, b) = aig.drivers[u] {
@@ -790,8 +815,7 @@ impl AIG {
             for &endpoint in endpoints {
                 dfs_topo(self, &mut vis, &mut ret, is_primary_input, endpoint);
             }
-        }
-        else {
+        } else {
             for i in 1..self.num_aigpins + 1 {
                 dfs_topo(self, &mut vis, &mut ret, is_primary_input, i);
             }
@@ -800,8 +824,11 @@ impl AIG {
     }
 
     pub fn num_endpoint_groups(&self) -> usize {
-        self.primary_outputs.len() + self.dffs.len() + self.srams.len() +
-        self.simcontrols.len() + self.displays.len()
+        self.primary_outputs.len()
+            + self.dffs.len()
+            + self.srams.len()
+            + self.simcontrols.len()
+            + self.displays.len()
     }
 
     pub fn get_endpoint_group(&self, endpt_id: usize) -> EndpointGroup {
@@ -812,33 +839,313 @@ impl AIG {
 
         if endpt_id < po_len {
             EndpointGroup::PrimaryOutput(*self.primary_outputs.get_index(endpt_id).unwrap())
-        }
-        else if endpt_id < po_len + dff_len {
+        } else if endpt_id < po_len + dff_len {
             EndpointGroup::DFF(&self.dffs[endpt_id - po_len])
-        }
-        else if endpt_id < po_len + dff_len + sram_len {
+        } else if endpt_id < po_len + dff_len + sram_len {
             EndpointGroup::RAMBlock(&self.srams[endpt_id - po_len - dff_len])
-        }
-        else if endpt_id < po_len + dff_len + sram_len + simctrl_len {
+        } else if endpt_id < po_len + dff_len + sram_len + simctrl_len {
             EndpointGroup::SimControl(&self.simcontrols[endpt_id - po_len - dff_len - sram_len])
-        }
-        else {
-            EndpointGroup::Display(&self.displays[endpt_id - po_len - dff_len - sram_len - simctrl_len])
+        } else {
+            EndpointGroup::Display(
+                &self.displays[endpt_id - po_len - dff_len - sram_len - simctrl_len],
+            )
         }
     }
 
     /// Populate display format information from JSON attributes.
     /// This should be called after from_netlistdb() with display info extracted from the JSON.
-    pub fn populate_display_info(&mut self, display_info: &IndexMap<String, crate::display::DisplayCellInfo>) {
+    pub fn populate_display_info(
+        &mut self,
+        display_info: &IndexMap<String, crate::display::DisplayCellInfo>,
+    ) {
         for (_cell_id, display) in self.displays.iter_mut() {
             if let Some(info) = display_info.get(&display.cell_name) {
                 display.format = info.format.clone();
                 display.arg_widths = vec![info.args_width];
                 clilog::debug!(
                     "Populated display info for '{}': format='{}', args_width={}",
-                    display.cell_name, info.format, info.args_width
+                    display.cell_name,
+                    info.format,
+                    info.args_width
                 );
             }
         }
+    }
+
+    // === Static Timing Analysis Methods ===
+
+    /// Load timing information from a Liberty library.
+    ///
+    /// This initializes the gate_delays vector and dff_timing field.
+    pub fn load_timing_library(&mut self, lib: &crate::liberty_parser::TimingLibrary) {
+        // Initialize gate delays for all AIG pins
+        // Index 0 is Tie0 which has zero delay
+        self.gate_delays = vec![(0, 0); self.num_aigpins + 1];
+
+        // Get default AND gate delay (all variants have same timing in AIGPDK)
+        let and_delay = lib.and_gate_delay("AND2_00_0").unwrap_or((1, 1));
+
+        // Assign delays based on driver type
+        for i in 1..=self.num_aigpins {
+            let delay = match &self.drivers[i] {
+                DriverType::AndGate(_, _) => and_delay,
+                DriverType::InputPort(_) => (0, 0), // Primary inputs have zero arrival
+                DriverType::InputClockFlag(_, _) => (0, 0), // Clock flags
+                DriverType::DFF(_) => {
+                    // Clock-to-Q delay
+                    lib.dff_timing()
+                        .map(|t| (t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
+                        .unwrap_or((0, 0))
+                }
+                DriverType::SRAM(_) => {
+                    // SRAM read delay
+                    lib.sram_timing()
+                        .map(|t| (t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps))
+                        .unwrap_or((1, 1))
+                }
+                DriverType::Tie0 => (0, 0),
+            };
+            self.gate_delays[i] = delay;
+        }
+
+        // Load DFF timing constraints
+        self.dff_timing = lib.dff_timing();
+
+        clilog::info!(
+            "Loaded timing library: AND delay={}ps, DFF setup={}ps, hold={}ps",
+            and_delay.0,
+            self.dff_timing.as_ref().map(|t| t.max_setup()).unwrap_or(0),
+            self.dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0)
+        );
+    }
+
+    /// Compute static timing analysis (STA) for the AIG.
+    ///
+    /// This computes arrival times at all nodes and calculates setup/hold
+    /// slacks for all DFFs. Must call `load_timing_library` first.
+    ///
+    /// Returns a `TimingReport` with summary statistics.
+    pub fn compute_timing(&mut self) -> TimingReport {
+        // Initialize arrival times (min, max) for all pins
+        self.arrival_times = vec![(0, 0); self.num_aigpins + 1];
+
+        // Get topological order (already guaranteed in AIG)
+        // Traverse in order 1..num_aigpins since drivers are in topo order
+        for i in 1..=self.num_aigpins {
+            let (min_arrival, max_arrival) = match &self.drivers[i] {
+                DriverType::AndGate(a, b) => {
+                    let (delay_rise, delay_fall) = self.gate_delays[i];
+                    let delay = delay_rise.max(delay_fall);
+
+                    // Get arrival times of inputs (strip inversion bit)
+                    let a_idx = a >> 1;
+                    let b_idx = b >> 1;
+
+                    let (a_min, a_max) = if a_idx == 0 {
+                        (0, 0)
+                    } else {
+                        self.arrival_times[a_idx]
+                    };
+                    let (b_min, b_max) = if b_idx == 0 {
+                        (0, 0)
+                    } else {
+                        self.arrival_times[b_idx]
+                    };
+
+                    // Min arrival: min of inputs + delay
+                    // Max arrival: max of inputs + delay
+                    (a_min.min(b_min) + delay, a_max.max(b_max) + delay)
+                }
+                DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
+                    // Primary inputs arrive at time 0
+                    (0, 0)
+                }
+                DriverType::DFF(_) => {
+                    // DFF output arrives after clock-to-Q delay
+                    let (delay_rise, delay_fall) = self.gate_delays[i];
+                    (delay_rise.max(delay_fall), delay_rise.max(delay_fall))
+                }
+                DriverType::SRAM(_) => {
+                    // SRAM read data arrives after read delay
+                    let (delay_rise, delay_fall) = self.gate_delays[i];
+                    (delay_rise.max(delay_fall), delay_rise.max(delay_fall))
+                }
+            };
+
+            self.arrival_times[i] = (min_arrival, max_arrival);
+        }
+
+        // Compute setup and hold slacks for each DFF
+        self.setup_slacks = Vec::with_capacity(self.dffs.len());
+        self.hold_slacks = Vec::with_capacity(self.dffs.len());
+
+        let dff_timing = self.dff_timing.clone().unwrap_or_default();
+        let setup_time = dff_timing.max_setup();
+        let hold_time = dff_timing.max_hold();
+
+        let mut report = TimingReport::default();
+        report.num_endpoints = self.dffs.len();
+
+        for (_cell_id, dff) in &self.dffs {
+            // Get data arrival time at D input
+            let d_idx = dff.d_iv >> 1;
+            let (_, data_max_arrival) = if d_idx == 0 {
+                (0, 0)
+            } else {
+                self.arrival_times[d_idx]
+            };
+
+            // Clock arrival is at time 0 (or clock_period for setup check)
+            // Setup check: data must arrive before clock_period - setup_time
+            let setup_slack = (self.clock_period_ps as i64) - (data_max_arrival as i64) - (setup_time as i64);
+
+            // Hold check: data must be stable for hold_time after clock
+            // For hold, we check min arrival vs hold_time
+            let (data_min_arrival, _) = if d_idx == 0 {
+                (0, 0)
+            } else {
+                self.arrival_times[d_idx]
+            };
+            let hold_slack = (data_min_arrival as i64) - (hold_time as i64);
+
+            self.setup_slacks.push(setup_slack);
+            self.hold_slacks.push(hold_slack);
+
+            // Update report statistics
+            report.worst_setup_slack = report.worst_setup_slack.min(setup_slack);
+            report.worst_hold_slack = report.worst_hold_slack.min(hold_slack);
+
+            if setup_slack < 0 {
+                report.setup_violations += 1;
+            }
+            if hold_slack < 0 {
+                report.hold_violations += 1;
+            }
+        }
+
+        // Find critical path (longest arrival time at any endpoint)
+        for &po_iv in &self.primary_outputs {
+            let po = po_iv >> 1; // Strip inversion bit
+            if po > 0 && po <= self.num_aigpins {
+                let (_, max_arr) = self.arrival_times[po];
+                report.critical_path_delay = report.critical_path_delay.max(max_arr);
+            }
+        }
+        for (_cell_id, dff) in &self.dffs {
+            let d_idx = dff.d_iv >> 1;
+            if d_idx > 0 {
+                let (_, max_arr) = self.arrival_times[d_idx];
+                report.critical_path_delay = report.critical_path_delay.max(max_arr);
+            }
+        }
+
+        report
+    }
+
+    /// Get the critical path endpoints (nodes with longest arrival times).
+    ///
+    /// Returns a list of (aigpin, arrival_time) tuples, sorted by arrival time descending.
+    pub fn get_critical_paths(&self, limit: usize) -> Vec<(usize, u64)> {
+        let mut endpoints: Vec<(usize, u64)> = Vec::new();
+
+        // Collect all endpoints (primary outputs and DFF D inputs)
+        for &po_iv in &self.primary_outputs {
+            let po = po_iv >> 1; // Strip inversion bit
+            if po > 0 && po <= self.num_aigpins {
+                let (_, max_arr) = self.arrival_times[po];
+                endpoints.push((po, max_arr));
+            }
+        }
+        for (_cell_id, dff) in &self.dffs {
+            let d_idx = dff.d_iv >> 1;
+            if d_idx > 0 && d_idx <= self.num_aigpins {
+                let (_, max_arr) = self.arrival_times[d_idx];
+                endpoints.push((d_idx, max_arr));
+            }
+        }
+
+        // Sort by arrival time descending
+        endpoints.sort_by(|a, b| b.1.cmp(&a.1));
+        endpoints.truncate(limit);
+        endpoints
+    }
+
+    /// Trace back the critical path from an endpoint.
+    ///
+    /// Returns a list of (aigpin, arrival_time) tuples from endpoint back to a primary input.
+    pub fn trace_critical_path(&self, endpoint: usize) -> Vec<(usize, u64)> {
+        let mut path = Vec::new();
+        let mut current = endpoint;
+
+        while current > 0 {
+            let (_, arrival) = self.arrival_times[current];
+            path.push((current, arrival));
+
+            match &self.drivers[current] {
+                DriverType::AndGate(a, b) => {
+                    let a_idx = a >> 1;
+                    let b_idx = b >> 1;
+
+                    // Follow the input with larger arrival time
+                    let a_arr = if a_idx > 0 {
+                        self.arrival_times[a_idx].1
+                    } else {
+                        0
+                    };
+                    let b_arr = if b_idx > 0 {
+                        self.arrival_times[b_idx].1
+                    } else {
+                        0
+                    };
+
+                    current = if a_arr >= b_arr { a_idx } else { b_idx };
+                }
+                _ => break, // Reached a primary input or sequential element
+            }
+        }
+
+        path
+    }
+}
+
+/// Summary of timing analysis results.
+#[derive(Debug, Clone, Default)]
+pub struct TimingReport {
+    /// Number of timing endpoints analyzed (DFFs + primary outputs)
+    pub num_endpoints: usize,
+    /// Critical path delay in picoseconds
+    pub critical_path_delay: u64,
+    /// Worst setup slack (negative = violation)
+    pub worst_setup_slack: i64,
+    /// Worst hold slack (negative = violation)
+    pub worst_hold_slack: i64,
+    /// Number of setup violations
+    pub setup_violations: usize,
+    /// Number of hold violations
+    pub hold_violations: usize,
+}
+
+impl TimingReport {
+    /// Returns true if there are any timing violations.
+    pub fn has_violations(&self) -> bool {
+        self.setup_violations > 0 || self.hold_violations > 0
+    }
+}
+
+impl std::fmt::Display for TimingReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "=== Timing Report ===")?;
+        writeln!(f, "Endpoints analyzed: {}", self.num_endpoints)?;
+        writeln!(f, "Critical path delay: {} ps", self.critical_path_delay)?;
+        writeln!(f, "Worst setup slack: {} ps", self.worst_setup_slack)?;
+        writeln!(f, "Worst hold slack: {} ps", self.worst_hold_slack)?;
+        writeln!(f, "Setup violations: {}", self.setup_violations)?;
+        writeln!(f, "Hold violations: {}", self.hold_violations)?;
+        if self.has_violations() {
+            writeln!(f, "Status: TIMING VIOLATIONS DETECTED")?;
+        } else {
+            writeln!(f, "Status: All timing constraints met")?;
+        }
+        Ok(())
     }
 }

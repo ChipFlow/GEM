@@ -4,6 +4,8 @@ pub mod aigpdk;
 
 pub mod aig;
 
+pub mod liberty_parser;
+
 pub mod staging;
 
 pub mod repcut;
