@@ -24,6 +24,10 @@ pub enum EventType {
     Display = 2,
     /// Assertion failure (Phase 3)
     AssertFail = 3,
+    /// Setup time violation (Experiment 4)
+    SetupViolation = 4,
+    /// Hold time violation (Experiment 4)
+    HoldViolation = 5,
 }
 
 impl TryFrom<u32> for EventType {
@@ -35,6 +39,8 @@ impl TryFrom<u32> for EventType {
             1 => Ok(EventType::Finish),
             2 => Ok(EventType::Display),
             3 => Ok(EventType::AssertFail),
+            4 => Ok(EventType::SetupViolation),
+            5 => Ok(EventType::HoldViolation),
             _ => Err(()),
         }
     }
@@ -164,6 +170,35 @@ impl Default for AssertConfig {
     }
 }
 
+/// Configuration for timing violation handling (Experiment 4).
+#[derive(Debug, Clone)]
+pub struct TimingConfig {
+    /// Action to take on timing violation
+    pub on_violation: TimingAction,
+    /// Maximum number of violations before stopping (None = unlimited)
+    pub max_violations: Option<u32>,
+}
+
+impl Default for TimingConfig {
+    fn default() -> Self {
+        Self {
+            on_violation: TimingAction::Log,
+            max_violations: None,
+        }
+    }
+}
+
+/// Action to take when a timing violation occurs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingAction {
+    /// Log the violation and continue
+    Log,
+    /// Warn and continue
+    Warn,
+    /// Terminate simulation
+    Terminate,
+}
+
 /// Action to take when an assertion fails.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssertAction {
@@ -184,6 +219,10 @@ pub struct SimStats {
     pub stop_count: u32,
     /// Number of events dropped due to overflow
     pub events_dropped: u32,
+    /// Number of setup timing violations (Experiment 4)
+    pub setup_violations: u32,
+    /// Number of hold timing violations (Experiment 4)
+    pub hold_violations: u32,
 }
 
 /// Process events from the buffer and determine simulation control.
@@ -253,13 +292,34 @@ where
 
                 if let Some(max) = assert_config.max_failures {
                     if stats.assertion_failures >= max {
-                        clilog::error!(
-                            "Maximum assertion failures ({}) reached, terminating",
-                            max
-                        );
+                        clilog::error!("Maximum assertion failures ({}) reached, terminating", max);
                         return SimControl::Terminate;
                     }
                 }
+            }
+            EventType::SetupViolation => {
+                // data[0] = DFF cell ID, data[1] = slack (signed as u32)
+                let cell_id = event.data[0];
+                let slack = event.data[1] as i32;
+                clilog::warn!(
+                    "[cycle {}] SETUP VIOLATION: DFF {} slack={} ps",
+                    event.cycle,
+                    cell_id,
+                    slack
+                );
+                stats.setup_violations += 1;
+            }
+            EventType::HoldViolation => {
+                // data[0] = DFF cell ID, data[1] = slack (signed as u32)
+                let cell_id = event.data[0];
+                let slack = event.data[1] as i32;
+                clilog::warn!(
+                    "[cycle {}] HOLD VIOLATION: DFF {} slack={} ps",
+                    event.cycle,
+                    cell_id,
+                    slack
+                );
+                stats.hold_violations += 1;
             }
         }
     }
@@ -284,7 +344,9 @@ mod tests {
         assert_eq!(EventType::try_from(1u32), Ok(EventType::Finish));
         assert_eq!(EventType::try_from(2u32), Ok(EventType::Display));
         assert_eq!(EventType::try_from(3u32), Ok(EventType::AssertFail));
-        assert!(EventType::try_from(4u32).is_err());
+        assert_eq!(EventType::try_from(4u32), Ok(EventType::SetupViolation));
+        assert_eq!(EventType::try_from(5u32), Ok(EventType::HoldViolation));
+        assert!(EventType::try_from(6u32).is_err());
     }
 
     #[test]
@@ -446,5 +508,35 @@ mod tests {
         assert_eq!(control, SimControl::Terminate);
         // Only one stop was processed before finish
         assert_eq!(stats.stop_count, 1);
+    }
+
+    // Helper to add a timing violation event with slack data
+    fn add_timing_event(buf: &mut EventBuffer, event_type: EventType, cycle: u32, cell_id: u32, slack: i32) {
+        let idx = buf.count.fetch_add(1, Ordering::AcqRel) as usize;
+        if idx < MAX_EVENTS {
+            buf.events[idx].event_type = event_type as u32;
+            buf.events[idx].cycle = cycle;
+            buf.events[idx].message_id = 0;
+            buf.events[idx].data[0] = cell_id;
+            buf.events[idx].data[1] = slack as u32;
+        }
+    }
+
+    #[test]
+    fn test_process_timing_violations() {
+        let mut buf = EventBuffer::new();
+        add_timing_event(&mut buf, EventType::SetupViolation, 10, 0, -50);
+        add_timing_event(&mut buf, EventType::HoldViolation, 11, 1, -25);
+        add_timing_event(&mut buf, EventType::SetupViolation, 12, 2, -30);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        // Timing violations don't stop simulation by default
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(stats.setup_violations, 2);
+        assert_eq!(stats.hold_violations, 1);
     }
 }
