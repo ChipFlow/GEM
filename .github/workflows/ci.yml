@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -42,6 +44,8 @@ jobs:
     runs-on: macos-latest-xlarge
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -115,6 +119,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -140,6 +146,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
