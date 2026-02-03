@@ -630,20 +630,31 @@ impl<'a> LibertyParser<'a> {
                     self.skip_block()?;
                 }
                 _ => {
-                    // Skip simple attribute
+                    // Skip unknown constructs
                     if self.peek_char() == Some(':') {
+                        // Attribute: name : value ;
                         self.expect_char(':')?;
                         self.read_value()?;
                         if self.peek_char() == Some(';') {
                             self.expect_char(';')?;
                         }
                     } else if self.peek_char() == Some('(') {
-                        // Consume entire parenthesized expression including commas
+                        // Function or block: name(...) or name(...) { ... }
                         self.skip_parenthesized()?;
-                        if self.peek_char() == Some(';') {
+                        if self.peek_char() == Some('{') {
+                            // Block with body
+                            self.expect_char('{')?;
+                            self.skip_block()?;
+                        } else if self.peek_char() == Some(';') {
                             self.expect_char(';')?;
                         }
+                    } else if self.peek_char() == Some('{') {
+                        // Standalone block
+                        self.expect_char('{')?;
+                        self.skip_block()?;
                     }
+                    // If nothing matched, the identifier was already consumed
+                    // and we'll try again on the next iteration
                 }
             }
         }
@@ -711,7 +722,7 @@ impl<'a> LibertyParser<'a> {
                     self.skip_block()?;
                 }
                 _ => {
-                    // Skip simple attribute
+                    // Skip unknown constructs
                     if self.peek_char() == Some(':') {
                         self.expect_char(':')?;
                         self.read_value()?;
@@ -719,11 +730,16 @@ impl<'a> LibertyParser<'a> {
                             self.expect_char(';')?;
                         }
                     } else if self.peek_char() == Some('(') {
-                        // Consume entire parenthesized expression including commas
                         self.skip_parenthesized()?;
-                        if self.peek_char() == Some(';') {
+                        if self.peek_char() == Some('{') {
+                            self.expect_char('{')?;
+                            self.skip_block()?;
+                        } else if self.peek_char() == Some(';') {
                             self.expect_char(';')?;
                         }
+                    } else if self.peek_char() == Some('{') {
+                        self.expect_char('{')?;
+                        self.skip_block()?;
                     }
                 }
             }
@@ -754,12 +770,16 @@ impl<'a> LibertyParser<'a> {
             match keyword.as_str() {
                 "direction" => {
                     self.expect_char(':')?;
-                    pin.direction = self.read_identifier();
+                    // Direction can be quoted (SKY130) or unquoted (AIGPDK)
+                    let val = self.read_value()?;
+                    pin.direction = val.trim_matches('"').to_string();
                     self.expect_char(';')?;
                 }
                 "clock" => {
                     self.expect_char(':')?;
-                    let val = self.read_identifier();
+                    // Clock can be quoted (SKY130) or unquoted (AIGPDK)
+                    let val = self.read_value()?;
+                    let val = val.trim_matches('"');
                     pin.is_clock = val == "true";
                     self.expect_char(';')?;
                 }
@@ -768,7 +788,7 @@ impl<'a> LibertyParser<'a> {
                     pin.timing_arcs.push(arc);
                 }
                 _ => {
-                    // Skip simple attribute
+                    // Skip unknown constructs
                     if self.peek_char() == Some(':') {
                         self.expect_char(':')?;
                         self.read_value()?;
@@ -776,12 +796,16 @@ impl<'a> LibertyParser<'a> {
                             self.expect_char(';')?;
                         }
                     } else if self.peek_char() == Some('(') {
-                        self.expect_char('(')?;
-                        self.read_value()?;
-                        self.expect_char(')')?;
-                        if self.peek_char() == Some(';') {
+                        self.skip_parenthesized()?;
+                        if self.peek_char() == Some('{') {
+                            self.expect_char('{')?;
+                            self.skip_block()?;
+                        } else if self.peek_char() == Some(';') {
                             self.expect_char(';')?;
                         }
+                    } else if self.peek_char() == Some('{') {
+                        self.expect_char('{')?;
+                        self.skip_block()?;
                     }
                 }
             }
@@ -812,7 +836,8 @@ impl<'a> LibertyParser<'a> {
             match keyword.as_str() {
                 "direction" => {
                     self.expect_char(':')?;
-                    pin.direction = self.read_identifier();
+                    let val = self.read_value()?;
+                    pin.direction = val.trim_matches('"').to_string();
                     self.expect_char(';')?;
                 }
                 "timing" => {
@@ -828,7 +853,7 @@ impl<'a> LibertyParser<'a> {
                     }
                 }
                 _ => {
-                    // Skip simple attribute
+                    // Skip unknown constructs
                     if self.peek_char() == Some(':') {
                         self.expect_char(':')?;
                         self.read_value()?;
@@ -836,11 +861,16 @@ impl<'a> LibertyParser<'a> {
                             self.expect_char(';')?;
                         }
                     } else if self.peek_char() == Some('(') {
-                        // Consume entire parenthesized expression including commas
                         self.skip_parenthesized()?;
-                        if self.peek_char() == Some(';') {
+                        if self.peek_char() == Some('{') {
+                            self.expect_char('{')?;
+                            self.skip_block()?;
+                        } else if self.peek_char() == Some(';') {
                             self.expect_char(';')?;
                         }
+                    } else if self.peek_char() == Some('{') {
+                        self.expect_char('{')?;
+                        self.skip_block()?;
                     }
                 }
             }
@@ -869,49 +899,53 @@ impl<'a> LibertyParser<'a> {
                 }
                 "timing_type" => {
                     self.expect_char(':')?;
-                    arc.timing_type = Some(self.read_identifier());
+                    let val = self.read_value()?;
+                    arc.timing_type = Some(val.trim_matches('"').to_string());
                     self.expect_char(';')?;
                 }
                 "cell_rise" | "cell_fall" | "rise_constraint" | "fall_constraint" => {
-                    // Parse scalar value
-                    self.expect_char('(')?;
-                    let _table_type = self.read_identifier(); // "scalar"
-                    self.expect_char(')')?;
+                    // Parse timing table (scalar or lookup table)
+                    // For complex 2D tables (SKY130), we just skip and use default timing
+                    // For scalar tables (AIGPDK), we extract the single value
+                    self.skip_parenthesized()?;
                     self.expect_char('{')?;
 
-                    // Find values
-                    while self.peek_char() != Some('}') {
-                        self.skip_whitespace();
-                        let inner_kw = self.read_identifier();
-                        if inner_kw == "values" {
-                            self.expect_char('(')?;
-                            let val_str = self.read_value()?;
-                            self.expect_char(')')?;
-                            self.expect_char(';')?;
+                    // For scalar tables, extract the single value
+                    // For 2D tables, just skip the whole block
+                    let block_start = self.pos;
+                    self.skip_block()?;
+                    let block_end = self.pos;
 
-                            let ps_val = self.parse_float_to_ps(&val_str);
-                            match keyword.as_str() {
-                                "cell_rise" => arc.cell_rise_ps = Some(ps_val),
-                                "cell_fall" => arc.cell_fall_ps = Some(ps_val),
-                                "rise_constraint" => arc.rise_constraint_ps = Some(ps_val),
-                                "fall_constraint" => arc.fall_constraint_ps = Some(ps_val),
-                                _ => {}
-                            }
-                        } else {
-                            // Skip other attributes
-                            if self.peek_char() == Some(':') {
-                                self.expect_char(':')?;
-                                self.read_value()?;
-                                if self.peek_char() == Some(';') {
-                                    self.expect_char(';')?;
+                    // Try to extract a scalar value from the block
+                    let block_content = &self.content[block_start..block_end];
+                    if let Some(values_start) = block_content.find("values") {
+                        // Look for values("number") pattern
+                        if let Some(paren_start) = block_content[values_start..].find('(') {
+                            let after_paren = values_start + paren_start + 1;
+                            // Find first numeric value (skip quotes)
+                            let rest = &block_content[after_paren..];
+                            let first_val = rest
+                                .trim_start()
+                                .trim_start_matches('"')
+                                .split(|c: char| c == ',' || c == '"' || c == ')')
+                                .next()
+                                .unwrap_or("")
+                                .trim();
+                            if !first_val.is_empty() {
+                                let ps_val = self.parse_float_to_ps(first_val);
+                                match keyword.as_str() {
+                                    "cell_rise" => arc.cell_rise_ps = Some(ps_val),
+                                    "cell_fall" => arc.cell_fall_ps = Some(ps_val),
+                                    "rise_constraint" => arc.rise_constraint_ps = Some(ps_val),
+                                    "fall_constraint" => arc.fall_constraint_ps = Some(ps_val),
+                                    _ => {}
                                 }
                             }
                         }
                     }
-                    self.expect_char('}')?;
                 }
                 _ => {
-                    // Skip other timing attributes
+                    // Skip other timing attributes (e.g., rise_transition, fall_transition)
                     if self.peek_char() == Some(':') {
                         self.expect_char(':')?;
                         self.read_value()?;
@@ -919,9 +953,14 @@ impl<'a> LibertyParser<'a> {
                             self.expect_char(';')?;
                         }
                     } else if self.peek_char() == Some('(') {
-                        self.expect_char('(')?;
-                        let _table = self.read_identifier();
-                        self.expect_char(')')?;
+                        self.skip_parenthesized()?;
+                        if self.peek_char() == Some('{') {
+                            self.expect_char('{')?;
+                            self.skip_block()?;
+                        } else if self.peek_char() == Some(';') {
+                            self.expect_char(';')?;
+                        }
+                    } else if self.peek_char() == Some('{') {
                         self.expect_char('{')?;
                         self.skip_block()?;
                     }
