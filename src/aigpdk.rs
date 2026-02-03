@@ -1,3 +1,5 @@
+// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 //! AIGPDK is a special artificial cell library used in GEM.
 
 use netlistdb::{Direction, LeafPinProvider};
@@ -34,12 +36,15 @@ impl LeafPinProvider for AIGPDKLeafPins {
             ("AND2_00_0" | "AND2_01_0" | "AND2_10_0" | "AND2_11_0" |
              "AND2_11_1", "Y", None) => Direction::O,
 
-            ("DFF", "CLK" | "D", None) => Direction::I,
+            ("DFF" | "LATCH", "CLK" | "D", None) => Direction::I,
             ("DFFSR", "CLK" | "D" | "S" | "R", None) => Direction::I,
-            ("DFF" | "DFFSR", "Q", None) => Direction::O,
+            ("DFF" | "DFFSR" | "LATCH", "Q", None) => Direction::O,
 
-            ("LATCH" | "$__RAMGEM_ASYNC_", _, _) => {
-                panic!("Non-DFFSR async logic (lib cell {}) not supported yet in GEM.", macro_name);
+            ("CKLNQD", "CP" | "E", None) => Direction::I,
+            ("CKLNQD", "Q", None) => Direction::O,
+
+            ("$__RAMGEM_ASYNC_", _, _) => {
+                panic!("Async RAM (lib cell {}) not supported yet in GEM.", macro_name);
             },
 
             ("$__RAMGEM_SYNC_",
@@ -73,7 +78,8 @@ impl LeafPinProvider for AIGPDKLeafPins {
             ("INV" | "BUF", "A" | "Y") => None,
             ("AND2_00_0" | "AND2_01_0" | "AND2_10_0" | "AND2_11_0" |
              "AND2_11_1", "A" | "B" | "Y") => None,
-            ("DFF" | "DFFSR", "CLK" | "D" | "Q" | "S" | "R") => None,
+            ("DFF" | "DFFSR" | "LATCH", "CLK" | "D" | "Q" | "S" | "R") => None,
+            ("CKLNQD", "CP" | "E" | "Q") => None,
             ("$__RAMGEM_SYNC_",
              "PORT_R_CLK" | "PORT_W_CLK") => None,
             ("$__RAMGEM_SYNC_",

@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 use std::path::PathBuf;
 use gem::aigpdk::{AIGPDKLeafPins, AIGPDK_SRAM_SIZE};
 use gem::aig::{DriverType, AIG};
+use gem::staging::build_staged_aigs;
 use gem::pe::{Partition, BOOMERANG_NUM_STAGES};
 use gem::flatten::FlattenedScriptV1;
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
@@ -8,7 +11,7 @@ use sverilogparse::SVerilogRange;
 use compact_str::CompactString;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom};
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::collections::{HashMap, HashSet};
 use vcd_ng::{Parser, ScopeItem, Var, Scope, FastFlow, FastFlowToken, FFValueChange, Writer, SimulationCommand};
@@ -25,6 +28,9 @@ struct SimulatorArgs {
     /// If not specified, we will guess it from the hierarchy.
     #[clap(long)]
     top_module: Option<String>,
+    /// Level split thresholds.
+    #[clap(long, value_delimiter=',')]
+    level_split: Vec<usize>,
     /// Input path for the serialized partitions.
     gemparts: PathBuf,
     /// VCD input signal path
@@ -50,6 +56,12 @@ struct SimulatorArgs {
     launch_debug_shell_after: Option<u64>,
 }
 
+fn hash_of<T: Hash>(x: &T) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    x.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// CPU prototype partition executor for script version 1.
 fn simulate_block_v1(
     script: &[u32],
@@ -59,6 +71,7 @@ fn simulate_block_v1(
     parts_indices: &[usize],
     parts: &[Partition],
     aigpin_values: &mut [u8],
+    parts_input_hashes: &mut [u64],
 ) {
     let mut script_pi = 0;
     let mut part_i_dbg = 0;
@@ -81,9 +94,10 @@ fn simulate_block_v1(
             script_pi += 256;
             break
         }
-        let part = &parts[parts_indices[part_i_dbg]];
+        let part_index = parts_indices[part_i_dbg];
+        let part = &parts[part_index];
         part_i_dbg += 1;
-        println!("part start");
+        // println!("part start");
         assert_eq!(part.stages.len(), num_stages as usize);
         assert_eq!(part.stages.iter().map(|s| s.write_outs.len()).sum::<usize>(), (num_ios - num_srams - num_output_duplicates) as usize);
         script_pi += 256;
@@ -96,7 +110,10 @@ fn simulate_block_v1(
                 let idx = script[script_pi + (i * 2)];
                 let mut mask = script[script_pi + (i * 2 + 1)];
                 if mask == 0 { continue }
-                let value = input_state[idx as usize];
+                let value = match (idx >> 31) != 0 {
+                    false => input_state[idx as usize],
+                    true => output_state[(idx ^ (1 << 31)) as usize]
+                };
                 while mask != 0 {
                     cur_state <<= 1;
                     let lowbit = mask & (-(mask as i32)) as u32;
@@ -109,6 +126,9 @@ fn simulate_block_v1(
             }
             script_pi += 256 * 2;
         }
+
+        // store input hashes to evaluate the block-level event sparsity
+        parts_input_hashes[part_index] = hash_of(&state);
 
         for bs_i in 0..num_stages {
             let mut hier_inputs = vec![0; 256];
@@ -148,6 +168,14 @@ fn simulate_block_v1(
                 let orb = hier_flag_orb[128 + i];
                 let ret = (a ^ xora) & ((b ^ xorb) | orb);
                 hier_inputs[128 + i] = ret;
+                // for k in 0..32 {
+                //     let apin = part.stages[bs_i as usize].hier[0][i * 32 + k];
+                //     let bpin = part.stages[bs_i as usize].hier[0][part.stages[bs_i as usize].hier[1].len() + i * 32 + k];
+                //     let opin = part.stages[bs_i as usize].hier[1][i * 32 + k];
+                //     if [812896 >> 1].contains(&opin) {
+                //         println!("Got ai gate at part {} bs_i {bs_i} hi0 i {i} k {k} (pos {} put {}): {opin}={} <- f[{apin}={} ^{}, {bpin}={} ^{}|{}]", parts_indices[part_i_dbg - 1], i * 32 + k, 128 * 32 + i * 32 + k, ret >> k & 1, a >> k & 1, xora >> k & 1, b >> k & 1, xorb >> k & 1, orb >> k & 1);
+                //     }
+                // }
             }
             // hier 1 to 7
             for hi in 1..=7 {
@@ -163,7 +191,7 @@ fn simulate_block_v1(
                     //     let apin = part.stages[bs_i as usize].hier[hi][i * 32 + k];
                     //     let bpin = part.stages[bs_i as usize].hier[hi][part.stages[bs_i as usize].hier[hi + 1].len() + i * 32 + k];
                     //     let opin = part.stages[bs_i as usize].hier[hi + 1][i * 32 + k];
-                    //     if [21876 / 2].contains(&opin) {
+                    //     if [812896 >> 1].contains(&opin) {
                     //         println!("Got ai gate at part {} bs_i {bs_i} hi {hi} i {i} k {k} (pos {} put {}): {opin}={} <- f[{apin}={} ^{}, {bpin}={} ^{}|{}]", parts_indices[part_i_dbg - 1], i * 32 + k, hier_width * 32 + i * 32 + k, ret >> k & 1, a >> k & 1, xora >> k & 1, b >> k & 1, xorb >> k & 1, orb >> k & 1);
                     //     }
                     // }
@@ -188,6 +216,9 @@ fn simulate_block_v1(
                     if aigpin == usize::MAX { continue }
                     let len = part.stages[bs_i as usize].hier[hi].len();
                     aigpin_values[aigpin] = (hier_inputs[(i + len) >> 5] >> ((i + len) & 31) & 1) as u8;
+                    // if [812896 >> 1].contains(&aigpin) {
+                    //     println!("[debug] aigpin {aigpin} got value {} (1 is correct) bs_i {bs_i} hi {hi} i {i} part_id {}", aigpin_values[aigpin], parts_indices[part_i_dbg]);
+                    // }
                 }
             }
 
@@ -273,7 +304,11 @@ fn simulate_block_v1(
             let wo = (old_wo & !clken) | (writeouts[i as usize] & clken);
             output_state[(io_offset + i) as usize] = wo;
         }
-        println!("part complete");
+        // println!("part complete");
+
+        // if parts_indices[part_i_dbg] == 274 {
+        //     println!("debug part 274 output ")
+        // }
 
         if is_last_part != 0 {
             break
@@ -400,10 +435,14 @@ fn main() {
     ).expect("cannot build netlist");
 
     let aig = AIG::from_netlistdb(&netlistdb);
+    let stageds = build_staged_aigs(&aig, &args.level_split);
+
     let f = std::fs::File::open(&args.gemparts).unwrap();
     let mut buf = std::io::BufReader::new(f);
-    let effective_parts: Vec<Partition> = serde_bare::from_reader(&mut buf).unwrap();
-    clilog::info!("# of effective partitions: {}", effective_parts.len());
+    let parts_in_stages: Vec<Vec<Partition>> = serde_bare::from_reader(&mut buf).unwrap();
+    clilog::info!("# of effective partitions in each stage: {:?}",
+                  parts_in_stages.iter().map(|ps| ps.len()).collect::<Vec<_>>());
+    let num_parts = parts_in_stages.iter().map(|v| v.len()).sum();
 
     let mut input_layout = Vec::new();
     for (i, driv) in aig.drivers.iter().enumerate() {
@@ -413,7 +452,9 @@ fn main() {
     }
 
     let script = FlattenedScriptV1::from(
-        &aig, &effective_parts, 5, input_layout
+        &aig, &stageds.iter().map(|(_, _, staged)| staged).collect::<Vec<_>>(),
+        &parts_in_stages.iter().map(|ps| ps.as_slice()).collect::<Vec<_>>(),
+        5, input_layout
     );
 
     // simulate with the script.
@@ -497,12 +538,16 @@ fn main() {
     }
     let mut out2vcd = netlistdb.cell2pin.iter_set(0).filter_map(|i| {
         if netlistdb.pindirect[i] == Direction::I {
-            let aigpin = aig.pin2aigpin_iv[i];
-            if aigpin <= 1 {
-                return Some((i, aigpin, u32::MAX, writer.add_wire(
+            let aigpin_iv = aig.pin2aigpin_iv[i];
+            if matches!(aig.drivers[aigpin_iv >> 1], DriverType::InputPort(_)) {
+                clilog::info!("skipped output for port {} as it is a pass-through of input port.", netlistdb.pinnames[i].dbg_fmt_pin());
+                return None
+            }
+            if aigpin_iv <= 1 {
+                return Some((i, aigpin_iv, u32::MAX, writer.add_wire(
                     1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin())).unwrap()))
             }
-            Some((i, aigpin, *script.output_map.get(&aigpin).unwrap(), writer.add_wire(
+            Some((i, aigpin_iv, *script.output_map.get(&aigpin_iv).unwrap(), writer.add_wire(
                 1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin())).unwrap()))
         }
         else { None }
@@ -516,7 +561,13 @@ fn main() {
             if netlistdb.pindirect[root] != Direction::O {
                 return None
             }
-            Some((root, aig.pin2aigpin_iv[root], u32::MAX, writer.add_wire(
+            let aigpin_iv = aig.pin2aigpin_iv[root];
+            if matches!(aig.drivers[aigpin_iv >> 1], DriverType::InputPort(_)) {
+                // the input ports are not recorded in debugging,
+                // so we do not output them.
+                return None
+            }
+            Some((root, aigpin_iv, u32::MAX, writer.add_wire(
                 1, &format!("{}", netlistdb.netnames[i].dbg_fmt_pin())
             ).unwrap()))
         }));
@@ -533,110 +584,168 @@ fn main() {
     let mut state = vec![0; script.reg_io_state_size as usize];
     let mut sram_storage = vec![0; script.sram_storage_size as usize];
 
-    let mut vcd_time = u64::MAX;
-    let mut last_vcd_time_active = false;
+    // the simulator keeps 2 previous timestamps.
+    // vcd_time: the last seen timestamp.
+    // vcd_time_last_active: the last timestamp strictly before vcd_time that has
+    // active events (e.g., watched clock posedge).
+    //
+    // when a new timestamp arrives and vcd_time has active events, we simulate
+    // the circuit with {actived edge flags from vcd_time}, but do NOT include the
+    // input port value changes. then, we associate the result output port values to
+    // vcd_time_last_active.
+    //
+    // the above complexity rises from the necessity to emulate {update, then propagate}
+    // behavior from our actual {propagate, then update} implementation.
+    let mut vcd_time_last_active = u64::MAX;
+    let mut vcd_time = 0;
+    let mut last_vcd_time_active = true;
     let mut aigpin_values_debug = vec![u8::MAX; aig.num_aigpins + 1];
+    let mut delayed_bit_changes = HashSet::new();
+
     aigpin_values_debug[0] = 0;
     let launch_debug_shell_after = args.launch_debug_shell_after.unwrap_or(u64::MAX);
+
+    let mut parts_input_hashes_last = vec![0u64; num_parts];
+    let mut min_n_active_parts = usize::MAX;
+    let mut max_n_active_parts = 0usize;
+    let mut total_n_active_parts = 0usize;
+    let mut total_n_cycles = 0usize;
+
+    // println!("test: num_parts {num_parts}, parts_indices: {:?}", script.stages_blocks_parts);
+
     while let Some(tok) = vcdflow.next_token().unwrap() {
         match tok {
             FastFlowToken::Timestamp(t) => {
                 if t == vcd_time { continue }
                 if last_vcd_time_active {
-                    clilog::debug!("simulating t={}", vcd_time);
+                    clilog::debug!("simulating t={} output for {}", vcd_time, vcd_time_last_active);
                     let mut state_next = state.clone();
-                    for blk_i in 0..script.num_blocks {
-                        simulate_block_v1(
-                            &script.blocks_data[script.blocks_start[blk_i]..script.blocks_start[blk_i + 1]],
-                            &state, &mut state_next,
-                            &mut sram_storage,
-                            &script.blocks_parts[blk_i],
-                            &effective_parts,
-                            &mut aigpin_values_debug,
-                        );
+                    let mut parts_input_hashes_cur = vec![0u64; num_parts];
+                    for stage_i in 0..script.num_major_stages {
+                        for blk_i in 0..script.num_blocks {
+                            simulate_block_v1(
+                                &script.blocks_data[script.blocks_start[stage_i * script.num_blocks + blk_i]..script.blocks_start[stage_i * script.num_blocks + blk_i + 1]],
+                                &state, &mut state_next,
+                                &mut sram_storage,
+                                &script.stages_blocks_parts[stage_i][blk_i],
+                                &parts_in_stages[stage_i],
+                                &mut aigpin_values_debug,
+                                &mut parts_input_hashes_cur,
+                            );
+                        }
                     }
                     // update the state
                     state = state_next;
-                    // write vcd vars out
-                    writer.timestamp(vcd_time).unwrap();
-                    for (i, &(netlist_pin, output_aigpin, output_pos, vid)) in out2vcd.iter().enumerate() {
-                        use vcd_ng::Value;
-                        let aigpin_value_new = aigpin_values_debug[output_aigpin >> 1] as u32 ^ (output_aigpin as u32 & 1);
-                        let value_new = match output_pos {
-                            u32::MAX => {
-                                if aigpin_value_new >= 2 {
-                                    continue
-                                }
-                                aigpin_value_new
-                            },
-                            output_pos @ _ => {
-                                let value_new_output = state[(output_pos >> 5) as usize] >> (output_pos & 31) & 1;
-                                if aigpin_value_new <= 1 {
-                                    assert_eq!(value_new_output, aigpin_value_new, "mismatch value: time {vcd_time} aigpin {output_aigpin} netlist_pin {netlist_pin} ({}) pos {output_pos}", netlistdb.pinnames[netlist_pin].dbg_fmt_pin());
-                                }
-                                value_new_output
-                            },
-                        };
-                        if value_new == last_val[i] {
-                            continue
-                        }
-                        last_val[i] = value_new;
-                        writer.change_scalar(vid, match value_new {
-                            1 => Value::V1,
-                            _ => Value::V0
-                        }).unwrap();
-                    }
-                    // reset for next timestamp
-                    for (_, &(pe, ne)) in &aig.clock_pin2aigpins {
-                        if pe != usize::MAX {
-                            let p = *script.input_map.get(&pe).unwrap();
-                            state[p as usize >> 5] &= !(1 << (p & 31));
-                        }
-                        if ne != usize::MAX {
-                            let p = *script.input_map.get(&ne).unwrap();
-                            state[p as usize >> 5] &= !(1 << (p & 31));
-                        }
+
+                    // commit the active parts statistics
+                    let n_active_parts = parts_input_hashes_cur.iter()
+                        .zip(parts_input_hashes_last.iter())
+                        .filter(|(a, b)| *a != *b).count();
+                    min_n_active_parts = min_n_active_parts.min(n_active_parts);
+                    max_n_active_parts = max_n_active_parts.max(n_active_parts);
+                    total_n_active_parts += n_active_parts;
+                    total_n_cycles += 1;
+                    parts_input_hashes_last = parts_input_hashes_cur;
+
+                    if total_n_cycles % 1000 == 0 {
+                        println!("event-based statistics: total #cycles {}, total #partitions {}, active #partitions (max/min/average) {}/{}/{}",
+                                 total_n_cycles, num_parts,
+                                 max_n_active_parts, min_n_active_parts,
+                                 (total_n_active_parts as f32) / (total_n_cycles as f32));
                     }
 
-                    // debug shell
-                    if vcd_time >= launch_debug_shell_after {
-                        println!("{{DEBUG SHELL}}: at timestamp #{}, enter a net name to get its value", vcd_time);
-                        let mut line;
-                        loop {
-                            line = String::new();
-                            std::io::stdin().read_line(&mut line).unwrap();
-                            line = line.trim().to_string();
-                            if line.is_empty() { continue }
-                            if line == ".exit" {
-                                break
-                            }
-                            let mut found = false;
-                            for net_i in 0..netlistdb.num_nets {
-                                if netlistdb.netnames[net_i].dbg_fmt_pin().as_str() == line.as_str() {
-                                    found = true;
-                                    let root = netlistdb.net2pin.items[netlistdb.net2pin.start[net_i]];
-                                    if netlistdb.pindirect[root] != Direction::O {
-                                        println!("net {:?} is undriven", netlistdb.netnames[net_i].dbg_fmt_pin());
+                    // write vcd vars out
+                    if vcd_time_last_active != u64::MAX {
+                        writer.timestamp(vcd_time_last_active).unwrap();
+                        for (i, &(netlist_pin, output_aigpin, output_pos, vid)) in out2vcd.iter().enumerate() {
+                            use vcd_ng::Value;
+                            let aigpin_value_new = aigpin_values_debug[output_aigpin >> 1] as u32 ^ (output_aigpin as u32 & 1);
+                            let value_new = match output_pos {
+                                u32::MAX => {
+                                    if aigpin_value_new >= 2 {
                                         continue
                                     }
-                                    let aigpin = aig.pin2aigpin_iv[root];
-                                    println!(
-                                        "net {:?} driver {:?} (pin {} aigpin_iv {}) last recorded value is {}",
-                                        netlistdb.netnames[net_i].dbg_fmt_pin(),
-                                        netlistdb.pinnames[root].dbg_fmt_pin(),
-                                        root, aigpin,
-                                        aigpin_values_debug[aigpin >> 1] ^ ((aigpin & 1) as u8)
-                                    );
-                                }
+                                    aigpin_value_new
+                                },
+                                output_pos @ _ => {
+                                    let value_new_output = state[(output_pos >> 5) as usize] >> (output_pos & 31) & 1;
+                                    if aigpin_value_new <= 1 {
+                                        assert_eq!(value_new_output, aigpin_value_new, "mismatch value: time {vcd_time} aigpin {output_aigpin} netlist_pin {netlist_pin} ({}) pos {output_pos}", netlistdb.pinnames[netlist_pin].dbg_fmt_pin());
+                                    }
+                                    value_new_output
+                                },
+                            };
+                            if value_new == last_val[i] {
+                                continue
                             }
-                            if !found {
-                                println!("entered net {:?} not found in netlist", line);
+                            last_val[i] = value_new;
+                            writer.change_scalar(vid, match value_new {
+                                1 => Value::V1,
+                                _ => Value::V0
+                            }).unwrap();
+                        }
+                        // reset for next timestamp
+                        for (_, &(pe, ne)) in &aig.clock_pin2aigpins {
+                            if pe != usize::MAX {
+                                let p = *script.input_map.get(&pe).unwrap();
+                                state[p as usize >> 5] &= !(1 << (p & 31));
+                            }
+                            if ne != usize::MAX {
+                                let p = *script.input_map.get(&ne).unwrap();
+                                state[p as usize >> 5] &= !(1 << (p & 31));
+                            }
+                        }
+
+                        // debug shell
+                        if vcd_time_last_active >= launch_debug_shell_after {
+                            println!("{{DEBUG SHELL}}: at timestamp #{}, enter a net name to get its value", vcd_time_last_active);
+                            let mut line;
+                            loop {
+                                line = String::new();
+                                std::io::stdin().read_line(&mut line).unwrap();
+                                line = line.trim().to_string();
+                                if line.is_empty() { continue }
+                                if line == ".exit" {
+                                    break
+                                }
+                                let mut found = false;
+                                for net_i in 0..netlistdb.num_nets {
+                                    if netlistdb.netnames[net_i].dbg_fmt_pin().as_str() == line.as_str() {
+                                        found = true;
+                                        let root = netlistdb.net2pin.items[netlistdb.net2pin.start[net_i]];
+                                        if netlistdb.pindirect[root] != Direction::O {
+                                            println!("net {:?} is undriven", netlistdb.netnames[net_i].dbg_fmt_pin());
+                                            continue
+                                        }
+                                        let aigpin = aig.pin2aigpin_iv[root];
+                                        println!(
+                                            "net {:?} driver {:?} (pin {} aigpin_iv {}) last recorded value is {}",
+                                            netlistdb.netnames[net_i].dbg_fmt_pin(),
+                                            netlistdb.pinnames[root].dbg_fmt_pin(),
+                                            root, aigpin,
+                                            aigpin_values_debug[aigpin >> 1] ^ ((aigpin & 1) as u8)
+                                        );
+                                    }
+                                }
+                                if !found {
+                                    println!("entered net {:?} not found in netlist", line);
+                                }
                             }
                         }
                     }
                 }
+                if last_vcd_time_active {
+                    vcd_time_last_active = vcd_time;
+                }
                 vcd_time = t;
-                last_vcd_time_active = false;
+                // if output includes wires, we force simulate on all
+                // input change events to make sure the internal pins
+                // are correct
+                last_vcd_time_active = args.include_wires;
+
+                for pos in std::mem::take(&mut delayed_bit_changes) {
+                    state[(pos >> 5) as usize] ^= 1u32 << (pos & 31);
+                }
             },
             FastFlowToken::Value(FFValueChange { id, bits }) => {
                 for (pos, b) in bits.iter().enumerate() {
@@ -668,7 +777,7 @@ fn main() {
                                 state[p as usize >> 5] |= 1 << (p & 31);
                             }
                         }
-                        state[(pos >> 5) as usize] ^= 1 << (pos & 31);
+                        delayed_bit_changes.insert(pos);
                     }
                 }
             }

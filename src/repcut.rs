@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 /// RepCut implementation
 
 use crate::aig::{DriverType, AIG};
+use crate::staging::StagedAIG;
 use indexmap::{IndexMap, IndexSet};
 use cachedhash::CachedHash;
 use std::collections::HashMap;
@@ -32,6 +35,7 @@ struct EndpointSet {
 }
 
 pub struct RCHyperGraph {
+    num_vertices: usize,
     clusters: IndexMap<CachedHash<EndpointSet>, usize>,
     endpoint_weights: Vec<u64>,
 }
@@ -50,10 +54,10 @@ impl EndpointSet {
 }
 
 impl RCHyperGraph {
-    pub fn from_aig(aig: &AIG) -> RCHyperGraph {
+    pub fn from_staged_aig(aig: &AIG, staged: &StagedAIG) -> RCHyperGraph {
         let timer_repcut_endpoint_process = clilog::stimer!("repcut endpoint process");
         let num_blocks = (
-            aig.num_endpoint_groups() + REPCUT_BITSET_BLOCK_SIZE - 1
+            staged.num_endpoint_groups() + REPCUT_BITSET_BLOCK_SIZE - 1
         ) / REPCUT_BITSET_BLOCK_SIZE;
         let mut segments_blockid_nodeid = vec![
             Vec::<Option<Arc<CachedHash<EndpointSetSegment>>>>::new();
@@ -62,17 +66,17 @@ impl RCHyperGraph {
         segments_blockid_nodeid.par_iter_mut().enumerate().for_each(|(i_block, vs)| {
             *vs = vec![None; aig.num_aigpins + 1];
             let endpoint_block_st = i_block * REPCUT_BITSET_BLOCK_SIZE;
-            let endpoint_block_ed = aig.num_endpoint_groups()
+            let endpoint_block_ed = staged.num_endpoint_groups()
                 .min(endpoint_block_st + REPCUT_BITSET_BLOCK_SIZE);
             let mut endpoint_pins = Vec::new();
             for endpt_i in endpoint_block_st..endpoint_block_ed {
-                aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+                staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                     endpoint_pins.push(i);
                 });
             }
             let order_blk = aig.topo_traverse_generic(
                 Some(&endpoint_pins),
-                None
+                staged.primary_inputs.as_ref()
             );
             let mut unique_segs =
                 IndexSet::<Arc<CachedHash<EndpointSetSegment>>>::new();
@@ -80,7 +84,7 @@ impl RCHyperGraph {
                 HashMap::new();
             for endpt_i in endpoint_block_st..endpoint_block_ed {
                 let idx_offset = endpt_i - endpoint_block_st;
-                aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+                staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                     let ess = ess_init.entry(i).or_default();
                     ess.bs_set[idx_offset / 64] |= 1 << (idx_offset % 64);
                 });
@@ -121,7 +125,16 @@ impl RCHyperGraph {
         }
         clilog::finish!(timer_repcut_endpoint_process);
 
-        let order_all = aig.topo_traverse_generic(None, None);
+        let mut endpoint_pins_all = Vec::new();
+        for endpt_i in 0..staged.num_endpoint_groups() {
+            staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
+                endpoint_pins_all.push(i);
+            });
+        }
+        let order_all = aig.topo_traverse_generic(
+            Some(&endpoint_pins_all),
+            staged.primary_inputs.as_ref()
+        );
         let mut node_weights = vec![0.0f32; aig.num_aigpins + 1];
         for &i in &order_all {
             node_weights[i] = 1.;
@@ -139,14 +152,14 @@ impl RCHyperGraph {
             }
         }
         let mut num_fanouts_to_endpt = vec![0usize; aig.num_aigpins + 1];
-        for endpt_i in 0..aig.num_endpoint_groups() {
-            aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+        for endpt_i in 0..staged.num_endpoint_groups() {
+            staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                 num_fanouts_to_endpt[i] += 1;
             });
         }
-        let endpoint_weights = (0..aig.num_endpoint_groups()).map(|endpt_i| {
+        let endpoint_weights = (0..staged.num_endpoint_groups()).map(|endpt_i| {
             let mut tot = 0.0;
-            aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+            staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                 tot += node_weights[i] / (num_fanouts_to_endpt[i] as f32)
             });
             (tot + 0.5) as u64
@@ -154,19 +167,23 @@ impl RCHyperGraph {
 
         // println!("clusters: {:#?}, endpoint_weights: {:#?}", clusters, endpoint_weights);
         RCHyperGraph {
+            num_vertices: staged.num_endpoint_groups(),
             clusters, endpoint_weights
         }
     }
-}
 
-impl fmt::Display for RCHyperGraph {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut rng = ChaCha20Rng::seed_from_u64(8026727);
-        writeln!(f, "{} {} 11", self.clusters.len(), self.endpoint_weights.len())?;
-        for (s, v) in &self.clusters {
+    /// Make an edge list.
+    ///
+    /// (weight, node indices)
+    pub fn num_vertices(&self) -> usize {
+        self.num_vertices
+    }
+
+    pub fn to_edges(&self) -> Vec<(usize, Vec<usize>)> {
+        self.clusters.par_iter().enumerate().map(|(i, (s, v))| {
+            let mut rng = ChaCha20Rng::seed_from_u64(8026727 + i as u64);
             let mut edgend = Vec::<usize>::new();
             let mut num_prev_nodes = 0;
-            edgend.reserve(REPCUT_HYPERGRAPH_EDGE_SIZE_LIMIT);
             for segment_i in 0..s.s.len() {
                 let bs_set = match &s.s[segment_i] {
                     Some(seg) => &seg.bs_set,
@@ -178,7 +195,7 @@ impl fmt::Display for RCHyperGraph {
                     }
                     for k in 0..64 {
                         if (bs_set[bs_i] >> k & 1) != 0 {
-                            let nd = segment_i * REPCUT_BITSET_BLOCK_SIZE + bs_i * 64 + k + 1;
+                            let nd = segment_i * REPCUT_BITSET_BLOCK_SIZE + bs_i * 64 + k;
                             if edgend.len() < REPCUT_HYPERGRAPH_EDGE_SIZE_LIMIT {
                                 edgend.push(nd);
                             }
@@ -190,9 +207,58 @@ impl fmt::Display for RCHyperGraph {
                     }
                 }
             }
+            (*v, edgend)
+        }).collect()
+    }
+
+    /// Run mt-kahypar to partition this hypergraph.
+    pub fn partition(&self, num_parts: usize) -> Vec<usize> {
+        // Handle the special case where num_parts = 1
+        // mt-kahypar requires k >= 2, so we handle k=1 manually
+        if num_parts == 1 {
+            return vec![0; self.num_vertices];
+        }
+        
+        let ctx = mt_kahypar::Context::builder()
+            .preset(mt_kahypar::Preset::Deterministic)
+            .k(num_parts as i32)
+            .epsilon(0.2)
+            .objective(mt_kahypar::Objective::Soed)
+            .verbose(true)
+            .build().unwrap();
+        let edges = self.to_edges();
+        let mut hyperedge_indices = Vec::with_capacity(edges.len() + 1);
+        hyperedge_indices.push(0);
+        hyperedge_indices.extend(edges.iter().scan(0, |acc, (_, edgend)| {
+            *acc += edgend.len();
+            Some(*acc)
+        }));
+        let mut hyperedges = Vec::with_capacity(hyperedge_indices[edges.len()]);
+        hyperedges.extend(edges.iter().flat_map(|(_, edgend)| {
+            edgend.iter().copied()
+        }));
+        let hyperedge_weights = edges.iter().map(|(v, _)| TryInto::<i32>::try_into(*v).unwrap()).collect::<Vec<_>>();
+        let vertex_weights = self.endpoint_weights.iter().map(|v| TryInto::<i32>::try_into(*v).unwrap()).collect::<Vec<_>>();
+        let hg = mt_kahypar::Hypergraph::from_adjacency(
+            &ctx,
+            self.num_vertices,
+            &hyperedge_indices,
+            &hyperedges,
+            Some(&hyperedge_weights),
+            Some(&vertex_weights)
+        ).unwrap();
+        let parts = hg.partition().unwrap();
+        parts.extract_partition().into_iter().map(|i| i as usize).collect()
+    }
+}
+
+impl fmt::Display for RCHyperGraph {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{} {} 11", self.clusters.len(), self.endpoint_weights.len())?;
+        for (v, edgend) in self.to_edges() {
             write!(f, "{}", v)?;
             for nd in edgend {
-                write!(f, " {}", nd)?;
+                write!(f, " {}", nd + 1)?;
             }
             writeln!(f)?;
         }

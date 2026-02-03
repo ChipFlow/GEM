@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 use std::path::PathBuf;
 use gem::aigpdk::{AIGPDKLeafPins, AIGPDK_SRAM_SIZE};
 use gem::aig::{DriverType, AIG};
+use gem::staging::build_staged_aigs;
 use gem::pe::Partition;
 use gem::flatten::FlattenedScriptV1;
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
@@ -26,6 +29,9 @@ struct SimulatorArgs {
     /// If not specified, we will guess it from the hierarchy.
     #[clap(long)]
     top_module: Option<String>,
+    /// Level split thresholds.
+    #[clap(long, value_delimiter=',')]
+    level_split: Vec<usize>,
     /// Input path for the serialized partitions.
     gemparts: PathBuf,
     /// VCD input signal path
@@ -199,10 +205,10 @@ fn simulate_block_v1(
                 let idx = script[script_pi + (i * 2)];
                 let mut mask = script[script_pi + (i * 2 + 1)];
                 if mask == 0 { continue }
-                let value = input_state[idx as usize];
-                if debug_verbose && i == 11 {
-                    println!(" => pos 11 reading global stage {_gr_i} idx {idx} mask {mask} value {value}");
-                }
+                let value = match (idx >> 31) != 0 {
+                    false => input_state[idx as usize],
+                    true => output_state[(idx ^ (1 << 31)) as usize]
+                };
                 while mask != 0 {
                     cur_state <<= 1;
                     let lowbit = mask & (-(mask as i32)) as u32;
@@ -437,10 +443,13 @@ fn main() {
     ).expect("cannot build netlist");
 
     let aig = AIG::from_netlistdb(&netlistdb);
+    let stageds = build_staged_aigs(&aig, &args.level_split);
+
     let f = std::fs::File::open(&args.gemparts).unwrap();
     let mut buf = std::io::BufReader::new(f);
-    let effective_parts: Vec<Partition> = serde_bare::from_reader(&mut buf).unwrap();
-    clilog::info!("# of effective partitions: {}", effective_parts.len());
+    let parts_in_stages: Vec<Vec<Partition>> = serde_bare::from_reader(&mut buf).unwrap();
+    clilog::info!("# of effective partitions in each stage: {:?}",
+                  parts_in_stages.iter().map(|ps| ps.len()).collect::<Vec<_>>());
 
     let mut input_layout = Vec::new();
     for (i, driv) in aig.drivers.iter().enumerate() {
@@ -450,10 +459,13 @@ fn main() {
     }
 
     let script = FlattenedScriptV1::from(
-        &aig, &effective_parts, args.num_blocks, input_layout
+        &aig, &stageds.iter().map(|(_, _, staged)| staged).collect::<Vec<_>>(),
+        &parts_in_stages.iter().map(|ps| ps.as_slice()).collect::<Vec<_>>(),
+        args.num_blocks, input_layout
     );
 
-    use std::hash::{DefaultHasher, Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::Hasher;
     let mut s = DefaultHasher::new();
     script.blocks_data.hash(&mut s);
     println!("Script hash: {}", s.finish());
@@ -540,6 +552,10 @@ fn main() {
     let out2vcd = netlistdb.cell2pin.iter_set(0).filter_map(|i| {
         if netlistdb.pindirect[i] == Direction::I {
             let aigpin = aig.pin2aigpin_iv[i];
+            if matches!(aig.drivers[aigpin >> 1], DriverType::InputPort(_)) {
+                clilog::info!("skipped output for port {} as it is a pass-through of input port.", netlistdb.pinnames[i].dbg_fmt_pin());
+                return None
+            }
             if aigpin <= 1 {
                 return Some((aigpin, u32::MAX, writer.add_wire(
                     1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin())).unwrap()))
@@ -559,10 +575,22 @@ fn main() {
     // do simulation
     let mut state = vec![0; script.reg_io_state_size as usize];
 
-    let mut vcd_time = u64::MAX;
-    let mut last_vcd_time_active = false;
-    let mut aigpin_values_debug = vec![u8::MAX; aig.num_aigpins + 1];
-    aigpin_values_debug[0] = 0;
+    // the simulator keeps 2 previous timestamps.
+    // vcd_time: the last seen timestamp.
+    // vcd_time_last_active: the last timestamp strictly before vcd_time that has
+    // active events (e.g., watched clock posedge).
+    //
+    // when a new timestamp arrives and vcd_time has active events, we simulate
+    // the circuit with {actived edge flags from vcd_time}, but do NOT include the
+    // input port value changes. then, we associate the result output port values to
+    // vcd_time_last_active.
+    //
+    // the above complexity rises from the necessity to emulate {update, then propagate}
+    // behavior from our actual {propagate, then update} implementation.
+    let mut vcd_time_last_active = u64::MAX;
+    let mut vcd_time = 0;
+    let mut last_vcd_time_active = true;
+    let mut delayed_bit_changes = HashSet::new();
 
     let mut input_states = Vec::new();
     let mut offsets_timestamps = Vec::new();
@@ -574,7 +602,7 @@ fn main() {
                 if last_vcd_time_active {
                     // clilog::debug!("simulating t={}", vcd_time);
                     input_states.extend(state.iter().copied());
-                    offsets_timestamps.push((input_states.len(), vcd_time));
+                    offsets_timestamps.push((input_states.len(), vcd_time_last_active));
                     // reset for next timestamp
                     for (_, &(pe, ne)) in &aig.clock_pin2aigpins {
                         if pe != usize::MAX {
@@ -593,8 +621,15 @@ fn main() {
                         }
                     }
                 }
+                if last_vcd_time_active {
+                    vcd_time_last_active = vcd_time;
+                }
                 vcd_time = t;
                 last_vcd_time_active = false;
+
+                for pos in std::mem::take(&mut delayed_bit_changes) {
+                    state[(pos >> 5) as usize] ^= 1u32 << (pos & 31);
+                }
             },
             FastFlowToken::Value(FFValueChange { id, bits }) => {
                 for (pos, b) in bits.iter().enumerate() {
@@ -626,7 +661,7 @@ fn main() {
                                 state[p as usize >> 5] |= 1 << (p & 31);
                             }
                         }
-                        state[(pos >> 5) as usize] ^= 1 << (pos & 31);
+                        delayed_bit_changes.insert(pos);
                     }
                 }
             }
@@ -637,11 +672,12 @@ fn main() {
     let mut input_states_uvec: UVec<_> = input_states.clone().into();
     let device = Device::CUDA(0);
     input_states_uvec.as_mut_uptr(device);
-    let mut sram_storage = UVec::new_zeroed(script.sram_storage_size as usize * AIGPDK_SRAM_SIZE, device);
+    let mut sram_storage = UVec::new_zeroed(script.sram_storage_size as usize, device);
     device.synchronize();
     let timer_sim = clilog::stimer!("simulation");
     ucci::simulate_v1_noninteractive_simple_scan(
         args.num_blocks,
+        script.num_major_stages,
         &script.blocks_start, &script.blocks_data,
         &mut sram_storage,
         offsets_timestamps.len(),
@@ -660,14 +696,16 @@ fn main() {
         for i in 0..offsets_timestamps.len() {
             let mut output_state = vec![0; script.reg_io_state_size as usize];
             output_state.copy_from_slice(&input_states_sanity[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)]);
-            for block_i in 0..script.num_blocks {
-                simulate_block_v1(
-                    &script.blocks_data[script.blocks_start[block_i]..script.blocks_start[block_i + 1]],
-                    &input_states_sanity[(i * script.reg_io_state_size as usize)..((i + 1) * script.reg_io_state_size as usize)],
-                    &mut output_state,
-                    &mut sram_storage_sanity,
-                    false
-                );
+            for stage_i in 0..script.num_major_stages {
+                for blk_i in 0..script.num_blocks {
+                    simulate_block_v1(
+                        &script.blocks_data[script.blocks_start[stage_i * script.num_blocks + blk_i]..script.blocks_start[stage_i * script.num_blocks + blk_i + 1]],
+                        &input_states_sanity[(i * script.reg_io_state_size as usize)..((i + 1) * script.reg_io_state_size as usize)],
+                        &mut output_state,
+                        &mut sram_storage_sanity,
+                        false
+                    );
+                }
             }
             input_states_sanity[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)].copy_from_slice(&output_state);
             if output_state != input_states_uvec[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)] {
@@ -682,6 +720,9 @@ fn main() {
     clilog::info!("write out vcd");
     let mut last_val = vec![2; out2vcd.len()];
     for &(offset, timestamp) in &offsets_timestamps {
+        if timestamp == u64::MAX {
+            continue
+        }
         writer.timestamp(timestamp).unwrap();
         for (i, &(output_aigpin, output_pos, vid)) in out2vcd.iter().enumerate() {
             use vcd_ng::Value;

@@ -1,6 +1,9 @@
+// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 //! Partition executor
 
 use crate::aig::{DriverType, AIG, EndpointGroup};
+use crate::staging::StagedAIG;
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -502,25 +505,33 @@ impl Partition {
     ///
     /// if the resource is overflowed, None will be returned.
     /// see [Partition] for resource constraints.
-    pub fn build_one(aig: &AIG, endpoints: &Vec<usize>) -> Option<Partition> {
+    pub fn build_one(
+        aig: &AIG,
+        staged: &StagedAIG,
+        endpoints: &Vec<usize>
+    ) -> Option<Partition> {
         let mut unrealized_comb_outputs = IndexSet::new();
-        let mut realized_inputs = IndexSet::new();
+        let mut realized_inputs = staged.primary_inputs.as_ref()
+            .cloned().unwrap_or_default();
         let mut num_srams = 0;
         let mut comb_outputs_activations = IndexMap::<usize, IndexSet<usize>>::new();
         for &endpt_i in endpoints {
-            let edg = aig.get_endpoint_group(endpt_i);
+            let edg = staged.get_endpoint_group(aig, endpt_i);
             edg.for_each_input(|i| {
                 unrealized_comb_outputs.insert(i);
             });
             match edg {
                 EndpointGroup::DFF(dff) => {
-                    comb_outputs_activations.entry(dff.d_iv >> 1).or_default().insert(dff.en_iv);
+                    comb_outputs_activations.entry(dff.d_iv >> 1).or_default().insert(dff.en_iv << 1 | (dff.d_iv & 1));
                 },
                 EndpointGroup::PrimaryOutput(pin) => {
-                    comb_outputs_activations.entry(pin >> 1).or_default().insert(0);
+                    comb_outputs_activations.entry(pin >> 1).or_default().insert(2 | (pin & 1));
                 },
                 EndpointGroup::RAMBlock(_) => {
                     num_srams += 1;
+                },
+                EndpointGroup::StagedIOPin(pin) => {
+                    comb_outputs_activations.entry(pin).or_default().insert(2);
                 },
             }
         }
@@ -528,6 +539,12 @@ impl Partition {
             .map(|(_, ckens)| ckens.len() - 1)
             .sum::<usize>();
         let num_reserved_writeouts = num_srams + (num_output_dups + 31) / 32;
+        if num_reserved_writeouts >= BOOMERANG_MAX_WRITEOUTS ||
+            num_srams * 4 + num_output_dups > BOOMERANG_MAX_WRITEOUTS
+        {
+            // overflowed writeout
+            return None
+        }
         let mut stages = Vec::<BoomerangStage>::new();
         let mut total_write_outs = 0;
         while !unrealized_comb_outputs.is_empty() {
@@ -550,22 +567,28 @@ impl Partition {
 ///
 /// The refined solution will have smaller number of partitions
 /// as we aggressively merge the partitions when possible.
-pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<Partition>> {
+pub fn process_partitions(
+    aig: &AIG,
+    staged: &StagedAIG,
+    mut parts: Vec<Vec<usize>>,
+    max_stage_degrad: usize,
+) -> Option<Vec<Partition>> {
     let cnt_nodes = parts.par_iter().map(|v| {
         let mut comb_outputs = Vec::new();
         for &endpt_i in v {
-            aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+            staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                 comb_outputs.push(i);
             });
         }
         let order = aig.topo_traverse_generic(
-            Some(&comb_outputs), None
+            Some(&comb_outputs),
+            staged.primary_inputs.as_ref(),
         );
         order.len()
     }).collect::<Vec<_>>();
 
     let all_original_parts = parts.par_iter().enumerate().map(|(i, v)| {
-        let part = Partition::build_one(&aig, v);
+        let part = Partition::build_one(aig, staged, v);
         if part.is_none() {
             clilog::error!("Partition {} exceeds resource constraint.", i);
         }
@@ -576,6 +599,7 @@ pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<P
         .map(|p| p.stages.len()).max().unwrap();
 
     let mut effective_parts = Vec::<Partition>::new();
+    let max_trials = (all_original_parts.len() / 8).max(20);
     for (i, mut partition_self) in all_original_parts.into_iter().enumerate() {
         if parts[i].is_empty() {
             continue
@@ -585,7 +609,7 @@ pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<P
         loop {
             let mut comb_outputs = Vec::new();
             for &endpt_i in &parts[i] {
-                aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+                staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                     comb_outputs.push(i);
                 });
             }
@@ -597,12 +621,13 @@ pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<P
                 }
                 let mut comb_outputs = comb_outputs.clone();
                 for &endpt_i in v {
-                    aig.get_endpoint_group(endpt_i).for_each_input(|i| {
+                    staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
                         comb_outputs.push(i);
                     });
                 }
                 let order = aig.topo_traverse_generic(
-                    Some(&comb_outputs), None
+                    Some(&comb_outputs),
+                    staged.primary_inputs.as_ref(),
                 );
                 Some((order.len() - cnt_nodes[i + j + 1].max(cnt_node_i),
                       order.len(),
@@ -622,12 +647,15 @@ pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<P
 
             for (merge_i, &(_cnt_diff, cnt_new, j)) in merge_choices.iter().enumerate() {
                 if merge_trials[merge_i].is_none() {
+                    if merge_i > max_trials {
+                        break   // do not try too more
+                    }
                     let rhs = merge_trials.len().min(
                         merge_i + parallel_trial_stride);
                     merge_trials[merge_i..rhs].par_iter_mut().enumerate().for_each(|(merge_j, trial)| {
                         let j = merge_choices[merge_i + merge_j].2;
                         let parts_ij = parts[i].iter().chain(parts[j].iter()).copied().collect();
-                        let partition_ij = Partition::build_one(&aig, &parts_ij);
+                        let partition_ij = Partition::build_one(aig, staged, &parts_ij);
                         *trial = Some(PartsPartitions {
                             parts_ij, partition_ij
                         });
@@ -644,9 +672,11 @@ pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<P
                         merge_blacklist.insert(j);
                     }
                     Some(partition) if partition.stages.len() >
-                        max_original_nstages =>
+                        max_original_nstages + max_stage_degrad =>
                     {
-                        clilog::debug!("skipped merging {} with {} due to nstage degradation", i, j);
+                        clilog::debug!("skipped merging {} with {} due to nstage degradation: \
+                                        {} > {}", i, j, partition.stages.len(),
+                                       max_original_nstages + max_stage_degrad);
                         merge_blacklist.insert(j);
                     }
                     Some(partition) => {
@@ -673,7 +703,12 @@ pub fn process_partitions(aig: &AIG, mut parts: Vec<Vec<usize>>) -> Option<Vec<P
 
 /// Read a cluster solution from hgr.part.xx file.
 /// Then call [process_partitions].
-pub fn process_partitions_from_hgr_parts_file(aig: &AIG, hgr_parts_file: &PathBuf) -> Option<Vec<Partition>> {
+pub fn process_partitions_from_hgr_parts_file(
+    aig: &AIG,
+    staged: &StagedAIG,
+    hgr_parts_file: &PathBuf,
+    max_stage_degrad: usize,
+) -> Option<Vec<Partition>> {
     use std::io::{BufRead, BufReader};
     use std::fs::File;
 
@@ -692,5 +727,5 @@ pub fn process_partitions_from_hgr_parts_file(aig: &AIG, hgr_parts_file: &PathBu
     clilog::info!("read parts file {} with {} parts",
                   hgr_parts_file.display(), parts.len());
 
-    process_partitions(aig, parts)
+    process_partitions(aig, staged, parts, max_stage_degrad)
 }

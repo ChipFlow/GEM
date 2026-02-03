@@ -1,8 +1,11 @@
+// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
 //! Partition scheduler and flattener
 
 use crate::aig::{AIG, EndpointGroup, DriverType};
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
 use crate::pe::{Partition, BOOMERANG_NUM_STAGES};
+use crate::staging::StagedAIG;
 use indexmap::IndexMap;
 use std::collections::BTreeMap;
 use ulib::UVec;
@@ -11,10 +14,18 @@ pub const NUM_THREADS_V1: usize = 1 << (BOOMERANG_NUM_STAGES - 5);
 
 /// A flattened script, for partition executor version 1.
 /// See [FlattenedScriptV1::blocks_data] for the format details.
+///
+/// Generally, a script contains a number of major stages.
+/// Each stage consists of the same number of blocks.
+/// Each block contains a list of flattened partitions.
 pub struct FlattenedScriptV1 {
     /// the number of blocks
     pub num_blocks: usize,
-    /// the CSR start indices of blocks
+    /// the number of major stages
+    pub num_major_stages: usize,
+    /// the CSR start indices of stages and blocks.
+    ///
+    /// this length is num_blocks * num_major_stages + 1
     pub blocks_start: UVec<usize>,
     /// the partition instructions.
     ///
@@ -27,9 +38,9 @@ pub struct FlattenedScriptV1 {
     ///      when the block has no partition mapped onto it.
     ///    is this the last boomerang stage?
     ///      32-bit, only 0 or 1
-    ///    the number of valid read-in and write-outs.
+    ///    the number of valid write-outs.
     ///      32-bit
-    ///    the read-in&write-out destination offset.
+    ///    the write-out destination offset.
     ///      32-bit
     ///      (at this offset, we put all FFs and other outputs.)
     ///    the srams count and offsets.
@@ -52,6 +63,11 @@ pub struct FlattenedScriptV1 {
     ///    the result should be stored "like pext instruction",
     ///    but "reversed", and then appended to the low bits
     ///    in each round.
+    ///    the index is encoded with a type bit at the highest bit:
+    ///      if it is 0: it means it is offset from previous iteration.
+    ///      if it is 1: it is offset from current iteration
+    ///        which means it is an intermediate value coming from
+    ///        the same cycle but a previous major stage.
     /// 3. boomerang sections, repeat below N*16
     ///    1. local shuffle permutation
     ///       32-bit indices * 16 for each of the 256 threads.
@@ -86,9 +102,9 @@ pub struct FlattenedScriptV1 {
     /// maps from primary inputs, FF:Q/SRAM:* input AIG pins to state offset,
     /// index WITHOUT invert.
     pub input_map: IndexMap<usize, u32>,
-    /// (for debug purpose) the relation between block and part indices
-    /// as given in construction.
-    pub blocks_parts: Vec<Vec<usize>>,
+    /// (for debug purpose) the relation between major stage, block and
+    /// part indices as given in construction.
+    pub stages_blocks_parts: Vec<Vec<Vec<usize>>>,
 }
 
 fn map_global_read_to_rounds(
@@ -142,7 +158,7 @@ fn map_global_read_to_rounds(
 }
 
 /// temporaries for a part being flattened. will be discarded after built.
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 struct FlatteningPart {
     /// for each boomerang stage, the result bits layout.
     afters: Vec<Vec<usize>>,
@@ -210,7 +226,9 @@ fn set_bit_in_u32(v: &mut u32, pos: u32, bit: u8) {
 }
 
 impl FlatteningPart {
-    fn init_afters_writeouts(&mut self, aig: &AIG, part: &Partition) {
+    fn init_afters_writeouts(
+        &mut self, aig: &AIG, staged: &StagedAIG, part: &Partition
+    ) {
         let afters = part.stages.iter().map(|s| {
             let mut after = Vec::with_capacity(1 << BOOMERANG_NUM_STAGES);
             after.push(usize::MAX);
@@ -237,13 +255,17 @@ impl FlatteningPart {
         let mut comb_outputs_activations =
             IndexMap::<usize, IndexMap<usize, Option<u16>>>::new();
         for &endpt_i in &part.endpoints {
-            match aig.get_endpoint_group(endpt_i) {
+            match staged.get_endpoint_group(aig, endpt_i) {
                 EndpointGroup::RAMBlock(_) => {
                     self.num_srams += 1;
                 },
                 EndpointGroup::PrimaryOutput(idx) => {
                     comb_outputs_activations.entry(idx >> 1)
                         .or_default().insert(2 | (idx & 1), None);
+                },
+                EndpointGroup::StagedIOPin(idx) => {
+                    comb_outputs_activations.entry(idx)
+                        .or_default().insert(2, None);
                 },
                 EndpointGroup::DFF(dff) => {
                     comb_outputs_activations.entry(dff.d_iv >> 1)
@@ -313,7 +335,12 @@ impl FlatteningPart {
             return pos
         }
         let (clken_iv_perm, clken_iv_inv, clken_iv_set0) = self.query_permute_with_pin_iv(clken_iv);
-        let origpos = *self.after_writeout_pin2pos.get(&(pin_iv >> 1)).unwrap() as usize;
+        let origpos = match self.after_writeout_pin2pos.get(&(pin_iv >> 1)) {
+            Some(origpos) => *origpos,
+            None => {
+                panic!("position of pin_iv {} (clken_iv {}) not found.. buggy boomerang, check if netlist and gemparts mismatch.", pin_iv, clken_iv)
+            }
+        } as usize;
         let r_pos = if activ_idx == 0 {
             self.place_clken_datainv(
                 origpos, clken_iv_perm, clken_iv_inv, clken_iv_set0, (pin_iv & 1) as u8
@@ -324,6 +351,10 @@ impl FlatteningPart {
             self.cnt_placed_duplicate_permute += 1;
             let dup_pos = ((self.num_writeouts - self.num_srams) * 32 - self.cnt_placed_duplicate_permute) as usize;
             let dup_perm_pos = ((self.num_srams * 4 + self.num_duplicate_writeouts) * 32 - self.cnt_placed_duplicate_permute) as usize;
+            if dup_perm_pos >= 8192 {
+                panic!("sram duplicate bit larger than expected..")
+                // dup_perm_pos = 8191;
+            }
             self.place_sram_duplicate(
                 dup_perm_pos, (origpos as u16, 0, 0)
             );
@@ -337,7 +368,15 @@ impl FlatteningPart {
         r_pos
     }
 
-    fn make_inputs_outputs(&mut self, aig: &AIG, part: &Partition, input_map: &mut IndexMap<usize, u32>, output_map: &mut IndexMap<usize, u32>) {
+    fn make_inputs_outputs(
+        &mut self,
+        aig: &AIG,
+        staged: &StagedAIG,
+        part: &Partition,
+        input_map: &mut IndexMap<usize, u32>,
+        staged_io_map: &mut IndexMap<usize, u32>,
+        output_map: &mut IndexMap<usize, u32>,
+    ) {
         self.sram_duplicate_permute = vec![0; 1 << BOOMERANG_NUM_STAGES];
         self.sram_duplicate_inv = vec![0u32; NUM_THREADS_V1];
         self.sram_duplicate_set0 = vec![u32::MAX; NUM_THREADS_V1];
@@ -349,7 +388,7 @@ impl FlatteningPart {
 
         let mut cur_sram_id = 0;
         for &endpt_i in &part.endpoints {
-            match aig.get_endpoint_group(endpt_i) {
+            match staged.get_endpoint_group(aig, endpt_i) {
                 EndpointGroup::RAMBlock(ram) => {
                     let sram_rd_data_local_offset = self.num_writeouts as usize - self.num_srams as usize + cur_sram_id as usize;
                     let sram_rd_data_global_start = self.state_start + self.num_writeouts - self.num_srams + cur_sram_id;
@@ -388,12 +427,29 @@ impl FlatteningPart {
                     cur_sram_id += 1;
                 },
                 EndpointGroup::PrimaryOutput(idx_iv) => {
+                    if idx_iv == 0 {
+                        panic!("primary output has zero..??")
+                    }
                     let pos = self.state_start * 32 + self.get_or_place_output_with_activation(
                         idx_iv, 1
                     ) as u32;
                     output_map.insert(idx_iv, pos);
                 },
+                EndpointGroup::StagedIOPin(idx) => {
+                    if idx == 0 {
+                        panic!("staged IO pin has zero..??")
+                    }
+                    let pos = self.state_start * 32 + self.get_or_place_output_with_activation(
+                        idx << 1, 1
+                    ) as u32;
+                    staged_io_map.insert(idx, pos);
+                },
                 EndpointGroup::DFF(dff) => {
+                    if dff.d_iv == 0 {
+                        clilog::warn!(DFF_CONST_ERR, "dff d_iv has zero, not fully optimized netlist. ignoring the error..");
+                        input_map.insert(dff.q, 0);
+                        continue
+                    }
                     let pos = self.state_start * 32 + self.get_or_place_output_with_activation(
                         dff.d_iv, dff.en_iv
                     ) as u32;
@@ -408,7 +464,11 @@ impl FlatteningPart {
         // println!("test clken_permute: {:?}, wos (w/o sram or dup): {:?}", self.clken_permute, self.parts_after_writeouts);
     }
 
-    fn build_script(&self, aig: &AIG, part: &Partition, input_map: &IndexMap<usize, u32>) -> Vec<u32> {
+    fn build_script(
+        &self, aig: &AIG, part: &Partition,
+        input_map: &IndexMap<usize, u32>,
+        staged_io_map: &IndexMap<usize, u32>,
+    ) -> Vec<u32> {
         let mut script = Vec::<u32>::new();
 
         // metadata
@@ -449,14 +509,23 @@ impl FlatteningPart {
         let mut inputs_taken = BTreeMap::<u32, u32>::new();
         for &inp in &part.stages[0].hier[0] {
             if inp == usize::MAX { continue }
-            let pos = match input_map.get(&inp) {
-                Some(idx) => *idx,
-                None => {
-                    panic!("cannot find input pin {}, driver: {:?}", inp, aig.drivers[inp]);
+            match input_map.get(&inp) {
+                Some(&pos) => {
+                    *inputs_taken.entry(pos >> 5).or_default() |=
+                        1 << (pos & 31);
                 }
-            };
-            *inputs_taken.entry(pos >> 5).or_default() |=
-                1 << (pos & 31);
+                None => {
+                    match staged_io_map.get(&inp) {
+                        Some(&pos) => {
+                            *inputs_taken.entry((pos >> 5) | (1u32 << 31))
+                                .or_default() |= 1 << (pos & 31);
+                        }
+                        None => {
+                            panic!("cannot find input pin {}, driver: {:?}, in either primary inputs or staged IOs", inp, aig.drivers[inp]);
+                        }
+                    }
+                }
+            }
         }
         // clilog::debug!(
         //     "part (?) inputs_taken len {}: {:?}",
@@ -485,9 +554,10 @@ impl FlatteningPart {
             let mut local_op2lp = Vec::with_capacity(32);
             let mut bit_id = 0;
             for &(idx, mask) in v.iter().rev() {
+                let is_staged_io = (idx >> 31) != 0;
                 for k in (0..32).rev() {
                     if (mask >> k & 1) != 0 {
-                        local_op2lp.push((idx << 5 | k, (local_i * 32 + bit_id) as u16));
+                        local_op2lp.push(((is_staged_io, idx << 5 | k), (local_i * 32 + bit_id) as u16));
                         bit_id += 1;
                     }
                 }
@@ -500,7 +570,10 @@ impl FlatteningPart {
         let mut last_pin2localpos = IndexMap::new();
         for &inp in &part.stages[0].hier[0] {
             if inp == usize::MAX { continue }
-            let pos = *input_map.get(&inp).unwrap();
+            let pos = match input_map.get(&inp) {
+                Some(&pos) => (false, pos),
+                None => (true, *staged_io_map.get(&inp).unwrap())
+            };
             last_pin2localpos.insert(inp, *outputpos2localpos.get(&pos).unwrap());
         }
 
@@ -611,49 +684,11 @@ impl FlatteningPart {
 }
 
 fn build_flattened_script_v1(
-    aig: &AIG, init_parts: &[Partition], num_blocks: usize,
+    aig: &AIG, stageds: &[&StagedAIG],
+    parts_in_stages: &[&[Partition]],
+    num_blocks: usize,
     input_layout: Vec<usize>
 ) -> FlattenedScriptV1 {
-    // first arrange parts onto blocks.
-    let mut blocks_parts = vec![vec![]; num_blocks];
-    let mut tot_nstages_blocks = vec![0; num_blocks];
-    // masonry layout of blocks. assume parts are sorted with
-    // decreasing order of #stages.
-    for i in 0..init_parts.len().min(num_blocks) {
-        blocks_parts[i].push(i);
-        tot_nstages_blocks[i] = init_parts[i].stages.len();
-    }
-    for i in num_blocks..init_parts.len() {
-        let put = tot_nstages_blocks.iter().enumerate()
-            .min_by(|(_, a), (_, b)| a.cmp(b))
-            .unwrap().0;
-        blocks_parts[put].push(i);
-        tot_nstages_blocks[put] += init_parts[i].stages.len();
-    }
-
-    // the intermediates for parts being flattened
-    let mut flattening_parts: Vec<FlatteningPart> =
-        vec![Default::default(); init_parts.len()];
-
-    // basic index preprocessing for stages
-    for i in 0..init_parts.len() {
-        flattening_parts[i].init_afters_writeouts(aig, &init_parts[i]);
-    }
-
-    // allocate output state positions for all srams,
-    // in the order of block affinity.
-    let states_start = ((input_layout.len() + 31) / 32) as u32;
-    let mut sum_state_start = states_start;
-    let mut sum_srams_start = 0;
-    for block in &blocks_parts {
-        for &part_id in block {
-            flattening_parts[part_id].state_start = sum_state_start;
-            sum_state_start += flattening_parts[part_id].num_writeouts;
-            flattening_parts[part_id].sram_start = sum_srams_start;
-            sum_srams_start += flattening_parts[part_id].num_srams * (1 << AIGPDK_SRAM_ADDR_WIDTH);
-        }
-    }
-
     // determine the output position.
     // this is the prerequisite for generating the read
     // permutations and more.
@@ -661,56 +696,133 @@ fn build_flattened_script_v1(
     // locate input pins and FF/SRAM Q's - for partition input
     // output map:
     // locate primary outputs - for circuit outs
+    // staged io map:
+    // store intermediate nodes between major stages
     let mut input_map = IndexMap::new();
     let mut output_map = IndexMap::new();
+    let mut staged_io_map = IndexMap::new();
     for (i, &input) in input_layout.iter().enumerate() {
         if input == usize::MAX { continue }
         input_map.insert(input, i as u32);
     }
-    // besides input ports, we also have outputs from partitions.
-    // they include original-placed comb output pins,
-    // copied pins for different FF activation,
-    // and SRAM read outputs.
-    for part_id in 0..init_parts.len() {
-        clilog::debug!("initializing output for part {}", part_id);
-        flattening_parts[part_id].make_inputs_outputs(
-            aig, &init_parts[part_id],
-            &mut input_map, &mut output_map
-        );
-    }
 
-    // build script per part. we will later assemble them to blocks.
-    let mut parts_data_split = vec![vec![]; init_parts.len()];
-    for part_id in 0..init_parts.len() {
-        clilog::debug!("building script for part {}", part_id);
-        parts_data_split[part_id] = flattening_parts[part_id].build_script(
-            aig, &init_parts[part_id], &input_map
-        );
-    }
+    let num_major_stages = parts_in_stages.len();
+
+    let states_start = ((input_layout.len() + 31) / 32) as u32;
+    let mut sum_state_start = states_start;
+    let mut sum_srams_start = 0;
+
+    // enumerate all major stages and build them one by one.
+
+    // #[derive(Debug, Clone, Default)]
+    // struct FlatteningStage {
+    //     blocks_parts: Vec<Vec<usize>>,
+    //     flattening_parts: Vec<FlatteningPart>,
+    //     parts_data_split: Vec<Vec<u32>>,
+    // }
+    // let mut flattening_stages =
+    //     Vec::<FlatteningStage>::with_capacity(num_major_stages);
 
     // assemble script per block.
-    let mut blocks_data = Vec::<u32>::with_capacity(
-        parts_data_split.iter().map(|d| d.len()).sum()
-    );
-    let mut blocks_start = Vec::<usize>::with_capacity(num_blocks + 1);
-    for block_id in 0..num_blocks {
-        blocks_start.push(blocks_data.len());
-        if blocks_parts[block_id].is_empty() {
-            let mut dummy = vec![0; NUM_THREADS_V1];
-            dummy[1] = 1;
-            blocks_data.extend(dummy.into_iter());
+    let mut blocks_data = Vec::new();
+    let mut blocks_start = Vec::<usize>::with_capacity(num_blocks * num_major_stages + 1);
+    let mut stages_blocks_parts = Vec::new();
+    let mut stages_flattening_parts = Vec::new();
+
+    for (i, (init_parts, &staged)) in parts_in_stages.into_iter().copied().zip(
+        stageds.into_iter()
+    ).enumerate() {
+        // first arrange parts onto blocks.
+        let mut blocks_parts = vec![vec![]; num_blocks];
+        let mut tot_nstages_blocks = vec![0; num_blocks];
+        // below models the fixed pre&post-cost for each executor
+        let executor_fixed_cost = 3;
+        // masonry layout of blocks. assume parts are sorted with
+        // decreasing order of #stages.
+        for i in 0..init_parts.len().min(num_blocks) {
+            blocks_parts[i].push(i);
+            tot_nstages_blocks[i] = init_parts[i].stages.len() + executor_fixed_cost;
         }
-        else {
-            let num_parts = blocks_parts[block_id].len();
-            let mut last_part_st = usize::MAX;
-            for (i, &part_id) in blocks_parts[block_id].iter().enumerate() {
-                if i == num_parts - 1 {
-                    last_part_st = blocks_data.len();
-                }
-                blocks_data.extend(parts_data_split[part_id].iter().copied());
+        for i in num_blocks..init_parts.len() {
+            let put = tot_nstages_blocks.iter().enumerate()
+                .min_by(|(_, a), (_, b)| a.cmp(b))
+                .unwrap().0;
+            blocks_parts[put].push(i);
+            tot_nstages_blocks[put] += init_parts[i].stages.len() + executor_fixed_cost;
+        }
+        // clilog::debug!("blocks_parts: {:?}", blocks_parts);
+        clilog::debug!("major stage {}: max total boomerang depth (w/ cost) {}",
+                       i, tot_nstages_blocks.iter().copied().max().unwrap());
+
+        // the intermediates for parts being flattened
+        let mut flattening_parts: Vec<FlatteningPart> =
+            vec![Default::default(); init_parts.len()];
+
+        // basic index preprocessing for stages
+        for i in 0..init_parts.len() {
+            flattening_parts[i].init_afters_writeouts(
+                aig, staged, &init_parts[i]);
+        }
+
+        // allocate output state positions for all srams,
+        // in the order of block affinity.
+        for block in &blocks_parts {
+            for &part_id in block {
+                flattening_parts[part_id].state_start = sum_state_start;
+                sum_state_start += flattening_parts[part_id].num_writeouts;
+                flattening_parts[part_id].sram_start = sum_srams_start;
+                sum_srams_start += flattening_parts[part_id].num_srams * (1 << AIGPDK_SRAM_ADDR_WIDTH);
             }
-            assert_ne!(last_part_st, usize::MAX);
-            blocks_data[last_part_st + 1] = 1;
+        }
+
+        // besides input ports, we also have outputs from partitions.
+        // they include original-placed comb output pins,
+        // copied pins for different FF activation,
+        // and SRAM read outputs.
+        for part_id in 0..init_parts.len() {
+            // clilog::debug!("initializing output for part {}", part_id);
+            flattening_parts[part_id].make_inputs_outputs(
+                aig, staged, &init_parts[part_id],
+                &mut input_map, &mut staged_io_map, &mut output_map
+            );
+        }
+        stages_blocks_parts.push(blocks_parts);
+        stages_flattening_parts.push(flattening_parts);
+    }
+
+    for ((blocks_parts, flattening_parts), init_parts) in stages_blocks_parts.iter().zip(
+        stages_flattening_parts.iter_mut()
+    ).zip(
+        parts_in_stages.into_iter().copied()
+    ) {
+        // build script per part. we will later assemble them to blocks.
+        let mut parts_data_split = vec![vec![]; init_parts.len()];
+        for part_id in 0..init_parts.len() {
+            // clilog::debug!("building script for part {}", part_id);
+            parts_data_split[part_id] = flattening_parts[part_id].build_script(
+                aig, &init_parts[part_id], &input_map, &staged_io_map
+            );
+        }
+
+        for block_id in 0..num_blocks {
+            blocks_start.push(blocks_data.len());
+            if blocks_parts[block_id].is_empty() {
+                let mut dummy = vec![0; NUM_THREADS_V1];
+                dummy[1] = 1;
+                blocks_data.extend(dummy.into_iter());
+            }
+            else {
+                let num_parts = blocks_parts[block_id].len();
+                let mut last_part_st = usize::MAX;
+                for (i, &part_id) in blocks_parts[block_id].iter().enumerate() {
+                    if i == num_parts - 1 {
+                        last_part_st = blocks_data.len();
+                    }
+                    blocks_data.extend(parts_data_split[part_id].iter().copied());
+                }
+                assert_ne!(last_part_st, usize::MAX);
+                blocks_data[last_part_st + 1] = 1;
+            }
         }
     }
     blocks_start.push(blocks_data.len());
@@ -721,6 +833,7 @@ fn build_flattened_script_v1(
 
     FlattenedScriptV1 {
         num_blocks,
+        num_major_stages,
         blocks_start: blocks_start.into(),
         blocks_data: blocks_data.into(),
         reg_io_state_size: sum_state_start,
@@ -728,7 +841,7 @@ fn build_flattened_script_v1(
         input_layout,
         input_map,
         output_map,
-        blocks_parts,
+        stages_blocks_parts,
     }
 }
 
@@ -747,9 +860,12 @@ impl FlattenedScriptV1 {
     /// memory layout, each one is an AIG bit index.
     /// padding bits should be set to usize::MAX.
     pub fn from(
-        aig: &AIG, init_parts: &[Partition], num_blocks: usize,
+        aig: &AIG, stageds: &[&StagedAIG],
+        parts_in_stages: &[&[Partition]],
+        num_blocks: usize,
         input_layout: Vec<usize>
     ) -> FlattenedScriptV1 {
-        build_flattened_script_v1(aig, init_parts, num_blocks, input_layout)
+        build_flattened_script_v1(
+            aig, stageds, parts_in_stages, num_blocks, input_layout)
     }
 }
