@@ -55,6 +55,9 @@ jobs:
           brew install llvm
           echo "CC=/opt/homebrew/opt/llvm/bin/clang" >> $GITHUB_ENV
           echo "CXX=/opt/homebrew/opt/llvm/bin/clang++" >> $GITHUB_ENV
+          # Add library paths for libomp linking
+          echo "LIBRARY_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
 
       - name: Cache cargo
         uses: actions/cache@v4
