@@ -437,23 +437,35 @@ impl<'a> LibertyParser<'a> {
     }
 
     fn skip_whitespace(&mut self) {
-        while self.pos < self.content.len() {
-            let ch = self.content.as_bytes()[self.pos];
+        let bytes = self.content.as_bytes();
+        let len = bytes.len();
+        while self.pos < len {
+            let ch = bytes[self.pos];
             if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
                 self.pos += 1;
-            } else if self.content[self.pos..].starts_with("/*") {
-                // Skip block comment
-                if let Some(end) = self.content[self.pos..].find("*/") {
-                    self.pos += end + 2;
+            } else if ch == b'/' && self.pos + 1 < len {
+                let next = bytes[self.pos + 1];
+                if next == b'*' {
+                    // Skip block comment - search for */
+                    self.pos += 2;
+                    while self.pos + 1 < len {
+                        if bytes[self.pos] == b'*' && bytes[self.pos + 1] == b'/' {
+                            self.pos += 2;
+                            break;
+                        }
+                        self.pos += 1;
+                    }
+                } else if next == b'/' {
+                    // Skip line comment - search for newline
+                    self.pos += 2;
+                    while self.pos < len && bytes[self.pos] != b'\n' {
+                        self.pos += 1;
+                    }
+                    if self.pos < len {
+                        self.pos += 1;
+                    }
                 } else {
-                    self.pos = self.content.len();
-                }
-            } else if self.content[self.pos..].starts_with("//") {
-                // Skip line comment
-                if let Some(end) = self.content[self.pos..].find('\n') {
-                    self.pos += end + 1;
-                } else {
-                    self.pos = self.content.len();
+                    break;
                 }
             } else {
                 break;
@@ -461,22 +473,31 @@ impl<'a> LibertyParser<'a> {
         }
     }
 
+    #[inline]
+    fn peek_byte(&self) -> Option<u8> {
+        if self.pos < self.content.len() {
+            Some(self.content.as_bytes()[self.pos])
+        } else {
+            None
+        }
+    }
+
     fn peek_char(&mut self) -> Option<char> {
         self.skip_whitespace();
-        self.content[self.pos..].chars().next()
+        self.peek_byte().map(|b| b as char)
     }
 
     fn expect_char(&mut self, ch: char) -> Result<(), String> {
         self.skip_whitespace();
-        if self.content[self.pos..].starts_with(ch) {
-            self.pos += ch.len_utf8();
+        if self.peek_byte() == Some(ch as u8) {
+            self.pos += 1;
             Ok(())
         } else {
             Err(format!(
                 "Expected '{}' at position {}, found '{}'",
                 ch,
                 self.pos,
-                self.content[self.pos..].chars().next().unwrap_or('?')
+                self.peek_byte().map(|b| b as char).unwrap_or('?')
             ))
         }
     }
@@ -497,12 +518,13 @@ impl<'a> LibertyParser<'a> {
 
     fn read_string(&mut self) -> Result<String, String> {
         self.skip_whitespace();
-        if !self.content[self.pos..].starts_with('"') {
+        if self.peek_byte() != Some(b'"') {
             return Err(format!("Expected string at position {}", self.pos));
         }
         self.pos += 1;
         let start = self.pos;
-        while self.pos < self.content.len() && self.content.as_bytes()[self.pos] != b'"' {
+        let bytes = self.content.as_bytes();
+        while self.pos < bytes.len() && bytes[self.pos] != b'"' {
             self.pos += 1;
         }
         let s = self.content[start..self.pos].to_string();
@@ -514,7 +536,7 @@ impl<'a> LibertyParser<'a> {
 
     fn read_value(&mut self) -> Result<String, String> {
         self.skip_whitespace();
-        if self.content[self.pos..].starts_with('"') {
+        if self.peek_byte() == Some(b'"') {
             self.read_string()
         } else {
             // Read until semicolon, comma, or closing paren
