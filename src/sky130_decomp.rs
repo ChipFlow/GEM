@@ -719,6 +719,27 @@ pub fn decompose_sky130_cell(
             }
         }
 
+        // a311o: Y = (A1 & A2 & A3) | B1 | C1
+        "a311o" => {
+            let a1 = inputs.a1;
+            let a2 = inputs.a2;
+            let a3 = inputs.a3;
+            let b1 = inputs.b1;
+            let c1 = inputs.c1;
+            // Build AND3 first: A1 & A2 & A3
+            // Then OR3: result | B1 | C1 = !(!(result) & !B1 & !C1)
+            DecompResult {
+                and_gates: vec![
+                    (a1 as i64, a2 as i64),
+                    (-1, a3 as i64),
+                    (-2 ^ 1, (b1 ^ 1) as i64),
+                    (-3, (c1 ^ 1) as i64),
+                ],
+                output_idx: -4,
+                output_inverted: true,
+            }
+        }
+
         // a311oi: Y = !((A1 & A2 & A3) | B1 | C1)
         "a311oi" => {
             let a1 = inputs.a1;
@@ -770,6 +791,31 @@ pub fn decompose_sky130_cell(
                     (-1, a3 as i64),
                     (b1 as i64, b2 as i64),
                     (-2 ^ 1, -3 ^ 1),
+                ],
+                output_idx: -4,
+                output_inverted: true,
+            }
+        }
+
+        // a41o: Y = (A1 & A2 & A3 & A4) | B1
+        "a41o" => {
+            let a1 = inputs.a1;
+            let a2 = inputs.a2;
+            let a3 = inputs.a3;
+            let a4 = inputs.a4;
+            let b1 = inputs.b1;
+            // Build AND4: A1 & A2 & A3 & A4
+            // -1 = A1 & A2
+            // -2 = A3 & A4
+            // -3 = -1 & -2 = A1 & A2 & A3 & A4
+            // Then OR with B1: Y = -3 | B1 = !(!-3 & !B1)
+            // -4 = !-3 & !B1 (use inverted inputs)
+            DecompResult {
+                and_gates: vec![
+                    (a1 as i64, a2 as i64),
+                    (a3 as i64, a4 as i64),
+                    (-1, -2),
+                    (-3 ^ 1, (b1 ^ 1) as i64),
                 ],
                 output_idx: -4,
                 output_inverted: true,

@@ -164,6 +164,144 @@ struct TimingStats {
     worst_hold_slack: i64,
 }
 
+/// Trace a clock pin back through buffers/inverters to find the primary input (cell 0).
+/// Returns Some(pinid) if a primary input is found, None otherwise.
+fn trace_clock_to_primary_input(
+    netlistdb: &NetlistDB,
+    start_pinid: usize,
+    cell_library: CellLibrary,
+    verbose: bool,
+) -> Option<usize> {
+    let mut current_pinid = start_pinid;
+    let mut visited = std::collections::HashSet::new();
+    let mut depth = 0;
+
+    loop {
+        if visited.contains(&current_pinid) {
+            if verbose {
+                clilog::debug!("  Clock trace: cycle detected at depth {}", depth);
+            }
+            return None;
+        }
+        visited.insert(current_pinid);
+
+        if visited.len() > 10000 {
+            if verbose {
+                clilog::debug!("  Clock trace: safety limit exceeded at depth {}", depth);
+            }
+            return None;
+        }
+
+        // If this is an input pin, follow the net to its driver
+        if netlistdb.pindirect[current_pinid] == Direction::I {
+            let netid = netlistdb.pin2net[current_pinid];
+            if Some(netid) == netlistdb.net_zero || Some(netid) == netlistdb.net_one {
+                if verbose {
+                    clilog::debug!("  Clock trace: hit constant net at depth {}", depth);
+                }
+                return None;
+            }
+
+            // Find driver pin on the net
+            let net_pins_start = netlistdb.net2pin.start[netid];
+            let net_pins_end = if netid + 1 < netlistdb.net2pin.start.len() {
+                netlistdb.net2pin.start[netid + 1]
+            } else {
+                netlistdb.net2pin.items.len()
+            };
+
+            let mut driver_pin = None;
+            for &np in &netlistdb.net2pin.items[net_pins_start..net_pins_end] {
+                // Check for output (driver) pin
+                if netlistdb.pindirect[np] == Direction::O {
+                    driver_pin = Some(np);
+                    break;
+                }
+                // Check for primary input (cell 0)
+                if netlistdb.pin2cell[np] == 0 {
+                    driver_pin = Some(np);
+                    break;
+                }
+            }
+
+            match driver_pin {
+                Some(dp) => {
+                    current_pinid = dp;
+                    depth += 1;
+                }
+                None => {
+                    if verbose {
+                        clilog::debug!("  Clock trace: no driver found for net {} at depth {}", netid, depth);
+                    }
+                    return None;
+                }
+            }
+            continue;
+        }
+
+        // This is an output pin - check if it's from cell 0 (primary input)
+        let cellid = netlistdb.pin2cell[current_pinid];
+        if cellid == 0 {
+            use netlistdb::GeneralPinName;
+            if verbose && depth <= 5 {
+                clilog::debug!(
+                    "  Clock trace: found primary input {} at depth {}",
+                    netlistdb.pinnames[current_pinid].dbg_fmt_pin(),
+                    depth
+                );
+            }
+            return Some(current_pinid);
+        }
+
+        // Check if this cell is a buffer/inverter that we can trace through
+        let celltype = netlistdb.celltypes[cellid].as_str();
+
+        let is_buffer_or_inv = match cell_library {
+            CellLibrary::SKY130 => {
+                let ct = extract_cell_type(celltype);
+                ct.starts_with("inv")
+                    || ct.starts_with("clkinv")
+                    || ct.starts_with("buf")
+                    || ct.starts_with("clkbuf")
+                    || ct.starts_with("clkdlybuf")
+            }
+            _ => matches!(celltype, "INV" | "BUF"),
+        };
+
+        if !is_buffer_or_inv {
+            if verbose && depth <= 5 {
+                clilog::debug!(
+                    "  Clock trace: hit non-buffer cell {} ({}) at depth {}",
+                    cellid,
+                    celltype,
+                    depth
+                );
+            }
+            return None;
+        }
+
+        // Find the input pin "A" of the buffer/inverter
+        let mut input_pin = None;
+        for ipin in netlistdb.cell2pin.iter_set(cellid) {
+            if netlistdb.pindirect[ipin] == Direction::I {
+                let pin_name = netlistdb.pinnames[ipin].1.as_str();
+                if pin_name == "A" {
+                    input_pin = Some(ipin);
+                    break;
+                }
+            }
+        }
+
+        match input_pin {
+            Some(ip) => {
+                current_pinid = ip;
+                depth += 1;
+            }
+            None => return None,
+        }
+    }
+}
+
 fn main() {
     clilog::init_stderr_color_debug();
     clilog::set_max_print_count(clilog::Level::Warn, "NL_SV_LIT", 1);
@@ -252,13 +390,18 @@ fn main() {
                 let is_clk = matches!(pin_name, "CLK" | "CLKin" | "PORT_R_CLK" | "PORT_W_CLK");
 
                 if is_clk {
-                    let netid = netlistdb.pin2net[pinid];
-                    if Some(netid) == netlistdb.net_zero || Some(netid) == netlistdb.net_one {
-                        continue;
-                    }
-                    let root = netlistdb.net2pin.items[netlistdb.net2pin.start[netid]];
-                    if netlistdb.pin2cell[root] == 0 {
-                        posedge_monitor.insert(root);
+                    // Trace clock pin back through buffers/inverters to primary input
+                    // Only log verbose for first few DFFs to avoid spam
+                    let log_this = args.verbose && posedge_monitor.is_empty();
+                    if let Some(primary_clk_pin) =
+                        trace_clock_to_primary_input(&netlistdb, pinid, cell_library, log_this)
+                    {
+                        posedge_monitor.insert(primary_clk_pin);
+                    } else if args.verbose && posedge_monitor.is_empty() {
+                        clilog::debug!(
+                            "Clock pin {} could not be traced to primary input",
+                            pinid
+                        );
                     }
                 }
             }
