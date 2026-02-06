@@ -39,7 +39,14 @@ class PinsLock:
     reset_pin: int  # Reset pin number
     clock_port: str  # Clock port name
     reset_port: str  # Reset port name
+    _bringup_pins: dict[str, Any] = field(default_factory=dict, repr=False)
     _mappings: dict[tuple[str, str], PinMapping] = field(default_factory=dict, repr=False)
+
+    def get_bringup_invert(self, signal_name: str) -> bool:
+        """Get the invert flag from iomodel for a bringup pin (e.g., 'clk', 'rst_n')."""
+        signal_info = self._bringup_pins.get(signal_name, {})
+        iomodel = signal_info.get("iomodel", {})
+        return iomodel.get("invert", False)
 
     @classmethod
     def from_file(cls, path: Path) -> PinsLock:
@@ -75,6 +82,7 @@ class PinsLock:
             reset_pin=reset_pin,
             clock_port=clock_port,
             reset_port=reset_port,
+            _bringup_pins=core,
         )
 
         # Build mappings for soc peripherals

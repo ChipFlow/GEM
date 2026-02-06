@@ -30,7 +30,7 @@ class CaravelVCDGenerator:
     """Generates VCD stimulus for Caravel OpenFrame wrapper designs."""
 
     pins_lock: PinsLock
-    clock_period_ps: int = 40_000_000  # 25 MHz = 40ns
+    clock_period_ps: int = 40_000  # 25 MHz = 40ns = 40,000ps
     clock_hz: int = 25_000_000
     reset_cycles: int = 10
     max_cycles: int = 1_000_000
@@ -110,7 +110,33 @@ class CaravelVCDGenerator:
             vcd.set_value("clk_in", 0)
 
             # Initial gpio_in value - set clock low, reset asserted
+            # Also set UART RX high (idle state) if present
             self._gpio_in = 0
+
+            # Handle reset polarity based on invert flag from pins.lock iomodel
+            # If invert=True: gpio=1 means reset asserted (internal rst_n=0)
+            # If invert=False: gpio=0 means reset asserted (internal rst_n=0)
+            reset_invert = self.pins_lock.get_bringup_invert("rst_n")
+            reset_assert_value = 1 if reset_invert else 0
+            reset_deassert_value = 0 if reset_invert else 1
+
+            log.info(f"Reset invert={reset_invert}: assert with gpio_in[{reset_gpio}]={reset_assert_value}, "
+                     f"deassert with gpio_in[{reset_gpio}]={reset_deassert_value}")
+
+            # Set initial reset state (asserted)
+            if reset_assert_value:
+                self._gpio_in |= (1 << reset_gpio)
+
+            # Set UART RX pins to idle (high) - they need pull-ups
+            for periph_name in ["uart_0", "uart_1", "uart"]:
+                uart_mappings = self.pins_lock.get_peripheral_mappings(periph_name)
+                for mapping in uart_mappings:
+                    if mapping.signal == "rx":
+                        for pin_idx in mapping.pin_indices:
+                            gpio_idx = self._pin_to_gpio(pin_idx)
+                            self._gpio_in |= (1 << gpio_idx)
+                            log.info(f"Setting UART RX gpio_in[{gpio_idx}] = 1 (idle)")
+                        break
 
             # Reset sequence - hold reset, generate clock edges
             for cycle in range(self.reset_cycles):
@@ -131,10 +157,12 @@ class CaravelVCDGenerator:
             all_events.append((reset_time, "resetb_h", 1))
             all_events.append((reset_time, "resetb_l", 1))
 
-            # Also set the reset bit in gpio_in (active-low reset, so 1 = deasserted)
-            # The reset_gpio from pins.lock indicates which GPIO bit controls reset
-            self._gpio_in |= (1 << reset_gpio)
-            log.info(f"Reset deasserted at cycle {self.reset_cycles} (gpio_in[{reset_gpio}] = 1)")
+            # Update gpio_in reset bit to deasserted state
+            if reset_deassert_value:
+                self._gpio_in |= (1 << reset_gpio)
+            else:
+                self._gpio_in &= ~(1 << reset_gpio)
+            log.info(f"Reset deasserted at cycle {self.reset_cycles} (gpio_in[{reset_gpio}] = {reset_deassert_value})")
 
             self._current_cycle = self.reset_cycles
 
@@ -293,8 +321,8 @@ def main() -> int:
     parser.add_argument(
         "--clock-period-ps",
         type=int,
-        default=40_000_000,
-        help="Clock period in picoseconds (default: 40000000 = 25MHz)",
+        default=40_000,
+        help="Clock period in picoseconds (default: 40000 = 25MHz)",
     )
     parser.add_argument(
         "--baud-rate",
