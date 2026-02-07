@@ -102,14 +102,13 @@ class CaravelVCDGenerator:
             vcd.set_value("porb_l", 1)
             vcd.set_value("resetb_h", 0)  # Assert reset (active high for resetb means 0)
             vcd.set_value("resetb_l", 0)
-            vcd.set_value("gpio_in", 0)
             vcd.set_value("gpio_in_h", 0)
             vcd.set_value("gpio_loopback_one", 0)
             vcd.set_value("gpio_loopback_zero", 0)
             vcd.set_value("mask_rev", 0)
             vcd.set_value("clk_in", 0)
 
-            # Initial gpio_in value - set clock low, reset asserted
+            # Build initial gpio_in value - set clock low, reset asserted
             # Also set UART RX high (idle state) if present
             self._gpio_in = 0
 
@@ -137,6 +136,10 @@ class CaravelVCDGenerator:
                             self._gpio_in |= (1 << gpio_idx)
                             log.info(f"Setting UART RX gpio_in[{gpio_idx}] = 1 (idle)")
                         break
+
+            # Now write the initial gpio_in with reset asserted and UART RX idle
+            vcd.set_value("gpio_in", self._gpio_in)
+            log.info(f"Initial gpio_in = 0x{self._gpio_in:011x} (reset={reset_assert_value}, clock=0)")
 
             # Reset sequence - hold reset, generate clock edges
             for cycle in range(self.reset_cycles):
