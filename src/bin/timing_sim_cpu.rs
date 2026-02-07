@@ -15,7 +15,7 @@ use gem::flatten::PackedDelay;
 use gem::liberty_parser::TimingLibrary;
 use gem::sky130::{detect_library_from_file, extract_cell_type, CellLibrary, SKY130LeafPins};
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom, Write};
@@ -92,6 +92,15 @@ struct Args {
     /// Flash D0 GPIO index (default: 2 for Caravel).
     #[clap(long, default_value = "2")]
     flash_d0_gpio: usize,
+
+    /// JSON watchlist file with signals to trace.
+    /// Format: {"signals": [{"name": "label", "net": "net_name"}, ...]}
+    #[clap(long)]
+    watchlist: Option<PathBuf>,
+
+    /// Output file for signal trace (CSV format).
+    #[clap(long)]
+    trace_output: Option<PathBuf>,
 }
 
 /// UART TX decoder state machine.
@@ -251,6 +260,201 @@ impl QspiFlash {
         self.last_csn = csn;
         d_i
     }
+}
+
+/// SRAM cell information for simulation.
+/// Tracks the pin IDs for a CF_SRAM_1024x32 cell and its memory contents.
+struct SramCell {
+    cell_id: usize,
+    // Control pins
+    clk_pin: usize,
+    en_pin: usize,
+    r_wb_pin: usize,  // 1=read, 0=write
+    // Address pins (10 bits for 1024 words)
+    addr_pins: Vec<usize>,
+    // Byte enable pins (32 bits)
+    ben_pins: Vec<usize>,
+    // Data input pins (32 bits)
+    di_pins: Vec<usize>,
+    // Data output pins (32 bits)
+    do_pins: Vec<usize>,
+    // Memory contents (1024 x 32-bit words)
+    memory: Vec<u32>,
+    // Last clock state for edge detection
+    last_clk: bool,
+}
+
+impl SramCell {
+    fn new(cell_id: usize) -> Self {
+        Self {
+            cell_id,
+            clk_pin: usize::MAX,
+            en_pin: usize::MAX,
+            r_wb_pin: usize::MAX,
+            addr_pins: Vec::new(),
+            ben_pins: Vec::new(),
+            di_pins: Vec::new(),
+            do_pins: Vec::new(),
+            memory: vec![0; 1024],  // 1024 words, initialized to 0
+            last_clk: false,
+        }
+    }
+
+    /// Collect pin IDs from the netlist for this SRAM cell.
+    fn collect_pins(&mut self, netlistdb: &NetlistDB) {
+        for pinid in netlistdb.cell2pin.iter_set(self.cell_id) {
+            let pin_name = netlistdb.pinnames[pinid].1.as_str();
+            let idx = netlistdb.pinnames[pinid].2;
+
+            match pin_name {
+                "CLKin" => self.clk_pin = pinid,
+                "EN" => self.en_pin = pinid,
+                "R_WB" => self.r_wb_pin = pinid,
+                "AD" => {
+                    // Address is a bus - ensure we have space and insert at correct index
+                    if let Some(i) = idx {
+                        let i = i as usize;
+                        if self.addr_pins.len() <= i {
+                            self.addr_pins.resize(i + 1, usize::MAX);
+                        }
+                        self.addr_pins[i] = pinid;
+                    }
+                }
+                "BEN" => {
+                    if let Some(i) = idx {
+                        let i = i as usize;
+                        if self.ben_pins.len() <= i {
+                            self.ben_pins.resize(i + 1, usize::MAX);
+                        }
+                        self.ben_pins[i] = pinid;
+                    }
+                }
+                "DI" => {
+                    if let Some(i) = idx {
+                        let i = i as usize;
+                        if self.di_pins.len() <= i {
+                            self.di_pins.resize(i + 1, usize::MAX);
+                        }
+                        self.di_pins[i] = pinid;
+                    }
+                }
+                "DO" => {
+                    if let Some(i) = idx {
+                        let i = i as usize;
+                        if self.do_pins.len() <= i {
+                            self.do_pins.resize(i + 1, usize::MAX);
+                        }
+                        self.do_pins[i] = pinid;
+                    }
+                }
+                _ => {} // Ignore test pins (SM, TM, WLBI, ScanIn*, etc.)
+            }
+        }
+    }
+
+    /// Read address from current circuit state.
+    fn read_addr(&self, circ_state: &[u8]) -> usize {
+        let mut addr = 0usize;
+        for (i, &pin) in self.addr_pins.iter().enumerate() {
+            if pin != usize::MAX && circ_state[pin] != 0 {
+                addr |= 1 << i;
+            }
+        }
+        addr
+    }
+
+    /// Read data input from current circuit state.
+    fn read_di(&self, circ_state: &[u8]) -> u32 {
+        let mut data = 0u32;
+        for (i, &pin) in self.di_pins.iter().enumerate() {
+            if pin != usize::MAX && circ_state[pin] != 0 {
+                data |= 1 << i;
+            }
+        }
+        data
+    }
+
+    /// Read byte enable from current circuit state.
+    fn read_ben(&self, circ_state: &[u8]) -> u32 {
+        let mut ben = 0u32;
+        for (i, &pin) in self.ben_pins.iter().enumerate() {
+            if pin != usize::MAX && circ_state[pin] != 0 {
+                ben |= 1 << i;
+            }
+        }
+        ben
+    }
+
+    /// Write data output to circuit state.
+    fn write_do(&self, circ_state: &mut [u8], data: u32) {
+        for (i, &pin) in self.do_pins.iter().enumerate() {
+            if pin != usize::MAX {
+                circ_state[pin] = ((data >> i) & 1) as u8;
+            }
+        }
+    }
+
+    /// Simulate one clock cycle. Returns true if a read/write occurred.
+    fn step(&mut self, circ_state: &mut [u8]) -> bool {
+        let clk = self.clk_pin != usize::MAX && circ_state[self.clk_pin] != 0;
+        let rising_edge = clk && !self.last_clk;
+        self.last_clk = clk;
+
+        if !rising_edge {
+            return false;
+        }
+
+        // Check enable
+        let en = self.en_pin != usize::MAX && circ_state[self.en_pin] != 0;
+        if !en {
+            return false;
+        }
+
+        let r_wb = self.r_wb_pin != usize::MAX && circ_state[self.r_wb_pin] != 0;
+        let addr = self.read_addr(circ_state);
+
+        if addr >= 1024 {
+            return false;  // Invalid address
+        }
+
+        if r_wb {
+            // Read operation: DO = memory[addr]
+            let data = self.memory[addr];
+            self.write_do(circ_state, data);
+        } else {
+            // Write operation: memory[addr] = (memory[addr] & ~BEN) | (DI & BEN)
+            let di = self.read_di(circ_state);
+            let ben = self.read_ben(circ_state);
+            self.memory[addr] = (self.memory[addr] & !ben) | (di & ben);
+        }
+
+        true
+    }
+}
+
+/// Watchlist signal entry.
+#[derive(Debug, Clone, Deserialize)]
+struct WatchlistSignal {
+    /// Display name for the signal.
+    name: String,
+    /// Net name pattern to match in the netlist.
+    net: String,
+    /// Signal type (reg, comb, mem).
+    #[serde(rename = "type", default)]
+    signal_type: String,
+}
+
+/// Watchlist configuration loaded from JSON.
+#[derive(Debug, Clone, Deserialize)]
+struct Watchlist {
+    signals: Vec<WatchlistSignal>,
+}
+
+/// Resolved watchlist entry with pin ID.
+#[derive(Debug, Clone)]
+struct WatchlistEntry {
+    name: String,
+    pin: usize,
 }
 
 /// Timing state for CPU simulation.
@@ -600,6 +804,31 @@ fn main() {
         }
     }
 
+    // Collect SRAM cells for simulation
+    let mut sram_cells: Vec<SramCell> = Vec::new();
+    for cellid in 1..netlistdb.num_cells {
+        let celltype = netlistdb.celltypes[cellid].as_str();
+        let is_sram = match cell_library {
+            CellLibrary::SKY130 => celltype.starts_with("CF_SRAM_"),
+            _ => celltype == "$__RAMGEM_SYNC_",
+        };
+
+        if is_sram {
+            let mut sram = SramCell::new(cellid);
+            sram.collect_pins(&netlistdb);
+            clilog::info!(
+                "SRAM cell {}: addr_pins={}, di_pins={}, do_pins={}, ben_pins={}",
+                cellid,
+                sram.addr_pins.len(),
+                sram.di_pins.len(),
+                sram.do_pins.len(),
+                sram.ben_pins.len()
+            );
+            sram_cells.push(sram);
+        }
+    }
+    clilog::info!("Collected {} SRAM cells for simulation", sram_cells.len());
+
     // Parse VCD header
     let input_vcd = File::open(&args.input_vcd).expect("Failed to open VCD");
     let mut bufrd = BufReader::with_capacity(65536, input_vcd);
@@ -712,6 +941,113 @@ fn main() {
         None
     };
 
+    // Helper to find internal wire/pin by name pattern (look for Q output of DFF)
+    let find_internal_q_pin = |dff_pattern: &str| -> Option<usize> {
+        for pinid in 0..netlistdb.num_pins {
+            let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+            // Look for the Q output pin (ends with :Q)
+            if pin_name.contains(dff_pattern) && pin_name.ends_with(":Q") {
+                return Some(pinid);
+            }
+        }
+        None
+    };
+
+    // Helper to find internal wire by net name
+    let find_internal_wire = |wire_pattern: &str| -> Option<usize> {
+        for netid in 0..netlistdb.num_nets {
+            let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
+            if net_name.contains(wire_pattern) {
+                // Find any pin on this net (preferably output)
+                let net_pins_start = netlistdb.net2pin.start[netid];
+                let net_pins_end = if netid + 1 < netlistdb.net2pin.start.len() {
+                    netlistdb.net2pin.start[netid + 1]
+                } else {
+                    netlistdb.net2pin.items.len()
+                };
+                for &pinid in &netlistdb.net2pin.items[net_pins_start..net_pins_end] {
+                    return Some(pinid);
+                }
+            }
+        }
+        None
+    };
+
+    // Helper to find D input pin of a DFF by pattern
+    let find_internal_d_pin = |dff_pattern: &str| -> Option<usize> {
+        for pinid in 0..netlistdb.num_pins {
+            let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+            if pin_name.contains(dff_pattern) && pin_name.ends_with(":D") {
+                return Some(pinid);
+            }
+        }
+        None
+    };
+
+    // Helper to find CLK input pin of a DFF by pattern
+    let find_internal_clk_pin = |dff_pattern: &str| -> Option<usize> {
+        for pinid in 0..netlistdb.num_pins {
+            let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+            if pin_name.contains(dff_pattern) && pin_name.ends_with(":CLK") {
+                return Some(pinid);
+            }
+        }
+        None
+    };
+
+    // Find internal monitoring pins (Q outputs of DFFs)
+    let rst_sync_rst_pin = find_internal_q_pin("rst_n_sync.rst");
+    let buffer_cs_pin = find_internal_q_pin("buffer_cs.o_ff");
+    let ibus_cyc_pin = find_internal_wire("ibus__cyc");
+    let ibus_cyc_d_pin = find_internal_d_pin("ibus__cyc");
+    let cpu_clk_pin = find_internal_clk_pin("cpu.fetch.ibus__cyc");
+
+    if let Some(pin) = rst_sync_rst_pin {
+        let pin_name = netlistdb.pinnames[pin].dbg_fmt_pin();
+        clilog::info!("Found reset sync Q output: pin {} ({})", pin, pin_name);
+    } else {
+        clilog::warn!("Could not find rst_n_sync.rst Q pin for monitoring");
+    }
+
+    if let Some(pin) = cpu_clk_pin {
+        let pin_name = netlistdb.pinnames[pin].dbg_fmt_pin();
+        clilog::info!("Found CPU clock input: pin {} ({})", pin, pin_name);
+    }
+
+    if let Some(pin) = ibus_cyc_d_pin {
+        let pin_name = netlistdb.pinnames[pin].dbg_fmt_pin();
+        clilog::info!("Found ibus_cyc D input: pin {} ({})", pin, pin_name);
+    }
+
+    // Find net639 and net2949 for debugging a21oi logic
+    let net639_pin = find_internal_wire("net639");
+    let net2949_pin = find_internal_wire("net2949");
+    let sig_09415_pin = find_internal_wire("_09415_");
+    if let Some(pin) = net639_pin {
+        clilog::info!("Found net639: pin {}", pin);
+    }
+    if let Some(pin) = net2949_pin {
+        clilog::info!("Found net2949: pin {}", pin);
+    }
+    if let Some(pin) = sig_09415_pin {
+        clilog::info!("Found _09415_: pin {}", pin);
+    }
+
+    if let Some(pin) = buffer_cs_pin {
+        let pin_name = netlistdb.pinnames[pin].dbg_fmt_pin();
+        clilog::info!("Found buffer_cs.o_ff Q output: pin {} ({})", pin, pin_name);
+    } else {
+        clilog::warn!("Could not find buffer_cs.o_ff Q pin for monitoring");
+    }
+
+    if let Some(pin) = ibus_cyc_pin {
+        let pin_name = netlistdb.pinnames[pin].dbg_fmt_pin();
+        let net_name = netlistdb.netnames[netlistdb.pin2net[pin]].dbg_fmt_pin();
+        clilog::info!("Found ibus_cyc wire: pin {} ({}) on net {}", pin, pin_name, net_name);
+    } else {
+        clilog::warn!("Could not find ibus__cyc wire for monitoring");
+    }
+
     // Find flash GPIO pins
     let flash_clk_out = find_gpio_pin("gpio_out", args.flash_clk_gpio);
     let flash_csn_out = find_gpio_pin("gpio_out", args.flash_csn_gpio);
@@ -752,13 +1088,197 @@ fn main() {
         // Check AIG mappings for flash pins
         if let Some(clk_pin) = flash_clk_out {
             let has_aig = aig.pin2aigpin_iv.get(clk_pin).map_or(false, |&v| v != usize::MAX);
-            clilog::info!("Flash CLK pin {} AIG mapping: {}", clk_pin, has_aig);
+            let pin_name = netlistdb.pinnames[clk_pin].dbg_fmt_pin();
+            clilog::info!("Flash CLK pin {} ({}) AIG mapping: {}", clk_pin, pin_name, has_aig);
+
+            // Check pin 81150 (output583:X) mapping
+            if let Some(&aigpin_81150) = aig.pin2aigpin_iv.get(81150) {
+                if aigpin_81150 != usize::MAX {
+                    let idx = aigpin_81150 >> 1;
+                    clilog::info!("Pin 81150 (output583:X) AIG: idx={}, driver={:?}", idx, aig.drivers.get(idx));
+                } else {
+                    clilog::info!("Pin 81150 (output583:X) AIG: not mapped");
+                }
+            }
+
+            // Check cell 23336 (output583) and its input
+            clilog::info!("Cell 23336 (output583) pins:");
+            for pinid in netlistdb.cell2pin.iter_set(23336) {
+                let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                let pin_dir = netlistdb.pindirect[pinid];
+                let pin_net = netlistdb.pin2net[pinid];
+                let aigpin_iv = aig.pin2aigpin_iv.get(pinid).copied().unwrap_or(usize::MAX);
+                clilog::info!("  pin {}: {}, dir={:?}, net={}, aig={}", pinid, pin_name, pin_dir, pin_net, aigpin_iv);
+            }
+
+            // Check pins on net 20966 (output583's input net)
+            let net = 20966;
+            let net_pins_start = netlistdb.net2pin.start[net];
+            let net_pins_end = if net + 1 < netlistdb.net2pin.start.len() {
+                netlistdb.net2pin.start[net + 1]
+            } else {
+                netlistdb.net2pin.items.len()
+            };
+            clilog::info!("Pins on net {} (output583's A input):", net);
+            for &np in &netlistdb.net2pin.items[net_pins_start..net_pins_end] {
+                let np_name = netlistdb.pinnames[np].dbg_fmt_pin();
+                let np_cell = netlistdb.pin2cell[np];
+                let np_dir = netlistdb.pindirect[np];
+                let np_aig = aig.pin2aigpin_iv.get(np).copied().unwrap_or(usize::MAX);
+                clilog::info!("  pin {}: {} (cell={}, dir={:?}, aig={})", np, np_name, np_cell, np_dir, np_aig);
+            }
+
+            // Debug: trace what's driving the flash clock
+            if let Some(&aigpin_iv) = aig.pin2aigpin_iv.get(clk_pin) {
+                if aigpin_iv != usize::MAX {
+                    let idx = aigpin_iv >> 1;
+                    let inv = (aigpin_iv & 1) != 0;
+                    if idx > 0 && idx <= aig.num_aigpins {
+                        let driver = &aig.drivers[idx];
+                        clilog::info!("Flash CLK driver: idx={}, inv={}, driver={:?}", idx, inv, driver);
+
+                        // If it's a DFF, check the D input
+                        if let DriverType::DFF(cell_idx) = driver {
+                            clilog::info!("Flash CLK is DFF output from cell {}", cell_idx);
+                            // Find D input for this DFF
+                            if let Some(dff) = aig.dffs.get(cell_idx) {
+                                let d_idx = dff.d_iv >> 1;
+                                let d_inv = (dff.d_iv & 1) != 0;
+                                clilog::info!("Flash CLK DFF D input: idx={}, inv={}, driver={:?}",
+                                              d_idx, d_inv, aig.drivers.get(d_idx));
+                            }
+                        }
+                        // If it's an InputPort, check what that pin is
+                        if let DriverType::InputPort(pinid) = driver {
+                            let pin_name = netlistdb.pinnames[*pinid].dbg_fmt_pin();
+                            let pin_cell = netlistdb.pin2cell[*pinid];
+                            let pin_net = netlistdb.pin2net[*pinid];
+                            let pin_dir = netlistdb.pindirect[*pinid];
+                            clilog::info!("Flash CLK is connected to input pin {}: {}, cell={}, net={}, dir={:?}",
+                                         pinid, pin_name, pin_cell, pin_net, pin_dir);
+
+                            // Check what's on the same net as gpio_out[0]
+                            let clk_net = netlistdb.pin2net[clk_pin];
+                            clilog::info!("gpio_out[0] (pin {}) is on net {}", clk_pin, clk_net);
+
+                            // List all pins on that net
+                            let net_pins_start = netlistdb.net2pin.start[clk_net];
+                            let net_pins_end = if clk_net + 1 < netlistdb.net2pin.start.len() {
+                                netlistdb.net2pin.start[clk_net + 1]
+                            } else {
+                                netlistdb.net2pin.items.len()
+                            };
+                            clilog::info!("Pins on gpio_out[0]'s net {}:", clk_net);
+                            for &np in &netlistdb.net2pin.items[net_pins_start..net_pins_end] {
+                                let np_name = netlistdb.pinnames[np].dbg_fmt_pin();
+                                let np_cell = netlistdb.pin2cell[np];
+                                let np_dir = netlistdb.pindirect[np];
+                                clilog::info!("  pin {}: {} (cell={}, dir={:?})", np, np_name, np_cell, np_dir);
+                            }
+                        }
+                    }
+                }
+            }
         }
         if let Some(csn_pin) = flash_csn_out {
             let has_aig = aig.pin2aigpin_iv.get(csn_pin).map_or(false, |&v| v != usize::MAX);
             clilog::info!("Flash CSN pin {} AIG mapping: {}", csn_pin, has_aig);
         }
     }
+
+    // Build reverse mapping from AIG pin to netlist pin for SRAM DO outputs
+    let mut aigpin_to_netpin: Vec<usize> = vec![usize::MAX; aig.num_aigpins + 1];
+    for (pinid, &aigpin_iv) in aig.pin2aigpin_iv.iter().enumerate() {
+        if aigpin_iv != usize::MAX {
+            let aigpin = aigpin_iv >> 1;
+            if aigpin > 0 && aigpin <= aig.num_aigpins {
+                aigpin_to_netpin[aigpin] = pinid;
+            }
+        }
+    }
+
+    // Load watchlist and resolve signal pins
+    let watchlist_entries: Vec<WatchlistEntry> = if let Some(ref watchlist_path) = args.watchlist {
+        let file = File::open(watchlist_path).expect("Failed to open watchlist file");
+        let watchlist: Watchlist =
+            serde_json::from_reader(BufReader::new(file)).expect("Failed to parse watchlist JSON");
+
+        let mut entries = Vec::new();
+        for sig in &watchlist.signals {
+            let mut found = false;
+
+            // First try: find by net name (for internal wires)
+            for netid in 0..netlistdb.num_nets {
+                let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
+                if net_name == sig.net || net_name.ends_with(&sig.net) {
+                    // Find a pin on this net
+                    for pinid in netlistdb.net2pin.iter_set(netid) {
+                        entries.push(WatchlistEntry {
+                            name: sig.name.clone(),
+                            pin: pinid,
+                        });
+                        clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
+                        found = true;
+                        break;
+                    }
+                    if found {
+                        break;
+                    }
+                }
+            }
+
+            // Second try: find Q output pin for registers
+            if !found && sig.signal_type == "reg" {
+                for pinid in 0..netlistdb.num_pins {
+                    let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                    // Look for Q pin on a DFF with matching name
+                    if pin_name.contains(&sig.net) && pin_name.ends_with(":Q") {
+                        entries.push(WatchlistEntry {
+                            name: sig.name.clone(),
+                            pin: pinid,
+                        });
+                        clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            // Third try: any pin containing the pattern
+            if !found {
+                for pinid in 0..netlistdb.num_pins {
+                    let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                    if pin_name.contains(&sig.net) {
+                        entries.push(WatchlistEntry {
+                            name: sig.name.clone(),
+                            pin: pinid,
+                        });
+                        clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                        found = true;
+                        break;
+                    }
+                }
+            }
+
+            if !found {
+                clilog::warn!("Watchlist: {} not found (pattern: {})", sig.name, sig.net);
+            }
+        }
+        entries
+    } else {
+        Vec::new()
+    };
+
+    // Open trace output file if specified
+    let mut trace_file: Option<File> = args.trace_output.as_ref().map(|path| {
+        let mut f = File::create(path).expect("Failed to create trace output file");
+        // Write CSV header
+        let header: Vec<&str> = std::iter::once("cycle")
+            .chain(watchlist_entries.iter().map(|e| e.name.as_str()))
+            .collect();
+        writeln!(f, "{}", header.join(",")).expect("Failed to write trace header");
+        f
+    });
 
     clilog::info!("Starting timing simulation...");
 
@@ -875,6 +1395,40 @@ fn main() {
                         }
                     }
 
+                    // Simulate SRAM cells
+                    for sram in &mut sram_cells {
+                        let en = sram.en_pin != usize::MAX && circ_state[sram.en_pin] != 0;
+                        if en {
+                            let r_wb = sram.r_wb_pin != usize::MAX && circ_state[sram.r_wb_pin] != 0;
+                            let addr = sram.read_addr(&circ_state);
+                            if addr < 1024 {
+                                if r_wb {
+                                    // Read operation: DO = memory[addr]
+                                    let data = sram.memory[addr];
+                                    sram.write_do(&mut circ_state, data);
+                                    if args.verbose && stats.cycles_simulated <= 20 {
+                                        clilog::debug!(
+                                            "SRAM read: addr={:#x}, data={:#010x}",
+                                            addr, data
+                                        );
+                                    }
+                                } else {
+                                    // Write operation: memory[addr] = (memory[addr] & ~BEN) | (DI & BEN)
+                                    let di = sram.read_di(&circ_state);
+                                    let ben = sram.read_ben(&circ_state);
+                                    let old = sram.memory[addr];
+                                    sram.memory[addr] = (old & !ben) | (di & ben);
+                                    if args.verbose && stats.cycles_simulated <= 20 {
+                                        clilog::debug!(
+                                            "SRAM write: addr={:#x}, di={:#010x}, ben={:#010x}, old={:#010x}, new={:#010x}",
+                                            addr, di, ben, old, sram.memory[addr]
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Propagate combinational logic through AIG with timing
                     let mut max_arrival = 0u64;
                     for i in 1..=aig.num_aigpins {
@@ -903,7 +1457,13 @@ fn main() {
                             DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
                                 state.arrivals[i] = 0;
                             }
-                            DriverType::SRAM(_) => {
+                            DriverType::SRAM(_cell_idx) => {
+                                // Get DO value from SRAM (simulated at cycle start)
+                                // Use reverse mapping to find netlist pin
+                                let netpin = aigpin_to_netpin[i];
+                                if netpin != usize::MAX {
+                                    state.values[i] = circ_state[netpin];
+                                }
                                 state.arrivals[i] = state.delays[i].max_delay() as u64;
                             }
                         }
@@ -977,6 +1537,34 @@ fn main() {
                         }
                     }
 
+                    // Debug: log reset and CSn state in early cycles (regardless of flash)
+                    if args.verbose && stats.cycles_simulated <= 100 {
+                        let reset_val = find_gpio_pin("gpio_in", 40).map(|p| circ_state[p]).unwrap_or(255);
+                        let csn_val = flash_csn_out.map(|p| circ_state[p]).unwrap_or(255);
+                        let clk_val = flash_clk_out.map(|p| circ_state[p]).unwrap_or(255);
+
+                        // Monitor internal signals
+                        let rst_sync = rst_sync_rst_pin.map(|p| circ_state[p]).unwrap_or(255);
+                        let ibus_cyc = ibus_cyc_pin.map(|p| circ_state[p]).unwrap_or(255);
+                        let ibus_cyc_d = ibus_cyc_d_pin.map(|p| circ_state[p]).unwrap_or(255);
+                        let n639 = net639_pin.map(|p| circ_state[p]).unwrap_or(255);
+                        let n2949 = net2949_pin.map(|p| circ_state[p]).unwrap_or(255);
+                        let s09415 = sig_09415_pin.map(|p| circ_state[p]).unwrap_or(255);
+
+                        clilog::debug!(
+                            "Cycle {}: rst={}, cyc={}, D={}, _09415={}, n639={}, n2949={}",
+                            stats.cycles_simulated, rst_sync, ibus_cyc, ibus_cyc_d, s09415, n639, n2949
+                        );
+                    }
+
+                    // Write watchlist trace output
+                    if let Some(ref mut f) = trace_file {
+                        let values: Vec<String> = std::iter::once(stats.cycles_simulated.to_string())
+                            .chain(watchlist_entries.iter().map(|e| circ_state[e.pin].to_string()))
+                            .collect();
+                        writeln!(f, "{}", values.join(",")).expect("Failed to write trace");
+                    }
+
                     // Step QSPI flash simulation
                     if let Some(ref mut fl) = flash {
                         // Read flash interface outputs from design
@@ -998,9 +1586,13 @@ fn main() {
                             // Count how many non-zero values in circ_state (rough proxy for "active" state)
                             let nonzero_count = circ_state.iter().filter(|&&v| v != 0).count();
 
+                            // Check gpio_oeb values for flash pins
+                            let oeb0 = find_gpio_pin("gpio_oeb", 0).map(|p| circ_state[p]).unwrap_or(255);
+                            let oeb1 = find_gpio_pin("gpio_oeb", 1).map(|p| circ_state[p]).unwrap_or(255);
+
                             clilog::debug!(
-                                "Cycle {}: reset={}, clk={}, csn={}, d_out=0x{:X}, byte_count={}, nonzero_pins={}",
-                                stats.cycles_simulated, reset_val, clk, csn, d_out, fl.byte_count, nonzero_count
+                                "Cycle {}: reset={}, clk={}, csn={}, d_out=0x{:X}, oeb0={}, oeb1={}, byte_count={}, nonzero_pins={}",
+                                stats.cycles_simulated, reset_val, clk, csn, d_out, oeb0, oeb1, fl.byte_count, nonzero_count
                             );
                         }
 

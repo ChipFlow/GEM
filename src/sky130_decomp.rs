@@ -222,6 +222,7 @@ pub fn decompose_sky130_cell(
         }
 
         // 4-input AND: X = A & B & C & D
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "and4" => {
             let a = inputs.a;
             let b = inputs.b;
@@ -229,9 +230,9 @@ pub fn decompose_sky130_cell(
             let d = inputs.d;
             DecompResult {
                 and_gates: vec![
-                    (a as i64, b as i64),  // gate -1 = A & B
-                    (c as i64, d as i64),  // gate -2 = C & D
-                    (-1, -2),              // gate -3 = (A & B) & (C & D)
+                    (a as i64, b as i64),  // gate 0: A & B (ref: -1/-2)
+                    (c as i64, d as i64),  // gate 1: C & D (ref: -3/-4)
+                    (-1, -3),              // gate 2: gate0 & gate1 = (A & B) & (C & D)
                 ],
                 output_idx: -3,
                 output_inverted: false,
@@ -284,7 +285,8 @@ pub fn decompose_sky130_cell(
             }
         }
 
-        // 4-input OR: X = A | B | C | D
+        // 4-input OR: X = A | B | C | D = !(!A & !B & !C & !D)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "or4" => {
             let a = inputs.a;
             let b = inputs.b;
@@ -296,9 +298,9 @@ pub fn decompose_sky130_cell(
             let d_inv = (d ^ 1) as i64;
             DecompResult {
                 and_gates: vec![
-                    (a_inv, b_inv),  // gate -1 = !A & !B
-                    (c_inv, d_inv),  // gate -2 = !C & !D
-                    (-1, -2),        // gate -3 = (!A & !B) & (!C & !D)
+                    (a_inv, b_inv),  // gate 0: !A & !B (ref: -1/-2)
+                    (c_inv, d_inv),  // gate 1: !C & !D (ref: -3/-4)
+                    (-1, -3),        // gate 2: gate0 & gate1 = !A & !B & !C & !D
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -343,6 +345,7 @@ pub fn decompose_sky130_cell(
         }
 
         // 4-input NAND: Y = !(A & B & C & D)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "nand4" => {
             let a = inputs.a;
             let b = inputs.b;
@@ -350,9 +353,9 @@ pub fn decompose_sky130_cell(
             let d = inputs.d;
             DecompResult {
                 and_gates: vec![
-                    (a as i64, b as i64),  // gate -1 = A & B
-                    (c as i64, d as i64),  // gate -2 = C & D
-                    (-1, -2),              // gate -3 = (A & B) & (C & D)
+                    (a as i64, b as i64),  // gate 0: A & B (ref: -1/-2)
+                    (c as i64, d as i64),  // gate 1: C & D (ref: -3/-4)
+                    (-1, -3),              // gate 2: gate0 & gate1 = (A & B) & (C & D)
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -405,6 +408,7 @@ pub fn decompose_sky130_cell(
         }
 
         // 4-input NOR: Y = !(A | B | C | D) = !A & !B & !C & !D
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "nor4" => {
             let a = inputs.a;
             let b = inputs.b;
@@ -416,9 +420,9 @@ pub fn decompose_sky130_cell(
             let d_inv = (d ^ 1) as i64;
             DecompResult {
                 and_gates: vec![
-                    (a_inv, b_inv),  // gate -1 = !A & !B
-                    (c_inv, d_inv),  // gate -2 = !C & !D
-                    (-1, -2),        // gate -3 = (!A & !B) & (!C & !D)
+                    (a_inv, b_inv),  // gate 0: !A & !B (ref: -1/-2)
+                    (c_inv, d_inv),  // gate 1: !C & !D (ref: -3/-4)
+                    (-1, -3),        // gate 2: gate0 & gate1 = !A & !B & !C & !D
                 ],
                 output_idx: -3,
                 output_inverted: false,
@@ -441,7 +445,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a_iv, b_inv),   // gate -1 = A & !B
                     (a_inv, b_iv),   // gate -2 = !A & B
-                    (-1 ^ 1, -2 ^ 1), // gate -3 = !(A & !B) & !(!A & B)
+                    (-1 ^ 1, -3 ^ 1), // gate -3 = !(A & !B) & !(!A & B)
                 ],
                 output_idx: -3,
                 output_inverted: true, // Final inversion for OR
@@ -462,7 +466,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a_iv, b_iv),     // gate -1 = A & B
                     (a_inv, b_inv),   // gate -2 = !A & !B
-                    (-1 ^ 1, -2 ^ 1), // gate -3 = !(A & B) & !(!A & !B)
+                    (-1 ^ 1, -3 ^ 1), // gate -3 = !(A & B) & !(!A & !B)
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -482,7 +486,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a0 as i64, s_inv),  // gate -1 = A0 & !S
                     (a1 as i64, s as i64), // gate -2 = A1 & S
-                    (-1 ^ 1, -2 ^ 1),    // gate -3 = !(A0 & !S) & !(A1 & S)
+                    (-1 ^ 1, -3 ^ 1),    // gate -3 = !(A0 & !S) & !(A1 & S)
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -499,7 +503,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a0 as i64, s_inv),
                     (a1 as i64, s as i64),
-                    (-1 ^ 1, -2 ^ 1),
+                    (-1 ^ 1, -3 ^ 1),
                 ],
                 output_idx: -3,
                 output_inverted: false,  // No final inversion = inverted MUX
@@ -565,7 +569,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a1 as i64, a2 as i64),  // gate -1 = A1 & A2
                     (b1 as i64, b2 as i64),  // gate -2 = B1 & B2
-                    (-1 ^ 1, -2 ^ 1),        // gate -3 = !(A1&A2) & !(B1&B2)
+                    (-1 ^ 1, -3 ^ 1),        // gate -3 = !(A1&A2) & !(B1&B2)
                 ],
                 output_idx: -3,
                 output_inverted: false,
@@ -582,7 +586,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a1 as i64, a2 as i64),
                     (b1 as i64, b2 as i64),
-                    (-1 ^ 1, -2 ^ 1),
+                    (-1 ^ 1, -3 ^ 1),
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -619,7 +623,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a1 as i64, a2 as i64),    // -1 = A1 & A2
                     (b1 as i64, b2 as i64),    // -2 = B1 & B2
-                    (-1 ^ 1, -2 ^ 1),          // -3 = !(A1&A2) & !(B1&B2)
+                    (-1 ^ 1, -3 ^ 1),          // -3 = !(A1&A2) & !(B1&B2)
                     (-3, (c1 ^ 1) as i64),     // -4 = above & !C1
                 ],
                 output_idx: -4,
@@ -638,7 +642,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     (a1 as i64, a2 as i64),
                     (b1 as i64, b2 as i64),
-                    (-1 ^ 1, -2 ^ 1),
+                    (-1 ^ 1, -3 ^ 1),
                     (-3, (c1 ^ 1) as i64),
                 ],
                 output_idx: -4,
@@ -678,14 +682,15 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     ((a1_n ^ 1) as i64, (a2_n ^ 1) as i64),  // -1 = !A1_N & !A2_N
                     (b1 as i64, b2 as i64),                  // -2 = B1 & B2
-                    (-1 ^ 1, -2 ^ 1),                        // -3 = NOR
+                    (-1 ^ 1, -3 ^ 1),                        // -3 = NOR
                 ],
                 output_idx: -3,
                 output_inverted: false,
             }
         }
 
-        // a31oi: Y = !((A1 & A2 & A3) | B1)
+        // a31oi: Y = !((A1 & A2 & A3) | B1) = !(A1&A2&A3) & !B1
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "a31oi" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -693,9 +698,9 @@ pub fn decompose_sky130_cell(
             let b1 = inputs.b1;
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),    // -1 = A1 & A2
-                    (-1, a3 as i64),           // -2 = A1 & A2 & A3
-                    (-2 ^ 1, (b1 ^ 1) as i64), // -3 = !(A1&A2&A3) & !B1
+                    (a1 as i64, a2 as i64),    // gate 0: A1 & A2 (ref: -1/-2)
+                    (-1, a3 as i64),           // gate 1: gate0 & A3 (ref: -3/-4)
+                    (-3 ^ 1, (b1 ^ 1) as i64), // gate 2: !gate1 & !B1
                 ],
                 output_idx: -3,
                 output_inverted: false,
@@ -703,6 +708,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a31o: Y = (A1 & A2 & A3) | B1
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "a31o" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -710,9 +716,9 @@ pub fn decompose_sky130_cell(
             let b1 = inputs.b1;
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (-1, a3 as i64),
-                    (-2 ^ 1, (b1 ^ 1) as i64),
+                    (a1 as i64, a2 as i64),    // gate 0: A1 & A2 (ref: -1/-2)
+                    (-1, a3 as i64),           // gate 1: gate0 & A3 (ref: -3/-4)
+                    (-3 ^ 1, (b1 ^ 1) as i64), // gate 2: !gate1 & !B1
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -720,6 +726,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a311o: Y = (A1 & A2 & A3) | B1 | C1
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, etc.
         "a311o" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -730,10 +737,10 @@ pub fn decompose_sky130_cell(
             // Then OR3: result | B1 | C1 = !(!(result) & !B1 & !C1)
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (-1, a3 as i64),
-                    (-2 ^ 1, (b1 ^ 1) as i64),
-                    (-3, (c1 ^ 1) as i64),
+                    (a1 as i64, a2 as i64),    // gate 0: A1 & A2 (ref: -1/-2)
+                    (-1, a3 as i64),           // gate 1: gate0 & A3 (ref: -3/-4)
+                    (-3 ^ 1, (b1 ^ 1) as i64), // gate 2: !gate1 & !B1 (ref: -5/-6)
+                    (-5, (c1 ^ 1) as i64),     // gate 3: gate2 & !C1
                 ],
                 output_idx: -4,
                 output_inverted: true,
@@ -741,6 +748,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a311oi: Y = !((A1 & A2 & A3) | B1 | C1)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, etc.
         "a311oi" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -749,10 +757,10 @@ pub fn decompose_sky130_cell(
             let c1 = inputs.c1;
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (-1, a3 as i64),
-                    (-2 ^ 1, (b1 ^ 1) as i64),
-                    (-3, (c1 ^ 1) as i64),
+                    (a1 as i64, a2 as i64),    // gate 0: A1 & A2 (ref: -1/-2)
+                    (-1, a3 as i64),           // gate 1: gate0 & A3 (ref: -3/-4)
+                    (-3 ^ 1, (b1 ^ 1) as i64), // gate 2: !gate1 & !B1 (ref: -5/-6)
+                    (-5, (c1 ^ 1) as i64),     // gate 3: gate2 & !C1
                 ],
                 output_idx: -4,
                 output_inverted: false,
@@ -760,6 +768,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a32oi: Y = !((A1 & A2 & A3) | (B1 & B2))
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, etc.
         "a32oi" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -768,10 +777,10 @@ pub fn decompose_sky130_cell(
             let b2 = inputs.b2;
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (-1, a3 as i64),
-                    (b1 as i64, b2 as i64),
-                    (-2 ^ 1, -3 ^ 1),
+                    (a1 as i64, a2 as i64),  // gate 0: A1 & A2 (ref: -1/-2)
+                    (-1, a3 as i64),         // gate 1: gate0 & A3 (ref: -3/-4)
+                    (b1 as i64, b2 as i64),  // gate 2: B1 & B2 (ref: -5/-6)
+                    (-3 ^ 1, -5 ^ 1),        // gate 3: !gate1 & !gate2
                 ],
                 output_idx: -4,
                 output_inverted: false,
@@ -779,6 +788,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a32o: Y = (A1 & A2 & A3) | (B1 & B2)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, etc.
         "a32o" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -787,10 +797,10 @@ pub fn decompose_sky130_cell(
             let b2 = inputs.b2;
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (-1, a3 as i64),
-                    (b1 as i64, b2 as i64),
-                    (-2 ^ 1, -3 ^ 1),
+                    (a1 as i64, a2 as i64),  // gate 0: A1 & A2 (ref: -1/-2)
+                    (-1, a3 as i64),         // gate 1: gate0 & A3 (ref: -3/-4)
+                    (b1 as i64, b2 as i64),  // gate 2: B1 & B2 (ref: -5/-6)
+                    (-3 ^ 1, -5 ^ 1),        // gate 3: !gate1 & !gate2
                 ],
                 output_idx: -4,
                 output_inverted: true,
@@ -798,6 +808,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a41o: Y = (A1 & A2 & A3 & A4) | B1
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, -6=gate2_inv, etc.
         "a41o" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -805,17 +816,17 @@ pub fn decompose_sky130_cell(
             let a4 = inputs.a4;
             let b1 = inputs.b1;
             // Build AND4: A1 & A2 & A3 & A4
-            // -1 = A1 & A2
-            // -2 = A3 & A4
-            // -3 = -1 & -2 = A1 & A2 & A3 & A4
-            // Then OR with B1: Y = -3 | B1 = !(!-3 & !B1)
-            // -4 = !-3 & !B1 (use inverted inputs)
+            // gate0 = A1 & A2
+            // gate1 = A3 & A4
+            // gate2 = gate0 & gate1 = A1 & A2 & A3 & A4
+            // Then OR with B1: Y = gate2 | B1 = !(!gate2 & !B1)
+            // gate3 = !gate2 & !B1
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (a3 as i64, a4 as i64),
-                    (-1, -2),
-                    (-3 ^ 1, (b1 ^ 1) as i64),
+                    (a1 as i64, a2 as i64),         // gate 0 (ref: -1/-2)
+                    (a3 as i64, a4 as i64),         // gate 1 (ref: -3/-4)
+                    (-1, -3),                        // gate 2 (ref: -5/-6): gate0 & gate1
+                    (-5 ^ 1, (b1 ^ 1) as i64),      // gate 3: !gate2 & !B1
                 ],
                 output_idx: -4,
                 output_inverted: true,
@@ -823,6 +834,7 @@ pub fn decompose_sky130_cell(
         }
 
         // a41oi: Y = !((A1 & A2 & A3 & A4) | B1)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, -6=gate2_inv, etc.
         "a41oi" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -831,10 +843,10 @@ pub fn decompose_sky130_cell(
             let b1 = inputs.b1;
             DecompResult {
                 and_gates: vec![
-                    (a1 as i64, a2 as i64),
-                    (a3 as i64, a4 as i64),
-                    (-1, -2),
-                    (-3 ^ 1, (b1 ^ 1) as i64),
+                    (a1 as i64, a2 as i64),         // gate 0 (ref: -1/-2)
+                    (a3 as i64, a4 as i64),         // gate 1 (ref: -3/-4)
+                    (-1, -3),                        // gate 2 (ref: -5/-6): gate0 & gate1
+                    (-5 ^ 1, (b1 ^ 1) as i64),      // gate 3: !gate2 & !B1
                 ],
                 output_idx: -4,
                 output_inverted: false,
@@ -909,7 +921,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     ((a1 ^ 1) as i64, (a2 ^ 1) as i64),  // -1 = !(A1|A2)
                     ((b1 ^ 1) as i64, (b2 ^ 1) as i64),  // -2 = !(B1|B2)
-                    (-1 ^ 1, -2 ^ 1),                     // -3 = (A1|A2) & (B1|B2)
+                    (-1 ^ 1, -3 ^ 1),                     // -3 = (A1|A2) & (B1|B2)
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -961,7 +973,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     ((a1 ^ 1) as i64, (a2 ^ 1) as i64),
                     ((b1 ^ 1) as i64, (b2 ^ 1) as i64),
-                    (-1 ^ 1, -2 ^ 1),
+                    (-1 ^ 1, -3 ^ 1),
                     (-3, c1 as i64),
                 ],
                 output_idx: -4,
@@ -980,7 +992,7 @@ pub fn decompose_sky130_cell(
                 and_gates: vec![
                     ((a1 ^ 1) as i64, (a2 ^ 1) as i64),
                     ((b1 ^ 1) as i64, (b2 ^ 1) as i64),
-                    (-1 ^ 1, -2 ^ 1),
+                    (-1 ^ 1, -3 ^ 1),
                     (-3, c1 as i64),
                 ],
                 output_idx: -4,
@@ -1008,6 +1020,7 @@ pub fn decompose_sky130_cell(
         }
 
         // o2bb2ai: Y = !((!A1_N | !A2_N) & (B1 | B2))
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "o2bb2ai" => {
             let a1_n = inputs.a1_n;
             let a2_n = inputs.a2_n;
@@ -1016,9 +1029,9 @@ pub fn decompose_sky130_cell(
             // !A1_N | !A2_N = !(A1_N & A2_N)
             DecompResult {
                 and_gates: vec![
-                    (a1_n as i64, a2_n as i64),           // -1 = A1_N & A2_N = !(!A1_N | !A2_N)
-                    ((b1 ^ 1) as i64, (b2 ^ 1) as i64),   // -2 = !(B1|B2)
-                    (-1 ^ 1, -2 ^ 1),                      // -3 = (!A1_N|!A2_N) & (B1|B2)
+                    (a1_n as i64, a2_n as i64),           // gate 0: A1_N & A2_N (ref: -1/-2)
+                    ((b1 ^ 1) as i64, (b2 ^ 1) as i64),   // gate 1: !B1 & !B2 (ref: -3/-4)
+                    (-1 ^ 1, -3 ^ 1),                      // gate 2: !gate0 & !gate1 = (!A1_N|!A2_N) & (B1|B2)
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -1026,6 +1039,7 @@ pub fn decompose_sky130_cell(
         }
 
         // o31ai: Y = !((A1 | A2 | A3) & B1)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
         "o31ai" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -1034,9 +1048,9 @@ pub fn decompose_sky130_cell(
             // A1 | A2 | A3 = !(!A1 & !A2 & !A3)
             DecompResult {
                 and_gates: vec![
-                    ((a1 ^ 1) as i64, (a2 ^ 1) as i64),
-                    (-1, (a3 ^ 1) as i64),
-                    (-2 ^ 1, b1 as i64),
+                    ((a1 ^ 1) as i64, (a2 ^ 1) as i64),  // gate 0: !A1 & !A2 (ref: -1/-2)
+                    (-1, (a3 ^ 1) as i64),               // gate 1: gate0 & !A3 (ref: -3/-4)
+                    (-3 ^ 1, b1 as i64),                 // gate 2: !gate1 & B1 = (A1|A2|A3) & B1
                 ],
                 output_idx: -3,
                 output_inverted: true,
@@ -1044,6 +1058,7 @@ pub fn decompose_sky130_cell(
         }
 
         // o311ai: Y = !((A1 | A2 | A3) & B1 & C1)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, etc.
         "o311ai" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -1052,10 +1067,10 @@ pub fn decompose_sky130_cell(
             let c1 = inputs.c1;
             DecompResult {
                 and_gates: vec![
-                    ((a1 ^ 1) as i64, (a2 ^ 1) as i64),
-                    (-1, (a3 ^ 1) as i64),
-                    (-2 ^ 1, b1 as i64),
-                    (-3, c1 as i64),
+                    ((a1 ^ 1) as i64, (a2 ^ 1) as i64),  // gate 0: !A1 & !A2 (ref: -1/-2)
+                    (-1, (a3 ^ 1) as i64),               // gate 1: gate0 & !A3 (ref: -3/-4)
+                    (-3 ^ 1, b1 as i64),                 // gate 2: !gate1 & B1 (ref: -5/-6)
+                    (-5, c1 as i64),                     // gate 3: gate2 & C1
                 ],
                 output_idx: -4,
                 output_inverted: true,
@@ -1063,6 +1078,7 @@ pub fn decompose_sky130_cell(
         }
 
         // o41ai: Y = !((A1 | A2 | A3 | A4) & B1)
+        // Gate ref encoding: -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, -5=gate2, -6=gate2_inv, etc.
         "o41ai" => {
             let a1 = inputs.a1;
             let a2 = inputs.a2;
@@ -1071,10 +1087,10 @@ pub fn decompose_sky130_cell(
             let b1 = inputs.b1;
             DecompResult {
                 and_gates: vec![
-                    ((a1 ^ 1) as i64, (a2 ^ 1) as i64),
-                    ((a3 ^ 1) as i64, (a4 ^ 1) as i64),
-                    (-1, -2),
-                    (-3 ^ 1, b1 as i64),
+                    ((a1 ^ 1) as i64, (a2 ^ 1) as i64),  // gate 0: !A1 & !A2 (ref: -1/-2)
+                    ((a3 ^ 1) as i64, (a4 ^ 1) as i64),  // gate 1: !A3 & !A4 (ref: -3/-4)
+                    (-1, -3),                            // gate 2: gate0 & gate1 (ref: -5/-6)
+                    (-5 ^ 1, b1 as i64),                 // gate 3: !gate2 & B1 = (A1|A2|A3|A4) & B1
                 ],
                 output_idx: -4,
                 output_inverted: true,
@@ -1232,5 +1248,540 @@ mod tests {
         assert_eq!(result.and_gates[1], (4, 6)); // A1 & S
         // Third gate: OR = !( !(A0&!S) & !(A1&S) )
         assert!(result.output_inverted);
+    }
+
+    // ========== Truth table verification tests ==========
+    //
+    // These tests evaluate the decomposed circuit for all input combinations
+    // and verify the output matches the expected truth table.
+
+    /// Evaluate a decomposed cell with given input values.
+    /// The inputs map should contain aigpin_iv -> bool mappings.
+    /// Returns the output value (true/false).
+    fn eval_decomp(decomp: &DecompResult, inputs: &std::collections::HashMap<i64, bool>) -> bool {
+        // Evaluate AND gates
+        let mut gate_outputs: Vec<bool> = Vec::new();
+        for (a_ref, b_ref) in &decomp.and_gates {
+            let a_val = resolve_ref(*a_ref, inputs, &gate_outputs);
+            let b_val = resolve_ref(*b_ref, inputs, &gate_outputs);
+            gate_outputs.push(a_val && b_val);
+        }
+
+        // Get output
+        let output = if decomp.output_idx < 0 {
+            let gate_idx = (-decomp.output_idx - 1) as usize;
+            gate_outputs[gate_idx]
+        } else {
+            // output_idx is a raw pin index, need to look up via aigpin_iv
+            let aigpin_iv = (decomp.output_idx << 1) as i64;
+            if let Some(&v) = inputs.get(&aigpin_iv) {
+                v
+            } else {
+                !inputs.get(&(aigpin_iv ^ 1)).copied().unwrap()
+            }
+        };
+
+        if decomp.output_inverted {
+            !output
+        } else {
+            output
+        }
+    }
+
+    fn resolve_ref(ref_val: i64, inputs: &std::collections::HashMap<i64, bool>, gate_outputs: &[bool]) -> bool {
+        if ref_val < 0 {
+            // Gate reference: encoding is -1=gate0, -2=gate0_inv, -3=gate1, -4=gate1_inv, etc.
+            let abs_ref = -ref_val;
+            let gate_idx = ((abs_ref - 1) / 2) as usize;
+            let inverted = (abs_ref % 2) == 0;
+            let val = gate_outputs[gate_idx];
+            if inverted { !val } else { val }
+        } else {
+            // Input reference: direct aigpin_iv
+            // ref_val already has inversion bit encoded
+            if let Some(&v) = inputs.get(&ref_val) {
+                v
+            } else {
+                // Try with inversion toggled
+                !inputs.get(&(ref_val ^ 1)).copied().unwrap()
+            }
+        }
+    }
+
+    /// Create input map and CellInputs for 2-input cells
+    fn setup_2_inputs(a: bool, b: bool) -> (CellInputs, std::collections::HashMap<i64, bool>) {
+        let mut cell_inputs = CellInputs::new();
+        let mut vals = std::collections::HashMap::new();
+
+        // Pin 1 (aigpin_iv 2/3) for A
+        cell_inputs.set_pin("A", 2usize); // always use non-inverted reference
+        vals.insert(2, a);
+        vals.insert(3, !a);
+
+        // Pin 2 (aigpin_iv 4/5) for B
+        cell_inputs.set_pin("B", 4usize);
+        vals.insert(4, b);
+        vals.insert(5, !b);
+
+        (cell_inputs, vals)
+    }
+
+    fn setup_3_inputs(a: bool, b: bool, c: bool) -> (CellInputs, std::collections::HashMap<i64, bool>) {
+        let mut cell_inputs = CellInputs::new();
+        let mut vals = std::collections::HashMap::new();
+
+        cell_inputs.set_pin("A", 2usize);
+        vals.insert(2, a);
+        vals.insert(3, !a);
+
+        cell_inputs.set_pin("B", 4usize);
+        vals.insert(4, b);
+        vals.insert(5, !b);
+
+        cell_inputs.set_pin("C", 6usize);
+        vals.insert(6, c);
+        vals.insert(7, !c);
+
+        (cell_inputs, vals)
+    }
+
+    fn setup_4_inputs(a: bool, b: bool, c: bool, d: bool) -> (CellInputs, std::collections::HashMap<i64, bool>) {
+        let mut cell_inputs = CellInputs::new();
+        let mut vals = std::collections::HashMap::new();
+
+        cell_inputs.set_pin("A", 2usize);
+        vals.insert(2, a);
+        vals.insert(3, !a);
+
+        cell_inputs.set_pin("B", 4usize);
+        vals.insert(4, b);
+        vals.insert(5, !b);
+
+        cell_inputs.set_pin("C", 6usize);
+        vals.insert(6, c);
+        vals.insert(7, !c);
+
+        cell_inputs.set_pin("D", 8usize);
+        vals.insert(8, d);
+        vals.insert(9, !d);
+
+        (cell_inputs, vals)
+    }
+
+    fn setup_a21_inputs(a1: bool, a2: bool, b1: bool) -> (CellInputs, std::collections::HashMap<i64, bool>) {
+        let mut cell_inputs = CellInputs::new();
+        let mut vals = std::collections::HashMap::new();
+
+        cell_inputs.set_pin("A1", 2usize);
+        vals.insert(2, a1);
+        vals.insert(3, !a1);
+
+        cell_inputs.set_pin("A2", 4usize);
+        vals.insert(4, a2);
+        vals.insert(5, !a2);
+
+        cell_inputs.set_pin("B1", 6usize);
+        vals.insert(6, b1);
+        vals.insert(7, !b1);
+
+        (cell_inputs, vals)
+    }
+
+    #[test]
+    fn test_truth_table_and2() {
+        for a in [false, true] {
+            for b in [false, true] {
+                let (inputs, vals) = setup_2_inputs(a, b);
+                let decomp = decompose_sky130_cell("and2", &inputs);
+                let result = eval_decomp(&decomp, &vals);
+                let expected = a && b;
+                assert_eq!(result, expected, "and2({}, {}) = {} (expected {})", a, b, result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_or2() {
+        for a in [false, true] {
+            for b in [false, true] {
+                let (inputs, vals) = setup_2_inputs(a, b);
+                let decomp = decompose_sky130_cell("or2", &inputs);
+                let result = eval_decomp(&decomp, &vals);
+                let expected = a || b;
+                assert_eq!(result, expected, "or2({}, {}) = {} (expected {})", a, b, result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_nand2() {
+        for a in [false, true] {
+            for b in [false, true] {
+                let (inputs, vals) = setup_2_inputs(a, b);
+                let decomp = decompose_sky130_cell("nand2", &inputs);
+                let result = eval_decomp(&decomp, &vals);
+                let expected = !(a && b);
+                assert_eq!(result, expected, "nand2({}, {}) = {} (expected {})", a, b, result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_nor2() {
+        for a in [false, true] {
+            for b in [false, true] {
+                let (inputs, vals) = setup_2_inputs(a, b);
+                let decomp = decompose_sky130_cell("nor2", &inputs);
+                let result = eval_decomp(&decomp, &vals);
+                let expected = !(a || b);
+                assert_eq!(result, expected, "nor2({}, {}) = {} (expected {})", a, b, result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_xor2() {
+        for a in [false, true] {
+            for b in [false, true] {
+                let (inputs, vals) = setup_2_inputs(a, b);
+                let decomp = decompose_sky130_cell("xor2", &inputs);
+                let result = eval_decomp(&decomp, &vals);
+                let expected = a ^ b;
+                assert_eq!(result, expected, "xor2({}, {}) = {} (expected {})", a, b, result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_xnor2() {
+        for a in [false, true] {
+            for b in [false, true] {
+                let (inputs, vals) = setup_2_inputs(a, b);
+                let decomp = decompose_sky130_cell("xnor2", &inputs);
+                let result = eval_decomp(&decomp, &vals);
+                let expected = a == b;
+                assert_eq!(result, expected, "xnor2({}, {}) = {} (expected {})", a, b, result, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_and3() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    let (inputs, vals) = setup_3_inputs(a, b, c);
+                    let decomp = decompose_sky130_cell("and3", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = a && b && c;
+                    assert_eq!(result, expected, "and3({}, {}, {}) = {} (expected {})", a, b, c, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_or3() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    let (inputs, vals) = setup_3_inputs(a, b, c);
+                    let decomp = decompose_sky130_cell("or3", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = a || b || c;
+                    assert_eq!(result, expected, "or3({}, {}, {}) = {} (expected {})", a, b, c, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_nand3() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    let (inputs, vals) = setup_3_inputs(a, b, c);
+                    let decomp = decompose_sky130_cell("nand3", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = !(a && b && c);
+                    assert_eq!(result, expected, "nand3({}, {}, {}) = {} (expected {})", a, b, c, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_nor3() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    let (inputs, vals) = setup_3_inputs(a, b, c);
+                    let decomp = decompose_sky130_cell("nor3", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = !(a || b || c);
+                    assert_eq!(result, expected, "nor3({}, {}, {}) = {} (expected {})", a, b, c, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_and4() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    for d in [false, true] {
+                        let (inputs, vals) = setup_4_inputs(a, b, c, d);
+                        let decomp = decompose_sky130_cell("and4", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = a && b && c && d;
+                        assert_eq!(result, expected, "and4({}, {}, {}, {}) = {} (expected {})", a, b, c, d, result, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_or4() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    for d in [false, true] {
+                        let (inputs, vals) = setup_4_inputs(a, b, c, d);
+                        let decomp = decompose_sky130_cell("or4", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = a || b || c || d;
+                        assert_eq!(result, expected, "or4({}, {}, {}, {}) = {} (expected {})", a, b, c, d, result, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_nand4() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    for d in [false, true] {
+                        let (inputs, vals) = setup_4_inputs(a, b, c, d);
+                        let decomp = decompose_sky130_cell("nand4", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = !(a && b && c && d);
+                        assert_eq!(result, expected, "nand4({}, {}, {}, {}) = {} (expected {})", a, b, c, d, result, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_nor4() {
+        for a in [false, true] {
+            for b in [false, true] {
+                for c in [false, true] {
+                    for d in [false, true] {
+                        let (inputs, vals) = setup_4_inputs(a, b, c, d);
+                        let decomp = decompose_sky130_cell("nor4", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = !(a || b || c || d);
+                        assert_eq!(result, expected, "nor4({}, {}, {}, {}) = {} (expected {})", a, b, c, d, result, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_a21oi() {
+        // a21oi: Y = !((A1 & A2) | B1)
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    let (inputs, vals) = setup_a21_inputs(a1, a2, b1);
+                    let decomp = decompose_sky130_cell("a21oi", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = !((a1 && a2) || b1);
+                    assert_eq!(result, expected, "a21oi({}, {}, {}) = {} (expected {})", a1, a2, b1, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_a21o() {
+        // a21o: Y = (A1 & A2) | B1
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    let (inputs, vals) = setup_a21_inputs(a1, a2, b1);
+                    let decomp = decompose_sky130_cell("a21o", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = (a1 && a2) || b1;
+                    assert_eq!(result, expected, "a21o({}, {}, {}) = {} (expected {})", a1, a2, b1, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_o21ai() {
+        // o21ai: Y = !((A1 | A2) & B1)
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    let (inputs, vals) = setup_a21_inputs(a1, a2, b1);
+                    let decomp = decompose_sky130_cell("o21ai", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = !((a1 || a2) && b1);
+                    assert_eq!(result, expected, "o21ai({}, {}, {}) = {} (expected {})", a1, a2, b1, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_o21a() {
+        // o21a: Y = (A1 | A2) & B1
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    let (inputs, vals) = setup_a21_inputs(a1, a2, b1);
+                    let decomp = decompose_sky130_cell("o21a", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = (a1 || a2) && b1;
+                    assert_eq!(result, expected, "o21a({}, {}, {}) = {} (expected {})", a1, a2, b1, result, expected);
+                }
+            }
+        }
+    }
+
+    fn setup_mux_inputs(a0: bool, a1: bool, s: bool) -> (CellInputs, std::collections::HashMap<i64, bool>) {
+        let mut cell_inputs = CellInputs::new();
+        let mut vals = std::collections::HashMap::new();
+
+        cell_inputs.set_pin("A0", 2usize);
+        vals.insert(2, a0);
+        vals.insert(3, !a0);
+
+        cell_inputs.set_pin("A1", 4usize);
+        vals.insert(4, a1);
+        vals.insert(5, !a1);
+
+        cell_inputs.set_pin("S", 6usize);
+        vals.insert(6, s);
+        vals.insert(7, !s);
+
+        (cell_inputs, vals)
+    }
+
+    #[test]
+    fn test_truth_table_mux2() {
+        // mux2: Y = S ? A1 : A0
+        for a0 in [false, true] {
+            for a1 in [false, true] {
+                for s in [false, true] {
+                    let (inputs, vals) = setup_mux_inputs(a0, a1, s);
+                    let decomp = decompose_sky130_cell("mux2", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = if s { a1 } else { a0 };
+                    assert_eq!(result, expected, "mux2(A0={}, A1={}, S={}) = {} (expected {})", a0, a1, s, result, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_mux2i() {
+        // mux2i: Y = S ? !A1 : !A0 (inverted mux)
+        for a0 in [false, true] {
+            for a1 in [false, true] {
+                for s in [false, true] {
+                    let (inputs, vals) = setup_mux_inputs(a0, a1, s);
+                    let decomp = decompose_sky130_cell("mux2i", &inputs);
+                    let result = eval_decomp(&decomp, &vals);
+                    let expected = if s { !a1 } else { !a0 };
+                    assert_eq!(result, expected, "mux2i(A0={}, A1={}, S={}) = {} (expected {})", a0, a1, s, result, expected);
+                }
+            }
+        }
+    }
+
+    fn setup_o22_inputs(a1: bool, a2: bool, b1: bool, b2: bool) -> (CellInputs, std::collections::HashMap<i64, bool>) {
+        let mut cell_inputs = CellInputs::new();
+        let mut vals = std::collections::HashMap::new();
+
+        cell_inputs.set_pin("A1", 2usize);
+        vals.insert(2, a1);
+        vals.insert(3, !a1);
+
+        cell_inputs.set_pin("A2", 4usize);
+        vals.insert(4, a2);
+        vals.insert(5, !a2);
+
+        cell_inputs.set_pin("B1", 6usize);
+        vals.insert(6, b1);
+        vals.insert(7, !b1);
+
+        cell_inputs.set_pin("B2", 8usize);
+        vals.insert(8, b2);
+        vals.insert(9, !b2);
+
+        (cell_inputs, vals)
+    }
+
+    #[test]
+    fn test_truth_table_o22ai() {
+        // o22ai: Y = !((A1 | A2) & (B1 | B2))
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    for b2 in [false, true] {
+                        let (inputs, vals) = setup_o22_inputs(a1, a2, b1, b2);
+                        let decomp = decompose_sky130_cell("o22ai", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = !((a1 || a2) && (b1 || b2));
+                        assert_eq!(result, expected, "o22ai({}, {}, {}, {}) = {} (expected {})", a1, a2, b1, b2, result, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_a22oi() {
+        // a22oi: Y = !((A1 & A2) | (B1 & B2))
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    for b2 in [false, true] {
+                        let (inputs, vals) = setup_o22_inputs(a1, a2, b1, b2);
+                        let decomp = decompose_sky130_cell("a22oi", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = !((a1 && a2) || (b1 && b2));
+                        assert_eq!(result, expected, "a22oi({}, {}, {}, {}) = {} (expected {})", a1, a2, b1, b2, result, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_truth_table_a22o() {
+        // a22o: Y = (A1 & A2) | (B1 & B2)
+        for a1 in [false, true] {
+            for a2 in [false, true] {
+                for b1 in [false, true] {
+                    for b2 in [false, true] {
+                        let (inputs, vals) = setup_o22_inputs(a1, a2, b1, b2);
+                        let decomp = decompose_sky130_cell("a22o", &inputs);
+                        let result = eval_decomp(&decomp, &vals);
+                        let expected = (a1 && a2) || (b1 && b2);
+                        assert_eq!(result, expected, "a22o({}, {}, {}, {}) = {} (expected {})", a1, a2, b1, b2, result, expected);
+                    }
+                }
+            }
+        }
     }
 }
