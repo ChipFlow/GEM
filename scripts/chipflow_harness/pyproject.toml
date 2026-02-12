@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "VCD stimulus generator for ChipFlow post-synthesis simulation"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["jinja2>=3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
@@ -13,6 +13,7 @@ dev = ["pytest"]
 chipflow-vcd-gen = "chipflow_harness.vcd_gen:main"
 chipflow-caravel-vcd-gen = "chipflow_harness.caravel_vcd_gen:main"
 chipflow-compare-events = "chipflow_harness.events:main"
+chipflow-gen-testbench = "chipflow_harness.generate_testbench:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -20,6 +21,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chipflow_harness"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"src/chipflow_harness/templates" = "chipflow_harness/templates"
 
 [tool.ruff]
 line-length = 100
