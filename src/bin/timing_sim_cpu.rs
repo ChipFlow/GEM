@@ -13,7 +13,8 @@ use gem::aig::{DriverType, AIG};
 use gem::aigpdk::AIGPDKLeafPins;
 use gem::flatten::PackedDelay;
 use gem::liberty_parser::TimingLibrary;
-use gem::sky130::{detect_library_from_file, extract_cell_type, CellLibrary, SKY130LeafPins};
+use gem::sky130::{detect_library_from_file, extract_cell_type, is_sky130_cell, CellLibrary, SKY130LeafPins};
+use gem::sky130_decomp::is_sequential_cell;
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -22,6 +23,116 @@ use std::io::{BufReader, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use sverilogparse::SVerilogRange;
 use vcd_ng::{FFValueChange, FastFlow, FastFlowToken, Parser, Scope, ScopeItem, Var};
+
+// FFI bindings to C++ SPI flash model (from chipflow-lib)
+mod spiflash_ffi {
+    use std::os::raw::c_int;
+
+    #[repr(C)]
+    pub struct SpiFlashModel {
+        _private: [u8; 0],
+    }
+
+    extern "C" {
+        pub fn spiflash_new(size_bytes: usize) -> *mut SpiFlashModel;
+        pub fn spiflash_free(flash: *mut SpiFlashModel);
+        pub fn spiflash_load(
+            flash: *mut SpiFlashModel,
+            data: *const u8,
+            len: usize,
+            offset: usize,
+        ) -> c_int;
+        pub fn spiflash_step(
+            flash: *mut SpiFlashModel,
+            clk: c_int,
+            csn: c_int,
+            d_o: u8,
+        ) -> u8;
+        pub fn spiflash_get_command(flash: *mut SpiFlashModel) -> u8;
+        pub fn spiflash_get_byte_count(flash: *mut SpiFlashModel) -> u32;
+        pub fn spiflash_get_step_count(flash: *mut SpiFlashModel) -> u32;
+        pub fn spiflash_get_posedge_count(flash: *mut SpiFlashModel) -> u32;
+        pub fn spiflash_get_negedge_count(flash: *mut SpiFlashModel) -> u32;
+    }
+}
+
+/// Safe wrapper around the C++ SPI flash model
+struct CppSpiFlash {
+    ptr: *mut spiflash_ffi::SpiFlashModel,
+}
+
+impl CppSpiFlash {
+    fn new(size_bytes: usize) -> Self {
+        let ptr = unsafe { spiflash_ffi::spiflash_new(size_bytes) };
+        assert!(!ptr.is_null(), "Failed to create SPI flash model");
+        Self { ptr }
+    }
+
+    fn load_firmware(&mut self, path: &std::path::Path, offset: usize) -> std::io::Result<usize> {
+        use std::io::Read;
+        let mut file = File::open(path)?;
+        let mut data = Vec::new();
+        file.read_to_end(&mut data)?;
+
+        let result = unsafe {
+            spiflash_ffi::spiflash_load(self.ptr, data.as_ptr(), data.len(), offset)
+        };
+
+        if result < 0 {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to load firmware into flash",
+            ))
+        } else {
+            Ok(result as usize)
+        }
+    }
+
+    fn step(&mut self, clk: bool, csn: bool, d_o: u8) -> u8 {
+        unsafe {
+            spiflash_ffi::spiflash_step(
+                self.ptr,
+                if clk { 1 } else { 0 },
+                if csn { 1 } else { 0 },
+                d_o,
+            )
+        }
+    }
+
+    #[allow(dead_code)]
+    fn get_command(&self) -> u8 {
+        unsafe { spiflash_ffi::spiflash_get_command(self.ptr) }
+    }
+
+    #[allow(dead_code)]
+    fn get_byte_count(&self) -> u32 {
+        unsafe { spiflash_ffi::spiflash_get_byte_count(self.ptr) }
+    }
+
+    #[allow(dead_code)]
+    fn get_step_count(&self) -> u32 {
+        unsafe { spiflash_ffi::spiflash_get_step_count(self.ptr) }
+    }
+
+    #[allow(dead_code)]
+    fn get_posedge_count(&self) -> u32 {
+        unsafe { spiflash_ffi::spiflash_get_posedge_count(self.ptr) }
+    }
+
+    #[allow(dead_code)]
+    fn get_negedge_count(&self) -> u32 {
+        unsafe { spiflash_ffi::spiflash_get_negedge_count(self.ptr) }
+    }
+}
+
+impl Drop for CppSpiFlash {
+    fn drop(&mut self) {
+        unsafe { spiflash_ffi::spiflash_free(self.ptr) };
+    }
+}
+
+// Make CppSpiFlash safe to send between threads (the C++ model has no global state)
+unsafe impl Send for CppSpiFlash {}
 
 #[derive(clap::Parser, Debug)]
 #[command(name = "timing_sim_cpu")]
@@ -206,6 +317,7 @@ struct QspiFlash {
     pub command: u8,
     addr: u32,
     data_width: u8, // 1 for single SPI, 4 for quad
+    last_d_in: u8,  // Hold the last d_in value to maintain across clock cycles
 }
 
 impl QspiFlash {
@@ -222,6 +334,7 @@ impl QspiFlash {
             command: 0,
             addr: 0,
             data_width: 1,
+            last_d_in: 0,
         }
     }
 
@@ -259,7 +372,11 @@ impl QspiFlash {
                 0x03 => {
                     // Single read: 3 address bytes, then data
                     if self.byte_count <= 3 {
-                        self.addr |= (self.curr_byte as u32) << ((3 - self.byte_count) * 8);
+                        let shift = (3 - self.byte_count) * 8;
+                        clilog::debug!("FLASH: Addr byte {}: 0x{:02X} << {} -> addr=0x{:06X}",
+                                      self.byte_count, self.curr_byte, shift,
+                                      self.addr | ((self.curr_byte as u32) << shift));
+                        self.addr |= (self.curr_byte as u32) << shift;
                     }
                     if self.byte_count >= 3 {
                         let idx = (self.addr & 0x00FFFFFF) as usize;
@@ -549,6 +666,12 @@ struct WatchlistSignal {
     /// Signal type (reg, comb, mem).
     #[serde(rename = "type", default)]
     signal_type: String,
+    /// Width for bundle signals (e.g., 32 for a 32-bit bus).
+    #[serde(default)]
+    width: Option<usize>,
+    /// Format for output: "bin", "hex", or "dec" (default: single bit = dec, multi-bit = hex).
+    #[serde(default)]
+    format: Option<String>,
 }
 
 /// Watchlist configuration loaded from JSON.
@@ -557,11 +680,42 @@ struct Watchlist {
     signals: Vec<WatchlistSignal>,
 }
 
-/// Resolved watchlist entry with pin ID.
+/// Resolved watchlist entry - either single bit or bundle.
 #[derive(Debug, Clone)]
-struct WatchlistEntry {
-    name: String,
-    pin: usize,
+enum WatchlistEntry {
+    /// Single-bit signal.
+    Bit { name: String, pin: usize },
+    /// Multi-bit bundle (pins ordered LSB to MSB).
+    Bundle { name: String, pins: Vec<usize>, format: String },
+}
+
+impl WatchlistEntry {
+    fn name(&self) -> &str {
+        match self {
+            WatchlistEntry::Bit { name, .. } => name,
+            WatchlistEntry::Bundle { name, .. } => name,
+        }
+    }
+
+    fn format_value(&self, circ_state: &[u8]) -> String {
+        match self {
+            WatchlistEntry::Bit { pin, .. } => circ_state[*pin].to_string(),
+            WatchlistEntry::Bundle { pins, format, .. } => {
+                let mut value: u64 = 0;
+                for (i, &pin) in pins.iter().enumerate() {
+                    // Skip missing pins (usize::MAX means not found)
+                    if pin < circ_state.len() && circ_state[pin] != 0 {
+                        value |= 1u64 << i;
+                    }
+                }
+                match format.as_str() {
+                    "bin" => format!("{:0width$b}", value, width = pins.len()),
+                    "dec" => format!("{}", value),
+                    _ => format!("0x{:0width$X}", value, width = (pins.len() + 3) / 4),
+                }
+            }
+        }
+    }
 }
 
 /// Timing state for CPU simulation.
@@ -654,6 +808,244 @@ impl TimingState {
             *arr = 0;
         }
     }
+}
+
+/// Verify combinational cell outputs against truth tables.
+/// Returns (total_checked, mismatches). Logs the first `max_log` mismatches.
+fn verify_cell_outputs(
+    netlistdb: &NetlistDB,
+    circ_state: &[u8],
+    cell_library: CellLibrary,
+    cycle: usize,
+    max_log: usize,
+) -> (usize, usize) {
+    let mut checked = 0usize;
+    let mut mismatches = 0usize;
+
+    for cellid in 1..netlistdb.num_cells {
+        let celltype = netlistdb.celltypes[cellid].as_str();
+        if !is_sky130_cell(celltype) {
+            continue;
+        }
+        let ct = extract_cell_type(celltype);
+
+        // Skip sequential, tie, filler, tap, decap cells
+        if is_sequential_cell(ct)
+            || matches!(ct, "conb" | "fill" | "tap" | "decap" | "clkbuf" | "clkdlybuf")
+            || ct.starts_with("fill")
+            || ct.starts_with("tap")
+            || ct.starts_with("decap")
+        {
+            continue;
+        }
+
+        // Gather pins
+        let mut a_val = 0u8;
+        let mut b_val = 0u8;
+        let mut c_val = 0u8;
+        let mut d_val = 0u8;
+        let mut a1_val = 0u8;
+        let mut a2_val = 0u8;
+        let mut a3_val = 0u8;
+        let mut a4_val = 0u8;
+        let mut b1_val = 0u8;
+        let mut b2_val = 0u8;
+        let mut c1_val = 0u8;
+        let mut d1_val = 0u8;
+        let mut s_val = 0u8;
+        let mut s0_val = 0u8;
+        let mut s1_val = 0u8;
+        let mut a0_val = 0u8;
+        let mut y_pin = usize::MAX;
+        let mut x_pin = usize::MAX;
+
+        for pinid in netlistdb.cell2pin.iter_set(cellid) {
+            let pname = netlistdb.pinnames[pinid].1.as_str();
+            let v = circ_state[pinid];
+            match pname {
+                "A" => a_val = v,
+                "B" => b_val = v,
+                "C" => c_val = v,
+                "D" => d_val = v,
+                "A1" => a1_val = v,
+                "A2" => a2_val = v,
+                "A3" => a3_val = v,
+                "A4" => a4_val = v,
+                "B1" => b1_val = v,
+                "B2" => b2_val = v,
+                "C1" => c1_val = v,
+                "D1" => d1_val = v,
+                "S" => s_val = v,
+                "S0" => s0_val = v,
+                "S1" => s1_val = v,
+                "A0" => a0_val = v,
+                "Y" => y_pin = pinid,
+                "X" => x_pin = pinid,
+                _ => {}
+            }
+        }
+
+        // Determine output pin and expected value
+        let (out_pin, expected) = match ct {
+            "inv" => (y_pin, 1 - a_val),
+            "buf" | "clkbuf" => (x_pin, a_val),
+            "and2" => (x_pin, a_val & b_val),
+            "and3" => (x_pin, a_val & b_val & c_val),
+            "and4" => (x_pin, a_val & b_val & c_val & d_val),
+            "nand2" => (y_pin, 1 - (a_val & b_val)),
+            "nand3" => (y_pin, 1 - (a_val & b_val & c_val)),
+            "nand4" => (y_pin, 1 - (a_val & b_val & c_val & d_val)),
+            "or2" => (x_pin, a_val | b_val),
+            "or3" => (x_pin, a_val | b_val | c_val),
+            "or4" => (x_pin, a_val | b_val | c_val | d_val),
+            "nor2" => (y_pin, 1 - (a_val | b_val)),
+            "nor3" => (y_pin, 1 - (a_val | b_val | c_val)),
+            "nor4" => (y_pin, 1 - (a_val | b_val | c_val | d_val)),
+            "xor2" => (x_pin, a_val ^ b_val),
+            "xnor2" => (y_pin, 1 - (a_val ^ b_val)),
+            "a21oi" => (y_pin, 1 - ((a1_val & a2_val) | b1_val)),
+            "a21o" => (x_pin, (a1_val & a2_val) | b1_val),
+            "o21ai" => (y_pin, 1 - ((a1_val | a2_val) & b1_val)),
+            "o21a" => (x_pin, (a1_val | a2_val) & b1_val),
+            "a22o" => (x_pin, (a1_val & a2_val) | (b1_val & b2_val)),
+            "a22oi" => (y_pin, 1 - ((a1_val & a2_val) | (b1_val & b2_val))),
+            "o22a" => (x_pin, (a1_val | a2_val) & (b1_val | b2_val)),
+            "o22ai" => (y_pin, 1 - ((a1_val | a2_val) & (b1_val | b2_val))),
+            "a211o" => (x_pin, (a1_val & a2_val) | b1_val | c1_val),
+            "a211oi" => (y_pin, 1 - ((a1_val & a2_val) | b1_val | c1_val)),
+            "o211a" => (x_pin, (a1_val | a2_val) & b1_val & c1_val),
+            "o211ai" => (y_pin, 1 - ((a1_val | a2_val) & b1_val & c1_val)),
+            "a31o" => (x_pin, (a1_val & a2_val & a3_val) | b1_val),
+            "a31oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val) | b1_val)),
+            "o31a" => (x_pin, (a1_val | a2_val | a3_val) & b1_val),
+            "o31ai" => (y_pin, 1 - ((a1_val | a2_val | a3_val) & b1_val)),
+            "a32o" => (x_pin, (a1_val & a2_val & a3_val) | (b1_val & b2_val)),
+            "a32oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val) | (b1_val & b2_val))),
+            "o32a" => (x_pin, (a1_val | a2_val | a3_val) & (b1_val | b2_val)),
+            "o32ai" => (y_pin, 1 - ((a1_val | a2_val | a3_val) & (b1_val | b2_val))),
+            "a41oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val & a4_val) | b1_val)),
+            "o41ai" => (y_pin, 1 - ((a1_val | a2_val | a3_val | a4_val) & b1_val)),
+            "a221o" => (x_pin, (a1_val & a2_val) | (b1_val & b2_val) | c1_val),
+            "a221oi" => (y_pin, 1 - ((a1_val & a2_val) | (b1_val & b2_val) | c1_val)),
+            "a311o" => (x_pin, (a1_val & a2_val & a3_val) | b1_val | c1_val),
+            "a311oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val) | b1_val | c1_val)),
+            "o221a" => (x_pin, (a1_val | a2_val) & (b1_val | b2_val) & c1_val),
+            "o221ai" => (y_pin, 1 - ((a1_val | a2_val) & (b1_val | b2_val) & c1_val)),
+            "mux2" => (x_pin, if s_val != 0 { a1_val } else { a0_val }),
+            "mux4" => {
+                let sel = (s1_val as usize) * 2 + (s0_val as usize);
+                let out = match sel {
+                    0 => a0_val,
+                    1 => a1_val,
+                    2 => a2_val,
+                    3 => a3_val,
+                    _ => 0,
+                };
+                (x_pin, out)
+            }
+            // Skip cells we don't have truth tables for
+            _ => continue,
+        };
+
+        if out_pin == usize::MAX {
+            continue;
+        }
+
+        checked += 1;
+        let actual = circ_state[out_pin];
+
+        if actual != expected {
+            mismatches += 1;
+            if mismatches <= max_log {
+                use netlistdb::GeneralHierName;
+                let cell_name = netlistdb.cellnames[cellid].dbg_fmt_hier();
+                let out_pname = netlistdb.pinnames[out_pin].1.as_str();
+                eprintln!(
+                    "CELL MISMATCH cycle {}: {} (type={}) {}={} expected={} | \
+                     A={} B={} C={} D={} A1={} A2={} A3={} B1={} B2={} C1={} S={} A0={}",
+                    cycle, cell_name, ct, out_pname, actual, expected,
+                    a_val, b_val, c_val, d_val, a1_val, a2_val, a3_val,
+                    b1_val, b2_val, c1_val, s_val, a0_val
+                );
+            }
+        }
+    }
+
+    (checked, mismatches)
+}
+
+/// Verify that all pins on the same net have the same circ_state value.
+/// Returns (nets_checked, mismatches). Logs mismatches to stderr.
+fn verify_net_consistency(
+    netlistdb: &NetlistDB,
+    circ_state: &[u8],
+    aig: &AIG,
+    cycle: usize,
+    max_log: usize,
+) -> (usize, usize) {
+    let mut checked = 0usize;
+    let mut mismatches = 0usize;
+
+    // For each net, find the driver pin value and compare all load pin values
+    for netid in 0..netlistdb.net2pin.start.len() - 1 {
+        let start = netlistdb.net2pin.start[netid];
+        let end = netlistdb.net2pin.start[netid + 1];
+        if end - start < 2 {
+            continue; // Skip nets with 0 or 1 pin
+        }
+
+        // Find driver pin (Direction::O or cell 0)
+        let mut driver_pin = None;
+        for &pinid in &netlistdb.net2pin.items[start..end] {
+            if netlistdb.pindirect[pinid] == Direction::O || netlistdb.pin2cell[pinid] == 0 {
+                driver_pin = Some(pinid);
+                break;
+            }
+        }
+
+        let driver_pin = match driver_pin {
+            Some(p) => p,
+            None => continue, // No driver found
+        };
+
+        let driver_val = circ_state[driver_pin];
+        checked += 1;
+
+        // Check all other pins on this net
+        for &pinid in &netlistdb.net2pin.items[start..end] {
+            if pinid == driver_pin {
+                continue;
+            }
+            // Only check pins that have AIG mappings
+            if aig.pin2aigpin_iv[pinid] == usize::MAX {
+                continue;
+            }
+            let pin_val = circ_state[pinid];
+            if pin_val != driver_val {
+                mismatches += 1;
+                if mismatches <= max_log {
+                    use netlistdb::GeneralHierName;
+                    let driver_name = netlistdb.pinnames[driver_pin].dbg_fmt_pin();
+                    let load_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                    let driver_celltype = netlistdb.celltypes[netlistdb.pin2cell[driver_pin]].as_str();
+                    let load_celltype = netlistdb.celltypes[netlistdb.pin2cell[pinid]].as_str();
+                    // Check AIG pin mappings
+                    let driver_aigpin = aig.pin2aigpin_iv[driver_pin];
+                    let load_aigpin = aig.pin2aigpin_iv[pinid];
+                    eprintln!(
+                        "NET MISMATCH cycle {}: driver {}({})={} vs load {}({})={} | \
+                         driver_aigpin_iv={} load_aigpin_iv={} same_aig={}",
+                        cycle, driver_name, driver_celltype, driver_val,
+                        load_name, load_celltype, pin_val,
+                        driver_aigpin, load_aigpin,
+                        (driver_aigpin >> 1) == (load_aigpin >> 1)
+                    );
+                }
+            }
+        }
+    }
+
+    (checked, mismatches)
 }
 
 /// Statistics from timing simulation.
@@ -854,9 +1246,9 @@ fn run_programmatic_simulation(
     clilog::info!("Clock input pin: {} (gpio_in[{}])", clock_pin, config.clock_gpio);
     clilog::info!("Reset input pin: {} (gpio_in[{}])", reset_pin, config.reset_gpio);
 
-    // Initialize flash model
-    let mut flash = if let Some(ref flash_cfg) = config.flash {
-        let mut fl = QspiFlash::new();
+    // Initialize flash model (using C++ model from chipflow-lib)
+    let mut flash: Option<CppSpiFlash> = if let Some(ref flash_cfg) = config.flash {
+        let mut fl = CppSpiFlash::new(16 * 1024 * 1024); // 16MB flash
         let firmware_path = std::path::Path::new(&flash_cfg.firmware);
         match fl.load_firmware(firmware_path, flash_cfg.firmware_offset) {
             Ok(size) => clilog::info!("Loaded {} bytes firmware at offset 0x{:X}", size, flash_cfg.firmware_offset),
@@ -920,7 +1312,17 @@ fn run_programmatic_simulation(
                 return Some(pinid);
             }
         }
-        // Fallback: any pin containing the pattern (for non-DFF signals)
+        // Try net names (some signals are identified by their net, not pin name)
+        for netid in 0..netlistdb.num_nets {
+            let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
+            if net_name.contains(net_pattern) {
+                // Find a pin on this net
+                for pinid in netlistdb.net2pin.iter_set(netid) {
+                    return Some(pinid);
+                }
+            }
+        }
+        // Fallback: any pin containing the pattern
         for pinid in 0..netlistdb.num_pins {
             let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
             if pin_name.contains(net_pattern) {
@@ -962,6 +1364,203 @@ fn run_programmatic_simulation(
             if i == 0 || i == 18 || i == 20 {
                 clilog::info!("ibus_adr[{}] = pin {} ({})", i, pin, pin_name);
             }
+        }
+    }
+
+    // Find SPI debug signals for cycle-level comparison with Icarus
+    let buffer_io0_o_pin = find_net_pin("buffer_io0.o");
+    let str_io0_o_pin = find_net_pin("str_io0.o");
+    let o_latch_io0_o_pin = find_net_pin("o_latch.io0.o");
+    clilog::info!("SPI debug pins: buffer_io0.o={:?}, str_io0.o={:?}, o_latch.io0.o={:?}",
+                  buffer_io0_o_pin, str_io0_o_pin, o_latch_io0_o_pin);
+
+    // Trace specific nets in the buffer_io0.o combinational cone:
+    // buffer_io0.o = NAND(_18714_, _18715_)  [_40802_]
+    //   _18714_ = NAND(_18712_, _18713_)     [_40800_]
+    //   _18715_ = NAND(net806, o_latch.io0.o) [_40801_]
+    //   net806 = BUF(_18628_)                 [fanout807]
+    //   _18628_ = NAND3(_18246_, _18254_, _18359_) [_40712_]
+    // Find driver chain cells for o_latch[2] by instance name.
+    // From 6_final_fixed.v:
+    //   _40938_: nand2(.A(_18782_), .B(_18705_), .Y(_18783_))
+    //   _40939_: nand2(.A(_18360_), .B(o_latch.io0.o), .Y(_18784_))
+    //   _40941_: a21oi(.A1(_18783_), .A2(_18784_), .B1(net2982), .Y(_05278_))
+    // D formula: _05278_ = !((_18783_ & _18784_) | net2982)
+    //          = (_18782_ & _18705_) | (_18360_ & Q)  when net2982=0
+    struct CellPins {
+        a_pin: usize,  // First input
+        b_pin: usize,  // Second input
+        c_pin: usize,  // Third input (for a21oi B1)
+        y_pin: usize,  // Output
+    }
+    let empty_cell = CellPins { a_pin: usize::MAX, b_pin: usize::MAX, c_pin: usize::MAX, y_pin: usize::MAX };
+    let mut cell_40938 = CellPins { ..empty_cell }; // nand2: .A(_18782_), .B(_18705_), .Y(_18783_)
+    let mut cell_40939 = CellPins { ..empty_cell }; // nand2: .A(_18360_), .B(Q), .Y(_18784_)
+    let mut cell_40941 = CellPins { ..empty_cell }; // a21oi: .A1(_18783_), .A2(_18784_), .B1(net2982), .Y(_05278_)
+    let mut net2982_pin: usize = usize::MAX;
+
+    for cellid in 1..netlistdb.num_cells {
+        let cname = format!("{:?}", netlistdb.cellnames[cellid]);
+        // Match by exact cell instance names (trimmed)
+        let target = if cname.ends_with("_40938_)") { Some(&mut cell_40938) }
+                     else if cname.ends_with("_40939_)") { Some(&mut cell_40939) }
+                     else if cname.ends_with("_40941_)") { Some(&mut cell_40941) }
+                     else { None };
+        if let Some(cp) = target {
+            let ctype = netlistdb.celltypes[cellid].as_str();
+            let mut pins_info = String::new();
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                let pname_str = netlistdb.pinnames[pinid].1.as_str();
+                match pname_str {
+                    "A" | "A1" => cp.a_pin = pinid,
+                    "B" | "A2" => cp.b_pin = pinid,
+                    "B1" => cp.c_pin = pinid,
+                    "Y" | "X" => cp.y_pin = pinid,
+                    _ => {}
+                }
+                pins_info += &format!(" {}={}", pname_str, pinid);
+            }
+            eprintln!("OLATCH DRIVER CELL '{}' type='{}':{}", cname, ctype, pins_info);
+        }
+    }
+    // Find net2982 pin (buffered rst_n_sync.rst)
+    if let Some(pid) = find_net_pin("net2982") {
+        net2982_pin = pid;
+    }
+
+    // Cell _40937_: o21ai(.A1(enframer.cycle[2]), .A2(_18743_), .B1(_18781_), .Y(_18782_))
+    // _18782_ = !((cycle[2] | _18743_) & _18781_)
+    let mut cell_40937 = CellPins { ..empty_cell };
+    // Cell _40936_: nand3(.A(_18758_), .B(_18777_), .C(_18780_), .Y(_18781_))
+    let mut cell_40936_a = usize::MAX;
+    let mut cell_40936_b = usize::MAX;
+    let mut cell_40936_c = usize::MAX;
+
+    for cellid in 1..netlistdb.num_cells {
+        let cname = format!("{:?}", netlistdb.cellnames[cellid]);
+        if cname.ends_with("_40937_)") {
+            let ctype = netlistdb.celltypes[cellid].as_str();
+            let mut pins_info = String::new();
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                let pname_str = netlistdb.pinnames[pinid].1.as_str();
+                match pname_str {
+                    "A1" => cell_40937.a_pin = pinid,
+                    "A2" => cell_40937.b_pin = pinid,
+                    "B1" => cell_40937.c_pin = pinid,
+                    "Y" => cell_40937.y_pin = pinid,
+                    _ => {}
+                }
+                pins_info += &format!(" {}={}", pname_str, pinid);
+            }
+            eprintln!("CELL _40937_ type='{}': {}", ctype, pins_info);
+        } else if cname.ends_with("_40936_)") {
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                let pname_str = netlistdb.pinnames[pinid].1.as_str();
+                match pname_str {
+                    "A" => cell_40936_a = pinid,
+                    "B" => cell_40936_b = pinid,
+                    "C" => cell_40936_c = pinid,
+                    _ => {}
+                }
+            }
+            eprintln!("CELL _40936_ (nand3 → _18781_): A(18758)={} B(18777)={} C(18780)={}", cell_40936_a, cell_40936_b, cell_40936_c);
+        }
+    }
+
+    // Also trace the enframer.cycle DFF Q values
+    let ecycle0_pin = find_net_pin("enframer.cycle[0]");
+    let ecycle1_pin = find_net_pin("enframer.cycle[1]");
+    let ecycle2_pin = find_net_pin("enframer.cycle[2]");
+    eprintln!("Enframer cycle pins: [0]={:?} [1]={:?} [2]={:?}", ecycle0_pin, ecycle1_pin, ecycle2_pin);
+
+    // Trace raw_tx_data[0..7] register bits (the SPI command byte the controller sends)
+    let mut raw_tx_data_pins: [Option<usize>; 8] = [None; 8];
+    for bit in 0..8 {
+        raw_tx_data_pins[bit] = find_net_pin(&format!("raw_tx_data[{}]", bit));
+    }
+    eprintln!("raw_tx_data pins: {:?}", raw_tx_data_pins);
+
+    // Trace SPI controller FSM state bits
+    let mut fsm_state_pins: [Option<usize>; 4] = [None; 4];
+    for bit in 0..4 {
+        fsm_state_pins[bit] = find_net_pin(&format!("spiflash.ctrl.fsm_state[{}]", bit));
+    }
+    eprintln!("FSM state pins: {:?}", fsm_state_pins);
+
+    // Trace cells in the _18777_ driver chain:
+    // _40932_: nand3(.A(_18769_), .B(cycle[2]), .C(_18776_)) → _18777_
+    // _40931_: nand3(.A(_18742_), .B(cycle[1]), .C(_18775_)) → _18776_
+    // _40930_: nand2(.A(_18774_), .B(_02744_)) → _18775_; _02744_ = !cycle[0]
+    // _40897_: o2111ai → _18742_
+    let mut cell_40932 = CellPins { ..empty_cell }; // nand3 → _18777_
+    let mut cell_40931 = CellPins { ..empty_cell }; // nand3 → _18776_
+    let mut cell_40930 = CellPins { ..empty_cell }; // nand2 → _18775_
+
+    for cellid in 1..netlistdb.num_cells {
+        let cname = format!("{:?}", netlistdb.cellnames[cellid]);
+        let target = if cname.ends_with("_40932_)") { Some(&mut cell_40932) }
+                     else if cname.ends_with("_40931_)") { Some(&mut cell_40931) }
+                     else if cname.ends_with("_40930_)") { Some(&mut cell_40930) }
+                     else { None };
+        if let Some(cp) = target {
+            let ctype = netlistdb.celltypes[cellid].as_str();
+            let mut pins_info = String::new();
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                let pname_str = netlistdb.pinnames[pinid].1.as_str();
+                match pname_str {
+                    "A" | "A1" => cp.a_pin = pinid,
+                    "B" | "A2" => cp.b_pin = pinid,
+                    "C" | "B1" => cp.c_pin = pinid,
+                    "Y" | "X" => cp.y_pin = pinid,
+                    _ => {}
+                }
+                pins_info += &format!(" {}={}", pname_str, pinid);
+            }
+            eprintln!("DEEP TRACE CELL '{}' type='{}':{}", cname, ctype, pins_info);
+        }
+    }
+
+    // Find the DFF cell for buffer_io0.o and its D/Q pins
+    let mut buffer_dff_cellid = usize::MAX;
+    let mut buffer_dff_d_pin = usize::MAX;
+    let mut buffer_dff_q_pin = usize::MAX;
+    for cellid in 1..netlistdb.num_cells {
+        let cell_name = format!("{:?}", netlistdb.cellnames[cellid]);
+        if cell_name.contains("buffer_io0.o_ff") {
+            buffer_dff_cellid = cellid;
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                match netlistdb.pinnames[pinid].1.as_str() {
+                    "D" => buffer_dff_d_pin = pinid,
+                    "Q" => buffer_dff_q_pin = pinid,
+                    _ => {}
+                }
+            }
+            let ct = netlistdb.celltypes[cellid].as_str();
+            clilog::info!("Found buffer_io0.o DFF: cell={}, type={}, D_pin={}, Q_pin={}", cellid, ct, buffer_dff_d_pin, buffer_dff_q_pin);
+            break;
+        }
+    }
+
+    // Verify AIG topological order: for each AND gate, both inputs must have lower index
+    {
+        let mut topo_violations = 0usize;
+        for i in 1..=aig.num_aigpins {
+            if let DriverType::AndGate(a_iv, b_iv) = &aig.drivers[i] {
+                let a_idx = a_iv >> 1;
+                let b_idx = b_iv >> 1;
+                if a_idx >= i || b_idx >= i {
+                    topo_violations += 1;
+                    if topo_violations <= 10 {
+                        eprintln!("TOPO VIOLATION: pin {} depends on pin {} and pin {} (both should be < {})",
+                                 i, a_idx, b_idx, i);
+                    }
+                }
+            }
+        }
+        if topo_violations > 0 {
+            eprintln!("CRITICAL: {} AIG topological order violations! Single-pass eval will be WRONG!", topo_violations);
+        } else {
+            clilog::info!("AIG topological order verified: all {} pins in correct order", aig.num_aigpins);
         }
     }
 
@@ -1049,12 +1648,107 @@ fn run_programmatic_simulation(
             if aigpin_iv != usize::MAX {
                 let idx = aigpin_iv >> 1;
                 let inv = (aigpin_iv & 1) != 0;
-                if idx > 0 && idx <= aig.num_aigpins {
+                if idx == 0 {
+                    // AIG pin 0 is the constant-0 node. With inversion it's constant 1.
+                    // This handles tie cells (conb_1 .HI/.LO) mapped to the AIG constant.
+                    circ_state[pinid] = inv as u8;
+                } else if idx <= aig.num_aigpins {
                     circ_state[pinid] = state.values[idx] ^ (inv as u8);
                 }
             }
         }
     };
+
+    // Build net propagation map for SRAM pins.
+    // SRAM cell input pins are NOT in the AIG, so `update_circ_from_aig` never sets
+    // their values. We need to find the AIG-driven pin on the same net and copy its
+    // value to the SRAM input pin after each evaluation.
+    // sram_net_prop[i] = (sram_pinid, driver_pinid) means:
+    //   circ_state[sram_pinid] = circ_state[driver_pinid]
+    let mut sram_net_prop: Vec<(usize, usize)> = Vec::new();
+    for sram in sram_cells.iter() {
+        // Collect all SRAM input pins that need propagation
+        let mut sram_input_pins = Vec::new();
+        sram_input_pins.push(sram.clk_pin);
+        sram_input_pins.push(sram.en_pin);
+        sram_input_pins.push(sram.r_wb_pin);
+        sram_input_pins.extend_from_slice(&sram.addr_pins);
+        sram_input_pins.extend_from_slice(&sram.ben_pins);
+        sram_input_pins.extend_from_slice(&sram.di_pins);
+        // DO pins are outputs from SRAM - they need reverse propagation
+        // (SRAM writes to DO, then we need to push DO values to the net)
+
+        for &pinid in &sram_input_pins {
+            if pinid == usize::MAX { continue; }
+            // Check if this pin is already in the AIG
+            if aig.pin2aigpin_iv[pinid] != usize::MAX { continue; }
+            // Find a driver pin (AIG-mapped) on the same net
+            let netid = netlistdb.pin2net[pinid];
+            let mut driver_pin = usize::MAX;
+            for np in netlistdb.net2pin.iter_set(netid) {
+                if np != pinid && aig.pin2aigpin_iv[np] != usize::MAX {
+                    driver_pin = np;
+                    break;
+                }
+            }
+            if driver_pin != usize::MAX {
+                sram_net_prop.push((pinid, driver_pin));
+            } else {
+                eprintln!("WARNING: SRAM pin {} has no AIG-mapped driver on net {}",
+                         pinid, netid);
+            }
+        }
+    }
+    clilog::info!("Built SRAM net propagation map: {} pin pairs", sram_net_prop.len());
+
+    // Debug: show SRAM pin AIG mappings
+    for sram in sram_cells.iter() {
+        let clk_aig = aig.pin2aigpin_iv[sram.clk_pin];
+        let en_aig = aig.pin2aigpin_iv[sram.en_pin];
+        let rwb_aig = aig.pin2aigpin_iv[sram.r_wb_pin];
+        let clk_aigpin = clk_aig >> 1;
+        let en_aigpin = en_aig >> 1;
+        eprintln!("SRAM pin mappings: CLKin pin={} aig_iv=0x{:x} (aigpin={}), EN pin={} aig_iv=0x{:x} (aigpin={}), R_WB pin={} aig_iv=0x{:x}",
+                 sram.clk_pin, clk_aig, clk_aigpin, sram.en_pin, en_aig, en_aigpin, sram.r_wb_pin, rwb_aig);
+        // Show what type of AIG node drives CLKin
+        if clk_aigpin > 0 && clk_aigpin <= aig.num_aigpins {
+            eprintln!("  CLKin AIG driver: {:?}", aig.drivers[clk_aigpin]);
+        }
+        if en_aigpin > 0 && en_aigpin <= aig.num_aigpins {
+            eprintln!("  EN AIG driver: {:?}", aig.drivers[en_aigpin]);
+        }
+        // Check what the SRAM CLKin's net looks like
+        let clk_netid = netlistdb.pin2net[sram.clk_pin];
+        let en_netid = netlistdb.pin2net[sram.en_pin];
+        eprintln!("SRAM CLKin net={} ({}), EN net={} ({})",
+                 clk_netid, netlistdb.netnames[clk_netid].dbg_fmt_pin(),
+                 en_netid, netlistdb.netnames[en_netid].dbg_fmt_pin());
+    }
+
+    // Also build reverse propagation for SRAM DO (output) pins.
+    // After SRAM writes DO, we need to propagate to all other pins on the same net
+    // that ARE in the AIG (so they feed back into combinational logic).
+    let mut sram_do_prop: Vec<(usize, Vec<usize>)> = Vec::new();
+    for sram in sram_cells.iter() {
+        for &do_pin in &sram.do_pins {
+            if do_pin == usize::MAX { continue; }
+            let netid = netlistdb.pin2net[do_pin];
+            let mut load_pins = Vec::new();
+            for np in netlistdb.net2pin.iter_set(netid) {
+                if np != do_pin {
+                    load_pins.push(np);
+                }
+            }
+            if !load_pins.is_empty() {
+                sram_do_prop.push((do_pin, load_pins));
+            }
+        }
+    }
+    clilog::info!("Built SRAM DO propagation map: {} output pins, {} total loads",
+                 sram_do_prop.len(),
+                 sram_do_prop.iter().map(|(_, loads)| loads.len()).sum::<usize>());
+
+    // Helper functions are defined inline where used (no closures needed)
 
     // Simulation loop - aligned with CXXRTL's main.cc structure
     //
@@ -1082,6 +1776,179 @@ fn run_programmatic_simulation(
     eval_combinational(&mut state, &circ_state);
     update_circ_from_aig(&state, &mut circ_state);
 
+    // Net consistency check: verify all pins on the same net have the same circ_state value.
+    // If they don't, it means pin2aigpin_iv has inconsistent mappings (AIG mapping bug).
+    {
+        let mut net_inconsistencies = 0usize;
+        let mut unmapped_on_mapped_net = 0usize;
+        for netid in 0..netlistdb.num_nets {
+            let mut driver_val: Option<(u8, usize, bool)> = None; // (value, pinid, is_output)
+            let mut has_mapped = false;
+            let mut has_unmapped = false;
+            for pinid in netlistdb.net2pin.iter_set(netid) {
+                let aigpin_iv = aig.pin2aigpin_iv[pinid];
+                if aigpin_iv == usize::MAX {
+                    has_unmapped = true;
+                    continue;
+                }
+                has_mapped = true;
+                let val = circ_state[pinid];
+                if let Some((dv, dp, _)) = driver_val {
+                    if val != dv {
+                        net_inconsistencies += 1;
+                        if net_inconsistencies <= 20 {
+                            let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
+                            let pin1_name = netlistdb.pinnames[dp].dbg_fmt_pin();
+                            let pin2_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                            eprintln!("NET INCONSISTENCY: net '{}' pin {}({})={} vs pin {}({})={}",
+                                     net_name, dp, pin1_name, dv, pinid, pin2_name, val);
+                        }
+                    }
+                } else {
+                    // Check if this is an output pin (Direction::O)
+                    let dir = netlistdb.pindirect[pinid];
+                    driver_val = Some((val, pinid, dir == netlistdb::Direction::O));
+                }
+            }
+            if has_mapped && has_unmapped {
+                unmapped_on_mapped_net += 1;
+            }
+        }
+        if net_inconsistencies > 0 {
+            eprintln!("TOTAL NET INCONSISTENCIES: {} (across {} nets)", net_inconsistencies, netlistdb.num_nets);
+        } else {
+            clilog::info!("Net consistency check: all pins consistent across {} nets", netlistdb.num_nets);
+        }
+        if unmapped_on_mapped_net > 0 {
+            clilog::info!("Warning: {} nets have both mapped and unmapped pins", unmapped_on_mapped_net);
+        }
+    }
+
+    // Build a list of DFF info for efficient iteration
+    // Each entry: (cell_id, d_pin, q_pin, clk_pin, reset_b_pin, set_b_pin, de_pin)
+    let mut dff_list: Vec<(usize, usize, usize, usize, usize, usize, usize)> = Vec::new();
+    for cellid in 1..netlistdb.num_cells {
+        let celltype = netlistdb.celltypes[cellid].as_str();
+        let is_dff = match cell_library {
+            CellLibrary::SKY130 => {
+                let ct = extract_cell_type(celltype);
+                matches!(ct, "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp")
+            }
+            _ => matches!(celltype, "DFF" | "DFFSR"),
+        };
+        if is_dff {
+            let mut pinid_d = usize::MAX;
+            let mut pinid_q = usize::MAX;
+            let mut pinid_clk = usize::MAX;
+            let mut pinid_de = usize::MAX;
+            let mut pinid_reset_b = usize::MAX;
+            let mut pinid_set_b = usize::MAX;
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                match netlistdb.pinnames[pinid].1.as_str() {
+                    "D" => pinid_d = pinid,
+                    "Q" => pinid_q = pinid,
+                    "CLK" => pinid_clk = pinid,
+                    "DE" => pinid_de = pinid,
+                    "RESET_B" => pinid_reset_b = pinid,
+                    "SET_B" => pinid_set_b = pinid,
+                    _ => {}
+                }
+            }
+            if pinid_d != usize::MAX && pinid_q != usize::MAX && pinid_clk != usize::MAX {
+                dff_list.push((cellid, pinid_d, pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, pinid_de));
+            }
+        }
+    }
+    // Diagnostic: check how many DFFs are on the system clock vs other clocks
+    let mut dffs_on_sysclk = 0usize;
+    let mut dffs_off_sysclk = 0usize;
+    for &(cellid, _, _, clk_pin, _, _, _) in &dff_list {
+        if clk_pin == clock_pin {
+            dffs_on_sysclk += 1;
+        } else {
+            dffs_off_sysclk += 1;
+            // Log the first few non-system-clock DFFs
+            if dffs_off_sysclk <= 20 {
+                let cell_name = format!("{:?}", netlistdb.cellnames[cellid]);
+                clilog::info!("DFF NOT on system clock: {} (clk_pin={}, sys_clk={})",
+                             &cell_name[..cell_name.len().min(80)], clk_pin, clock_pin);
+            }
+        }
+    }
+    clilog::info!("Found {} DFFs total: {} on system clock, {} on OTHER clocks",
+                 dff_list.len(), dffs_on_sysclk, dffs_off_sysclk);
+
+    // Track previous CLK state, D value, and DE value for each DFF.
+    // These are captured after FALL eval (before clock edge) so DFFs
+    // latch the pre-edge D value, matching real hardware behavior.
+    let mut dff_prev_clk: Vec<u8> = vec![0; dff_list.len()];
+    let mut dff_prev_d: Vec<u8> = vec![0; dff_list.len()];
+    let mut dff_prev_de: Vec<u8> = vec![1; dff_list.len()]; // default: enabled
+
+    // Initialize previous CLK, D, and DE states
+    for (i, &(_, pinid_d, _, clk_pin, _, _, pinid_de)) in dff_list.iter().enumerate() {
+        dff_prev_clk[i] = circ_state[clk_pin];
+        dff_prev_d[i] = circ_state[pinid_d];
+        if pinid_de != usize::MAX {
+            dff_prev_de[i] = circ_state[pinid_de];
+        }
+    }
+
+    // Force DFFs with async reset to their reset values during initial state
+    // This is critical because reset is already active (reset_active_val)
+    let mut dffs_force_reset = 0usize;
+    for cellid in 1..netlistdb.num_cells {
+        let celltype = netlistdb.celltypes[cellid].as_str();
+        let is_dff = match cell_library {
+            CellLibrary::SKY130 => {
+                let ct = extract_cell_type(celltype);
+                matches!(ct, "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp")
+            }
+            _ => matches!(celltype, "DFF" | "DFFSR"),
+        };
+        if is_dff {
+            let mut pinid_q = usize::MAX;
+            let mut pinid_reset_b = usize::MAX;
+            let mut pinid_set_b = usize::MAX;
+            for pinid in netlistdb.cell2pin.iter_set(cellid) {
+                match netlistdb.pinnames[pinid].1.as_str() {
+                    "Q" => pinid_q = pinid,
+                    "RESET_B" => pinid_reset_b = pinid,
+                    "SET_B" => pinid_set_b = pinid,
+                    _ => {}
+                }
+            }
+            if pinid_q != usize::MAX {
+                // Check if async reset/set is active
+                let reset_active = pinid_reset_b != usize::MAX && circ_state[pinid_reset_b] == 0;
+                let set_active = pinid_set_b != usize::MAX && circ_state[pinid_set_b] == 0;
+                if reset_active {
+                    circ_state[pinid_q] = 0;
+                    dffs_force_reset += 1;
+                } else if set_active {
+                    circ_state[pinid_q] = 1;
+                    dffs_force_reset += 1;
+                }
+            }
+        }
+    }
+    if dffs_force_reset > 0 {
+        clilog::info!("Forced {} DFFs to reset/set values during initial state", dffs_force_reset);
+    }
+
+    // Re-evaluate combinational after forcing DFF outputs
+    eval_combinational(&mut state, &circ_state);
+    update_circ_from_aig(&state, &mut circ_state);
+
+    // Flash data delay: track previous step's data to model setup time.
+    // In the post-synthesis netlist, the SPI clock and data DFFs advance simultaneously
+    // on the system clock edge. This means at the moment the flash model sees a rising
+    // SPI clock edge (posedge), the data has already changed to the NEXT bit value.
+    // We compensate by feeding the flash model the PREVIOUS step's data, which was
+    // the value present before the clock edge (matching real hardware setup timing).
+    let mut prev_flash_d_out: u8 = 0;
+    let mut prev_flash_csn: bool = true;
+
     for cycle in 0..max_cycles {
         // Apply reset polarity from config
         // reset_active_high=true: gpio=1 during reset, gpio=0 during run
@@ -1101,34 +1968,214 @@ fn run_programmatic_simulation(
         // === TICK START (matches CXXRTL tick lambda) ===
         //
         // CXXRTL tick order:
-        // 1. flash.step(timestamp)
-        // 2. clock = false
-        // 3. agent.step() - evaluate combinational
-        // 4. clock = true
-        // 5. agent.step() - evaluate + latch DFFs on rising edge
+        // 1. clock = false
+        // 2. agent.step() - evaluate combinational (includes flash.eval())
+        // 3. clock = true
+        // 4. agent.step() - evaluate + latch DFFs on rising edge (includes flash.eval())
         //
-        // The flash model samples the SPI clock (flash_clk output from design),
-        // not the system clock. We step it once per tick with current signal state.
+        // The flash model is evaluated as part of each agent.step() call,
+        // so we need to step it AFTER each combinational evaluation to see
+        // the current SPI clock value.
 
-        // 1. Step flash model ONCE at start of tick (like CXXRTL)
-        if let Some(ref mut fl) = flash {
+        // Helper closure to step flash and update gpio_in
+        // Returns (clk, csn, d_out) for logging
+        // Feeds previous step's data/CSN with current clock to model setup timing:
+        // in real hardware, data is stable BEFORE the clock edge. In our simulation,
+        // the SPI clock and data DFFs advance simultaneously, so the current data
+        // at a posedge has already changed. Using delayed data fixes this.
+        let step_flash = |fl: &mut CppSpiFlash, circ_state: &mut [u8], in_reset: bool,
+                          prev_d: &mut u8, prev_csn: &mut bool| {
             let clk = flash_clk_out.map(|p| circ_state[p] != 0).unwrap_or(false);
-            let csn = flash_csn_out.map(|p| circ_state[p] != 0).unwrap_or(true);
-            let mut d_out = 0u8;
+            let current_csn = flash_csn_out.map(|p| circ_state[p] != 0).unwrap_or(true);
+            let mut current_d_out = 0u8;
             for (i, opt_pin) in flash_d_out.iter().enumerate() {
                 if let Some(pin) = opt_pin {
                     if circ_state[*pin] != 0 {
-                        d_out |= 1 << i;
+                        current_d_out |= 1 << i;
                     }
                 }
             }
-            let d_in = fl.step(clk, csn, d_out);
-            for (i, opt_pin) in flash_d_in.iter().enumerate() {
-                if let Some(pin) = opt_pin {
-                    circ_state[*pin] = ((d_in >> i) & 1) as u8;
+
+            // Use delayed data/CSN (from previous step) with current clock
+            let effective_csn = if in_reset { true } else { *prev_csn };
+            let d_in = fl.step(clk, effective_csn, *prev_d);
+
+            // Save current values for next step
+            *prev_d = current_d_out;
+            *prev_csn = current_csn;
+
+            // Only update gpio_in when NOT in reset
+            // DEBUG: trace flash d_in at critical cycles
+            static mut FLASH_STEP_COUNT: usize = 0;
+            let step_count = unsafe { FLASH_STEP_COUNT += 1; FLASH_STEP_COUNT };
+            if !in_reset {
+                if step_count <= 80 || (d_in != 0) {
+                    eprintln!("FLASH step {}: clk={} csn={} d_out={:04b} d_in={:04b} (eff_csn={} prev_d={:04b})",
+                             step_count, clk, current_csn, current_d_out, d_in, effective_csn, *prev_d);
+                }
+                for (i, opt_pin) in flash_d_in.iter().enumerate() {
+                    if let Some(pin) = opt_pin {
+                        circ_state[*pin] = ((d_in >> i) & 1) as u8;
+                    }
+                }
+            }
+            (clk, current_csn, current_d_out)
+        };
+
+        // 1. Clock LOW (falling edge)
+        circ_state[clock_pin] = 0;
+
+        // 2. Evaluate combinational on falling edge
+        eval_combinational(&mut state, &circ_state);
+        update_circ_from_aig(&state, &mut circ_state);
+
+        // Convergence check: re-evaluate and see if anything changes
+        if cycle >= 10 && cycle <= 30 {
+            let old_state: Vec<u8> = circ_state.clone();
+            eval_combinational(&mut state, &circ_state);
+            update_circ_from_aig(&state, &mut circ_state);
+            let mut changes = 0usize;
+            for i in 0..circ_state.len() {
+                if circ_state[i] != old_state[i] {
+                    changes += 1;
+                    if changes <= 5 {
+                        let pname = netlistdb.pinnames[i].dbg_fmt_pin();
+                        eprintln!("  CONVERGENCE: c{} pin {} '{}' changed {}→{}",
+                                 cycle, i, &pname[..pname.len().min(60)], old_state[i], circ_state[i]);
+                    }
+                }
+            }
+            if changes > 0 {
+                eprintln!("  CONVERGENCE FAIL c{}: {} pins changed on 2nd pass!", cycle, changes);
+            }
+        }
+
+        // SPI debug: trace o_latch[2] driver chain cells (from 6_final_fixed.v)
+        // _40938_: nand2(.A=_18782_, .B=_18705_, .Y=_18783_)
+        // _40939_: nand2(.A=_18360_, .B=Q, .Y=_18784_)
+        // _40941_: a21oi(.A1=_18783_, .A2=_18784_, .B1=net2982, .Y=_05278_)
+        // Broad trace: FSM state, raw_tx_data, cycle counter from reset onwards
+        if cycle >= 8 && cycle <= 35 {
+            let mut fsm = 0u8;
+            for bit in 0..4 {
+                if let Some(p) = fsm_state_pins[bit] {
+                    if circ_state[p] != 0 { fsm |= 1 << bit; }
+                }
+            }
+            let mut raw_tx = 0u8;
+            for bit in 0..8 {
+                if let Some(p) = raw_tx_data_pins[bit] {
+                    if circ_state[p] != 0 { raw_tx |= 1 << bit; }
+                }
+            }
+            let ec0 = ecycle0_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ec1 = ecycle1_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ec2 = ecycle2_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ecycle_val = ec0 as u32 | ((ec1 as u32) << 1) | ((ec2 as u32) << 2);
+            let csn_val = flash_csn_out.map(|p| circ_state[p]).unwrap_or(255);
+            let clk_val = flash_clk_out.map(|p| circ_state[p]).unwrap_or(255);
+            let olatch_q = o_latch_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ibus_cyc_v = ibus_cyc_pin.map(|p| circ_state[p]).unwrap_or(255);
+            eprintln!("TRACE c{}: fsm={} ecyc={} raw_tx=0x{:02x} csn={} sclk={} olatch={} ibus_cyc={}",
+                     cycle, fsm, ecycle_val, raw_tx, csn_val, clk_val, olatch_q, ibus_cyc_v);
+        }
+
+        // D = !((_18783_ & _18784_) | net2982) = (_18782_ & _18705_) | (_18360_ & Q)
+        if cycle >= 22 && cycle <= 32 {
+            let read_pin = |p: usize| -> u8 { if p != usize::MAX { circ_state[p] } else { 255 } };
+            let olatch_q = o_latch_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
+            // Cell _40938_: A=_18782_ B=_18705_ Y=_18783_
+            let c38_a = read_pin(cell_40938.a_pin); // _18782_
+            let c38_b = read_pin(cell_40938.b_pin); // _18705_
+            let c38_y = read_pin(cell_40938.y_pin); // _18783_ = nand(a,b)
+            // Cell _40939_: A=_18360_ B=Q Y=_18784_
+            let c39_a = read_pin(cell_40939.a_pin); // _18360_
+            let c39_b = read_pin(cell_40939.b_pin); // Q = o_latch.io0.o
+            let c39_y = read_pin(cell_40939.y_pin); // _18784_ = nand(a,b)
+            // Cell _40941_: A1=_18783_ A2=_18784_ B1=net2982 Y=_05278_
+            let c41_a1 = read_pin(cell_40941.a_pin); // _18783_
+            let c41_a2 = read_pin(cell_40941.b_pin); // _18784_
+            let c41_b1 = read_pin(cell_40941.c_pin); // net2982 (buffered rst)
+            let c41_y  = read_pin(cell_40941.y_pin); // _05278_ = D of o_latch[2]
+
+            // Verify cell truth tables
+            let exp_38 = if c38_a == 1 && c38_b == 1 { 0 } else { 1 }; // nand
+            let exp_39 = if c39_a == 1 && c39_b == 1 { 0 } else { 1 }; // nand
+            let exp_41 = if ((c41_a1 & c41_a2) | c41_b1) != 0 { 0 } else { 1 }; // a21oi
+            let m38 = if c38_y != exp_38 { "MISMATCH!" } else { "" };
+            let m39 = if c39_y != exp_39 { "MISMATCH!" } else { "" };
+            let m41 = if c41_y != exp_41 { "MISMATCH!" } else { "" };
+
+            // Cell _40937_: o21ai - _18782_ = !((cycle[2] | _18743_) & _18781_)
+            let c37_a1 = read_pin(cell_40937.a_pin); // enframer.cycle[2]
+            let c37_a2 = read_pin(cell_40937.b_pin); // _18743_
+            let c37_b1 = read_pin(cell_40937.c_pin); // _18781_
+            let c37_y  = read_pin(cell_40937.y_pin); // _18782_
+            let exp_37 = if ((c37_a1 | c37_a2) != 0) && c37_b1 != 0 { 0 } else { 1 }; // o21ai
+            let m37 = if c37_y != exp_37 { "MISMATCH!" } else { "" };
+
+            // enframer.cycle bits
+            let ec0 = ecycle0_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ec1 = ecycle1_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ec2 = ecycle2_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let ecycle_val = ec0 as u32 | ((ec1 as u32) << 1) | ((ec2 as u32) << 2);
+
+            // nand3 _40936_ inputs: _18758_, _18777_, _18780_ → _18781_
+            let n36_a = read_pin(cell_40936_a); // _18758_
+            let n36_b = read_pin(cell_40936_b); // _18777_
+            let n36_c = read_pin(cell_40936_c); // _18780_
+
+            // Deep trace: _18777_ driver chain
+            // _40932_: nand3(.A(_18769_), .B(cycle[2]), .C(_18776_)) → _18777_
+            let c32_a = read_pin(cell_40932.a_pin); // _18769_
+            let c32_b = read_pin(cell_40932.b_pin); // cycle[2]
+            let c32_c = read_pin(cell_40932.c_pin); // _18776_
+            let c32_y = read_pin(cell_40932.y_pin); // _18777_
+            // _40931_: nand3(.A(_18742_), .B(cycle[1]), .C(_18775_)) → _18776_
+            let c31_a = read_pin(cell_40931.a_pin); // _18742_
+            let c31_b = read_pin(cell_40931.b_pin); // cycle[1]
+            let c31_c = read_pin(cell_40931.c_pin); // _18775_
+            let c31_y = read_pin(cell_40931.y_pin); // _18776_
+            // _40930_: nand2(.A(_18774_), .B(_02744_)) → _18775_; _02744_ = !cycle[0]
+            let c30_a = read_pin(cell_40930.a_pin); // _18774_
+            let c30_b = read_pin(cell_40930.b_pin); // _02744_ = !cycle[0]
+            let c30_y = read_pin(cell_40930.y_pin); // _18775_
+
+            // raw_tx_data register value
+            let mut raw_tx = 0u8;
+            for bit in 0..8 {
+                if let Some(p) = raw_tx_data_pins[bit] {
+                    if circ_state[p] != 0 { raw_tx |= 1 << bit; }
                 }
             }
 
+            eprintln!("FALL c{}: ecycle={} Q={} D={} raw_tx=0x{:02x} | nand3_36({},{},{})→{} | o21ai_37({},{},{})→{} {}",
+                     cycle, ecycle_val, olatch_q, c41_y, raw_tx,
+                     n36_a, n36_b, n36_c, c37_b1,
+                     c37_a1, c37_a2, c37_b1, c37_y, m37);
+            eprintln!("  _18777_ chain: nand3_32({},{},{})→{} | nand3_31(_742={},cyc1={},_775={})→{} | nand2_30(_774={},!c0={})→{}",
+                     c32_a, c32_b, c32_c, c32_y,
+                     c31_a, c31_b, c31_c, c31_y,
+                     c30_a, c30_b, c30_y);
+        }
+
+        // FALL eval cell verification
+        if cycle >= 24 && cycle <= 28 {
+            let (checked, mismatches) = verify_cell_outputs(
+                &netlistdb, &circ_state, cell_library, cycle, 0,
+            );
+            if mismatches > 0 {
+                eprintln!("FALL cycle {}: {} cell mismatches out of {} cells checked!", cycle, mismatches, checked);
+            } else {
+                eprintln!("FALL cycle {}: 0 cell mismatches ({} checked)", cycle, checked);
+            }
+        }
+
+        // 2b. Step flash model AFTER falling edge eval (sees current SPI clock)
+        // Pass in_reset flag to prevent spurious flash activity during reset
+        let in_reset = cycle < reset_cycles;
+        if let Some(ref mut fl) = flash {
+            let (clk, csn, d_out) = step_flash(fl, &mut circ_state, in_reset, &mut prev_flash_d_out, &mut prev_flash_csn);
             // Debug: show flash control signals periodically
             let clk_oeb = flash_clk_oeb.map(|p| circ_state[p]).unwrap_or(255);
             let csn_oeb = flash_csn_oeb.map(|p| circ_state[p]).unwrap_or(255);
@@ -1139,300 +2186,89 @@ fn run_programmatic_simulation(
             }
         }
 
-        // 2. Clock LOW (falling edge)
-        circ_state[clock_pin] = 0;
-
-        // 3. Evaluate (agent.step equivalent on falling edge)
-        eval_combinational(&mut state, &circ_state);
-        update_circ_from_aig(&state, &mut circ_state);
+        // 3. Capture DFF CLK, D, and DE states BEFORE setting clock HIGH.
+        //    CLK snapshot gives us the "before" for edge detection.
+        //    D/DE snapshots give us the values to latch (stable before clock edge).
+        //    After FALL eval, all pins reflect the clock=0 phase.
+        for (i, &(_, pinid_d, _, pinid_clk, _, _, pinid_de)) in dff_list.iter().enumerate() {
+            dff_prev_clk[i] = circ_state[pinid_clk];
+            dff_prev_d[i] = circ_state[pinid_d];
+            if pinid_de != usize::MAX {
+                dff_prev_de[i] = circ_state[pinid_de];
+            }
+        }
 
         // 4. Clock HIGH (rising edge)
         circ_state[clock_pin] = 1;
 
-        // 5. Latch DFFs FIRST on rising edge (before combinational eval)
-        // This matches CXXRTL's agent.step() which latches then evaluates
+        // 5. Evaluate combinational with clock=1 to propagate clock through
+        //    any gating/buffering logic before checking DFF clock edges.
+        eval_combinational(&mut state, &circ_state);
+        update_circ_from_aig(&state, &mut circ_state);
+
+        // 6. Edge-triggered DFF latch: check each DFF's actual CLK pin
+        //    for a rising edge (0→1) rather than assuming all DFFs use
+        //    the system clock. This correctly handles gated clocks,
+        //    derived clocks, and any other clock topology.
+        //
+        //    D values are from the FALL eval snapshot (step 3), matching
+        //    real hardware where DFFs sample D before the clock edge.
+        let mut dffs_latched = 0usize;
         let mut dffs_in_reset = 0usize;
-        let mut dffs_total = 0usize;
-        let mut dffs_with_reset_b = 0usize;
+        for (i, &(_cellid, _pinid_d, pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, pinid_de)) in dff_list.iter().enumerate() {
+            let curr_clk = circ_state[pinid_clk];
+            let prev_clk = dff_prev_clk[i];
 
-        // Handle DFFs: latch D→Q on rising clock edge
-        for cellid in 1..netlistdb.num_cells {
-            let celltype = netlistdb.celltypes[cellid].as_str();
-            let is_dff = match cell_library {
-                CellLibrary::SKY130 => {
-                    let ct = extract_cell_type(celltype);
-                    matches!(ct, "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp")
+            // Check async reset (active low) - always applies regardless of clock
+            if pinid_reset_b != usize::MAX && circ_state[pinid_reset_b] == 0 {
+                if circ_state[pinid_q] != 0 {
+                    circ_state[pinid_q] = 0;
                 }
-                _ => matches!(celltype, "DFF" | "DFFSR"),
-            };
-
-            if is_dff {
-                let mut pinid_d = usize::MAX;
-                let mut pinid_q = usize::MAX;
-                let mut pinid_de = usize::MAX;
-                let mut pinid_reset_b = usize::MAX;
-                let mut pinid_set_b = usize::MAX;
-                for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                    match netlistdb.pinnames[pinid].1.as_str() {
-                        "D" => pinid_d = pinid,
-                        "Q" => pinid_q = pinid,
-                        "DE" => pinid_de = pinid,
-                        "RESET_B" => pinid_reset_b = pinid,
-                        "SET_B" => pinid_set_b = pinid,
-                        _ => {}
-                    }
+                dffs_in_reset += 1;
+            }
+            // Check async set (active low)
+            else if pinid_set_b != usize::MAX && circ_state[pinid_set_b] == 0 {
+                if circ_state[pinid_q] != 1 {
+                    circ_state[pinid_q] = 1;
                 }
-                if pinid_d != usize::MAX && pinid_q != usize::MAX {
-                    dffs_total += 1;
-                    if pinid_reset_b != usize::MAX {
-                        dffs_with_reset_b += 1;
-                    }
+            }
+            // Rising edge on THIS DFF's clock: latch pre-edge D→Q
+            else if curr_clk != 0 && prev_clk == 0 {
+                let should_latch = if pinid_de != usize::MAX {
+                    dff_prev_de[i] != 0  // DE from pre-edge snapshot
+                } else {
+                    true
+                };
+                if should_latch {
+                    // Use D value from before the clock edge (FALL eval)
+                    circ_state[pinid_q] = dff_prev_d[i];
+                    dffs_latched += 1;
+                }
+            }
+        }
 
-                    // Debug: trace ibus_adr[20] DFF specifically
-                    let cell_name = format!("{:?}", netlistdb.cellnames[cellid]);
-                    if cell_name.contains("ibus__adr[20]") && cycle <= 3 {
-                        let de_val = if pinid_de != usize::MAX { Some(circ_state[pinid_de]) } else { None };
-                        clilog::info!("cycle {}: ibus_adr[20] DE pin: {:?} (should_latch={})",
-                                     cycle, de_val, de_val.map_or(true, |v| v != 0));
-                        let d_aigpin = aig.pin2aigpin_iv.get(pinid_d).copied().unwrap_or(usize::MAX);
-                        let d_aigpin_idx = d_aigpin >> 1;
-                        let d_inv = (d_aigpin & 1) != 0;
-                        let d_aig_val = if d_aigpin != usize::MAX && d_aigpin_idx <= aig.num_aigpins {
-                            Some(state.values[d_aigpin_idx] ^ (d_inv as u8))
-                        } else { None };
-
-                        // Trace the AND gate inputs
-                        if let DriverType::AndGate(a_iv, b_iv) = &aig.drivers[d_aigpin_idx] {
-                            let a_idx = a_iv >> 1;
-                            let a_inv = (a_iv & 1) != 0;
-                            let b_idx = b_iv >> 1;
-                            let b_inv = (b_iv & 1) != 0;
-                            let a_val = if a_idx > 0 && a_idx <= aig.num_aigpins {
-                                state.values[a_idx] ^ (a_inv as u8)
-                            } else { 0 ^ (a_inv as u8) };
-                            let b_val = if b_idx > 0 && b_idx <= aig.num_aigpins {
-                                state.values[b_idx] ^ (b_inv as u8)
-                            } else { 0 ^ (b_inv as u8) };
-                            let a_driver = if a_idx > 0 && a_idx <= aig.num_aigpins {
-                                format!("{:?}", aig.drivers[a_idx])
-                            } else { "Const0".to_string() };
-                            let b_driver = if b_idx > 0 && b_idx <= aig.num_aigpins {
-                                format!("{:?}", aig.drivers[b_idx])
-                            } else { "Const0".to_string() };
-                            clilog::info!("cycle {}: ibus_adr[20] DFF: D={:?}, AND({},{})={}*{}={}",
-                                         cycle, d_aig_val, a_idx, b_idx, a_val, b_val, a_val & b_val);
-                            // Try to identify what DFF A is
-                            let a_cell_name = if let DriverType::DFF(cell_idx) = &aig.drivers[a_idx] {
-                                format!("{:?}", netlistdb.cellnames[*cell_idx])
-                            } else { "not_dff".to_string() };
-                            clilog::info!("  A[{}]: inv={}, raw={}, driver={}, cell={}",
-                                         a_idx, a_inv,
-                                         if a_idx > 0 && a_idx <= aig.num_aigpins { state.values[a_idx] } else { 0 },
-                                         a_driver, a_cell_name);
-                            clilog::info!("  B[{}]: inv={}, raw={}, driver={}", b_idx, b_inv,
-                                         if b_idx > 0 && b_idx <= aig.num_aigpins { state.values[b_idx] } else { 0 },
-                                         b_driver);
-                            // Trace B's AND gate inputs if it's an AND gate
-                            if let DriverType::AndGate(b_a_iv, b_b_iv) = &aig.drivers[b_idx] {
-                                let ba_idx = b_a_iv >> 1;
-                                let ba_inv = (b_a_iv & 1) != 0;
-                                let bb_idx = b_b_iv >> 1;
-                                let bb_inv = (b_b_iv & 1) != 0;
-                                let ba_val = if ba_idx > 0 && ba_idx <= aig.num_aigpins { state.values[ba_idx] } else { 0 };
-                                let bb_val = if bb_idx > 0 && bb_idx <= aig.num_aigpins { state.values[bb_idx] } else { 0 };
-                                let ba_driver = if ba_idx > 0 && ba_idx <= aig.num_aigpins {
-                                    format!("{:?}", aig.drivers[ba_idx])
-                                } else { "Const0".to_string() };
-                                let bb_driver = if bb_idx > 0 && bb_idx <= aig.num_aigpins {
-                                    format!("{:?}", aig.drivers[bb_idx])
-                                } else { "Const0".to_string() };
-                                clilog::info!("    B.A[{}]: inv={}, raw={}, driver={}", ba_idx, ba_inv, ba_val, ba_driver);
-                                clilog::info!("    B.B[{}]: inv={}, raw={}, driver={}", bb_idx, bb_inv, bb_val, bb_driver);
-
-                                // Trace deeper - B.A's inputs
-                                if let DriverType::AndGate(baa_iv, bab_iv) = &aig.drivers[ba_idx] {
-                                    let baa_idx = baa_iv >> 1;
-                                    let bab_idx = bab_iv >> 1;
-                                    let baa_val = if baa_idx > 0 && baa_idx <= aig.num_aigpins { state.values[baa_idx] } else { 0 };
-                                    let bab_val = if bab_idx > 0 && bab_idx <= aig.num_aigpins { state.values[bab_idx] } else { 0 };
-                                    let baa_driver = if baa_idx > 0 && baa_idx <= aig.num_aigpins {
-                                        format!("{:?}", aig.drivers[baa_idx])
-                                    } else { "Const0".to_string() };
-                                    let bab_driver = if bab_idx > 0 && bab_idx <= aig.num_aigpins {
-                                        format!("{:?}", aig.drivers[bab_idx])
-                                    } else { "Const0".to_string() };
-                                    // Try to get cell name for DFF
-                                    let bab_cell_name = if let DriverType::DFF(cell_idx) = &aig.drivers[bab_idx] {
-                                        format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                    } else { "not_dff".to_string() };
-                                    clilog::info!("      B.A.A[{}]: inv={}, raw={}, driver={}", baa_idx, (baa_iv & 1) != 0, baa_val, baa_driver);
-                                    clilog::info!("      B.A.B[{}]: inv={}, raw={}, driver={}, cell={}", bab_idx, (bab_iv & 1) != 0, bab_val, bab_driver, bab_cell_name);
-
-                                    // Trace even deeper - B.A.A's inputs (should find the constant)
-                                    if let DriverType::AndGate(baaa_iv, baab_iv) = &aig.drivers[baa_idx] {
-                                        let baaa_idx = baaa_iv >> 1;
-                                        let baab_idx = baab_iv >> 1;
-                                        let baaa_val = if baaa_idx > 0 && baaa_idx <= aig.num_aigpins { state.values[baaa_idx] } else { 0 };
-                                        let baab_val = if baab_idx > 0 && baab_idx <= aig.num_aigpins { state.values[baab_idx] } else { 0 };
-                                        let baaa_driver = if baaa_idx > 0 && baaa_idx <= aig.num_aigpins {
-                                            format!("{:?}", aig.drivers[baaa_idx])
-                                        } else { "Const0".to_string() };
-                                        let baab_driver = if baab_idx > 0 && baab_idx <= aig.num_aigpins {
-                                            format!("{:?}", aig.drivers[baab_idx])
-                                        } else { "Const0".to_string() };
-                                        clilog::info!("        B.A.A.A[{}]: inv={}, raw={}, driver={}", baaa_idx, (baaa_iv & 1) != 0, baaa_val, baaa_driver);
-                                        clilog::info!("        B.A.A.B[{}]: inv={}, raw={}, driver={}", baab_idx, (baab_iv & 1) != 0, baab_val, baab_driver);
-
-                                        // Trace B.A.A.A's inputs (2 more levels deep)
-                                        if let DriverType::AndGate(c1_iv, c2_iv) = &aig.drivers[baaa_idx] {
-                                            let c1_idx = c1_iv >> 1;
-                                            let c2_idx = c2_iv >> 1;
-                                            let c1_val = if c1_idx > 0 && c1_idx <= aig.num_aigpins { state.values[c1_idx] } else { 0 };
-                                            let c2_val = if c2_idx > 0 && c2_idx <= aig.num_aigpins { state.values[c2_idx] } else { 0 };
-                                            let c1_driver = if c1_idx > 0 && c1_idx <= aig.num_aigpins {
-                                                format!("{:?}", aig.drivers[c1_idx])
-                                            } else { "Const0".to_string() };
-                                            let c2_driver = if c2_idx > 0 && c2_idx <= aig.num_aigpins {
-                                                format!("{:?}", aig.drivers[c2_idx])
-                                            } else { "Const0".to_string() };
-                                            clilog::info!("          B.A.A.A.A[{}]: inv={}, raw={}, driver={}", c1_idx, (c1_iv & 1) != 0, c1_val, c1_driver);
-                                            clilog::info!("          B.A.A.A.B[{}]: inv={}, raw={}, driver={}", c2_idx, (c2_iv & 1) != 0, c2_val, c2_driver);
-
-                                            // One more level for c1
-                                            if let DriverType::AndGate(d1_iv, d2_iv) = &aig.drivers[c1_idx] {
-                                                let d1_idx = d1_iv >> 1;
-                                                let d2_idx = d2_iv >> 1;
-                                                let d1_val = if d1_idx > 0 && d1_idx <= aig.num_aigpins { state.values[d1_idx] } else { 0 };
-                                                let d2_val = if d2_idx > 0 && d2_idx <= aig.num_aigpins { state.values[d2_idx] } else { 0 };
-                                                let d1_driver = if d1_idx > 0 && d1_idx <= aig.num_aigpins {
-                                                    format!("{:?}", aig.drivers[d1_idx])
-                                                } else { "Const0".to_string() };
-                                                let d2_driver = if d2_idx > 0 && d2_idx <= aig.num_aigpins {
-                                                    format!("{:?}", aig.drivers[d2_idx])
-                                                } else { "Const0".to_string() };
-                                                clilog::info!("            c1.A[{}]: inv={}, raw={}, driver={}", d1_idx, (d1_iv & 1) != 0, d1_val, d1_driver);
-                                                clilog::info!("            c1.B[{}]: inv={}, raw={}, driver={}", d2_idx, (d2_iv & 1) != 0, d2_val, d2_driver);
-                                            }
-                                            // One more level for c2
-                                            if let DriverType::AndGate(d1_iv, d2_iv) = &aig.drivers[c2_idx] {
-                                                let d1_idx = d1_iv >> 1;
-                                                let d2_idx = d2_iv >> 1;
-                                                let d1_val = if d1_idx > 0 && d1_idx <= aig.num_aigpins { state.values[d1_idx] } else { 0 };
-                                                let d2_val = if d2_idx > 0 && d2_idx <= aig.num_aigpins { state.values[d2_idx] } else { 0 };
-                                                let d1_driver = if d1_idx > 0 && d1_idx <= aig.num_aigpins {
-                                                    format!("{:?}", aig.drivers[d1_idx])
-                                                } else { "Const0".to_string() };
-                                                let d2_driver = if d2_idx > 0 && d2_idx <= aig.num_aigpins {
-                                                    format!("{:?}", aig.drivers[d2_idx])
-                                                } else { "Const0".to_string() };
-                                                clilog::info!("            c2.A[{}]: inv={}, raw={}, driver={}", d1_idx, (d1_iv & 1) != 0, d1_val, d1_driver);
-                                                clilog::info!("            c2.B[{}]: inv={}, raw={}, driver={}", d2_idx, (d2_iv & 1) != 0, d2_val, d2_driver);
-
-                                                // Trace c2.A (pin 1285) which changes - go deeper
-                                                if let DriverType::AndGate(e1_iv, e2_iv) = &aig.drivers[d1_idx] {
-                                                    let e1_idx = e1_iv >> 1;
-                                                    let e2_idx = e2_iv >> 1;
-                                                    let e1_val = if e1_idx > 0 && e1_idx <= aig.num_aigpins { state.values[e1_idx] } else { 0 };
-                                                    let e2_val = if e2_idx > 0 && e2_idx <= aig.num_aigpins { state.values[e2_idx] } else { 0 };
-                                                    let e1_driver = if e1_idx > 0 && e1_idx <= aig.num_aigpins {
-                                                        format!("{:?}", aig.drivers[e1_idx])
-                                                    } else { "Const0".to_string() };
-                                                    let e2_driver = if e2_idx > 0 && e2_idx <= aig.num_aigpins {
-                                                        format!("{:?}", aig.drivers[e2_idx])
-                                                    } else { "Const0".to_string() };
-                                                    let e1_cell = if let DriverType::DFF(cell_idx) = &aig.drivers[e1_idx] {
-                                                        format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                                    } else if let DriverType::InputPort(pid) = &aig.drivers[e1_idx] {
-                                                        format!("INPUT:{:?}", netlistdb.pinnames[*pid])
-                                                    } else { "".to_string() };
-                                                    let e2_cell = if let DriverType::DFF(cell_idx) = &aig.drivers[e2_idx] {
-                                                        format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                                    } else if let DriverType::InputPort(pid) = &aig.drivers[e2_idx] {
-                                                        format!("INPUT:{:?}", netlistdb.pinnames[*pid])
-                                                    } else { "".to_string() };
-                                                    clilog::info!("              c2.A.A[{}]: inv={}, raw={}, driver={} {}", e1_idx, (e1_iv & 1) != 0, e1_val, e1_driver, e1_cell);
-                                                    clilog::info!("              c2.A.B[{}]: inv={}, raw={}, driver={} {}", e2_idx, (e2_iv & 1) != 0, e2_val, e2_driver, e2_cell);
-
-                                                    // One more level for e1
-                                                    if let DriverType::AndGate(f1_iv, f2_iv) = &aig.drivers[e1_idx] {
-                                                        let f1_idx = f1_iv >> 1;
-                                                        let f2_idx = f2_iv >> 1;
-                                                        let f1_val = if f1_idx > 0 && f1_idx <= aig.num_aigpins { state.values[f1_idx] } else { 0 };
-                                                        let f2_val = if f2_idx > 0 && f2_idx <= aig.num_aigpins { state.values[f2_idx] } else { 0 };
-                                                        let f1_driver = if f1_idx > 0 && f1_idx <= aig.num_aigpins {
-                                                            format!("{:?}", aig.drivers[f1_idx])
-                                                        } else { "Const0".to_string() };
-                                                        let f2_driver = if f2_idx > 0 && f2_idx <= aig.num_aigpins {
-                                                            format!("{:?}", aig.drivers[f2_idx])
-                                                        } else { "Const0".to_string() };
-                                                        let f1_cell = if let DriverType::DFF(cell_idx) = &aig.drivers[f1_idx] {
-                                                            format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                                        } else if let DriverType::InputPort(pid) = &aig.drivers[f1_idx] {
-                                                            format!("INPUT:{:?}", netlistdb.pinnames[*pid])
-                                                        } else { "".to_string() };
-                                                        let f2_cell = if let DriverType::DFF(cell_idx) = &aig.drivers[f2_idx] {
-                                                            format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                                        } else if let DriverType::InputPort(pid) = &aig.drivers[f2_idx] {
-                                                            format!("INPUT:{:?}", netlistdb.pinnames[*pid])
-                                                        } else { "".to_string() };
-                                                        clilog::info!("                c2.A.A.A[{}]: inv={}, raw={}, driver={} {}", f1_idx, (f1_iv & 1) != 0, f1_val, f1_driver, f1_cell);
-                                                        clilog::info!("                c2.A.A.B[{}]: inv={}, raw={}, driver={} {}", f2_idx, (f2_iv & 1) != 0, f2_val, f2_driver, f2_cell);
-                                                    }
-                                                    // Trace e2 (c2.A.B) which changes from 1 to 0
-                                                    if let DriverType::AndGate(f1_iv, f2_iv) = &aig.drivers[e2_idx] {
-                                                        let f1_idx = f1_iv >> 1;
-                                                        let f2_idx = f2_iv >> 1;
-                                                        let f1_val = if f1_idx > 0 && f1_idx <= aig.num_aigpins { state.values[f1_idx] } else { 0 };
-                                                        let f2_val = if f2_idx > 0 && f2_idx <= aig.num_aigpins { state.values[f2_idx] } else { 0 };
-                                                        let f1_driver = if f1_idx > 0 && f1_idx <= aig.num_aigpins {
-                                                            format!("{:?}", aig.drivers[f1_idx])
-                                                        } else { "Const0".to_string() };
-                                                        let f2_driver = if f2_idx > 0 && f2_idx <= aig.num_aigpins {
-                                                            format!("{:?}", aig.drivers[f2_idx])
-                                                        } else { "Const0".to_string() };
-                                                        let f1_cell = if let DriverType::DFF(cell_idx) = &aig.drivers[f1_idx] {
-                                                            format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                                        } else if let DriverType::InputPort(pid) = &aig.drivers[f1_idx] {
-                                                            format!("INPUT:{:?}", netlistdb.pinnames[*pid])
-                                                        } else { "".to_string() };
-                                                        let f2_cell = if let DriverType::DFF(cell_idx) = &aig.drivers[f2_idx] {
-                                                            format!("{:?}", netlistdb.cellnames[*cell_idx])
-                                                        } else if let DriverType::InputPort(pid) = &aig.drivers[f2_idx] {
-                                                            format!("INPUT:{:?}", netlistdb.pinnames[*pid])
-                                                        } else { "".to_string() };
-                                                        clilog::info!("                c2.A.B.A[{}]: inv={}, raw={}, driver={} {}", f1_idx, (f1_iv & 1) != 0, f1_val, f1_driver, f1_cell);
-                                                        clilog::info!("                c2.A.B.B[{}]: inv={}, raw={}, driver={} {}", f2_idx, (f2_iv & 1) != 0, f2_val, f2_driver, f2_cell);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Check async reset (active low)
-                    if pinid_reset_b != usize::MAX && circ_state[pinid_reset_b] == 0 {
-                        circ_state[pinid_q] = 0;
-                        dffs_in_reset += 1;
-                    }
-                    // Check async set (active low)
-                    else if pinid_set_b != usize::MAX && circ_state[pinid_set_b] == 0 {
-                        circ_state[pinid_q] = 1;
-                    }
-                    // Normal latch on clock edge
-                    else {
-                        let should_latch = if pinid_de != usize::MAX {
-                            circ_state[pinid_de] != 0
-                        } else {
-                            true
-                        };
-                        if should_latch {
-                            circ_state[pinid_q] = circ_state[pinid_d];
-                        }
+        // Log DFF latch stats for first few cycles
+        if cycle <= 5 || (cycle == 10) {
+            let dffs_no_edge = dff_list.len() - dffs_latched - dffs_in_reset;
+            clilog::info!("cycle {}: dffs_latched={}, dffs_in_reset={}, no_edge={}",
+                         cycle, dffs_latched, dffs_in_reset, dffs_no_edge);
+            // On first cycle, show breakdown of no-edge DFFs
+            if cycle == 0 {
+                let mut held_high = 0usize;
+                let mut held_low = 0usize;
+                for (i, &(_cellid, _pinid_d, _pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, _pinid_de)) in dff_list.iter().enumerate() {
+                    let curr_clk = circ_state[pinid_clk];
+                    let prev_clk = dff_prev_clk[i];
+                    let reset_active = pinid_reset_b != usize::MAX && circ_state[pinid_reset_b] == 0;
+                    let set_active = pinid_set_b != usize::MAX && circ_state[pinid_set_b] == 0;
+                    if !reset_active && !set_active && !(curr_clk != 0 && prev_clk == 0) {
+                        if curr_clk != 0 && prev_clk != 0 { held_high += 1; }
+                        else if curr_clk == 0 && prev_clk == 0 { held_low += 1; }
+                        else { /* falling edge */ }
                     }
                 }
+                clilog::info!("  no_edge breakdown: clk_held_high={}, clk_held_low={}, falling={}",
+                             held_high, held_low, dffs_no_edge - held_high - held_low);
             }
         }
 
@@ -1492,27 +2328,64 @@ fn run_programmatic_simulation(
         // Write watchlist trace output
         if let Some(ref mut f) = trace_file {
             let values: Vec<String> = std::iter::once(cycle.to_string())
-                .chain(watchlist_entries.iter().map(|e| circ_state[e.pin].to_string()))
+                .chain(watchlist_entries.iter().map(|e| e.format_value(&circ_state)))
                 .collect();
             writeln!(f, "{}", values.join(",")).expect("Failed to write trace");
         }
 
-        // Simulate SRAM cells
+        // Simulate SRAM cells (edge-triggered, matching CF_SRAM_1024x32 Verilog model).
+        // SRAM input pins are NOT in the AIG, so we must propagate net values first.
+        //
+        // We call step() twice per simulation cycle:
+        //   1. With clock LOW (fall phase) - just updates last_clk=false
+        //   2. With clock HIGH (rise phase) - detects 0→1 edge and performs R/W
+        //
+        // Phase 1: Propagate with clock LOW to record the low state
+        {
+            let saved_clk = circ_state[clock_pin];
+            circ_state[clock_pin] = 0;
+            eval_combinational(&mut state, &circ_state);
+            update_circ_from_aig(&state, &mut circ_state);
+            for &(sram_pin, driver_pin) in &sram_net_prop {
+                circ_state[sram_pin] = circ_state[driver_pin];
+            }
+            for sram in sram_cells.iter_mut() {
+                sram.step(&mut circ_state);
+            }
+            // Restore clock HIGH
+            circ_state[clock_pin] = saved_clk;
+            eval_combinational(&mut state, &circ_state);
+            update_circ_from_aig(&state, &mut circ_state);
+        }
+        // Phase 2: Propagate with clock HIGH to detect rising edge
+        for &(sram_pin, driver_pin) in &sram_net_prop {
+            circ_state[sram_pin] = circ_state[driver_pin];
+        }
         for sram in sram_cells.iter_mut() {
-            let en = sram.en_pin != usize::MAX && circ_state[sram.en_pin] != 0;
-            if en {
-                let r_wb = sram.r_wb_pin != usize::MAX && circ_state[sram.r_wb_pin] != 0;
+            if cycle <= 20 {
+                let sram_clk = if sram.clk_pin != usize::MAX { circ_state[sram.clk_pin] } else { 255 };
+                let sram_en = if sram.en_pin != usize::MAX { circ_state[sram.en_pin] } else { 255 };
+                eprintln!("SRAM cycle {}: CLKin={} EN={} last_clk={}",
+                         cycle, sram_clk, sram_en, sram.last_clk);
+            }
+            let acted = sram.step(&mut circ_state);
+            if acted && cycle <= 500 {
                 let addr = sram.read_addr(&circ_state);
-                if addr < 1024 {
-                    if r_wb {
-                        let data = sram.memory[addr];
-                        sram.write_do(&mut circ_state, data);
-                    } else {
-                        let di = sram.read_di(&circ_state);
-                        let ben = sram.read_ben(&circ_state);
-                        sram.memory[addr] = (sram.memory[addr] & !ben) | (di & ben);
-                    }
+                let r_wb = sram.r_wb_pin != usize::MAX && circ_state[sram.r_wb_pin] != 0;
+                if r_wb {
+                    eprintln!("SRAM cycle {}: READ  addr={} data=0x{:08X}", cycle, addr, sram.memory[addr.min(1023)]);
+                } else {
+                    let di = sram.read_di(&circ_state);
+                    let ben = sram.read_ben(&circ_state);
+                    eprintln!("SRAM cycle {}: WRITE addr={} data=0x{:08X} ben=0x{:08X}", cycle, addr, di, ben);
                 }
+            }
+        }
+        // Propagate SRAM DO outputs back to the net (for reads)
+        for &(ref do_pin, ref load_pins) in &sram_do_prop {
+            let val = circ_state[*do_pin];
+            for &lp in load_pins {
+                circ_state[lp] = val;
             }
         }
 
@@ -1520,9 +2393,232 @@ fn run_programmatic_simulation(
         eval_combinational(&mut state, &circ_state);
         update_circ_from_aig(&state, &mut circ_state);
 
+        // SPI debug: trace raw_tx_data and enframer.cycle DFF values
+        if cycle >= 0 && cycle <= 40 {
+            // Find DFF Q values by searching AIG for named DFFs
+            let find_dff_value = |name_part: &str| -> u8 {
+                for i in 1..=aig.num_aigpins {
+                    if let DriverType::DFF(cellid) = &aig.drivers[i] {
+                        let cn = format!("{:?}", netlistdb.cellnames[*cellid]);
+                        if cn.contains(name_part) {
+                            return state.values[i];
+                        }
+                    }
+                }
+                255
+            };
+
+            // One-time dump of all DFF matching for debugging
+            if cycle == 0 {
+                for pattern in &["raw_tx_data[0]", "raw_tx_data[1]", "fsm_state[0]", "fsm_state[1]",
+                                "o_latch.io0.o", "o_latch", "enframer.cycle[2]"] {
+                    let mut matches = Vec::new();
+                    for i in 1..=aig.num_aigpins {
+                        if let DriverType::DFF(cellid) = &aig.drivers[i] {
+                            let cn = format!("{:?}", netlistdb.cellnames[*cellid]);
+                            if cn.contains(pattern) {
+                                matches.push((i, cn));
+                            }
+                        }
+                    }
+                    eprintln!("DFF LOOKUP '{}': {} matches: {:?}", pattern, matches.len(),
+                             matches.iter().map(|(i, n)| format!("pin{}={}", i, &n[..n.len().min(80)])).collect::<Vec<_>>());
+                }
+            }
+
+            // raw_tx_data[0..7]
+            let mut tx_byte: u8 = 0;
+            for bit in 0..8 {
+                let name = format!("raw_tx_data[{}]", bit);
+                let val = find_dff_value(&name);
+                if val == 1 { tx_byte |= 1 << bit; }
+            }
+
+            // enframer.cycle[0..2]
+            let ec0 = find_dff_value("enframer.cycle[0]");
+            let ec1 = find_dff_value("enframer.cycle[1]");
+            let ec2 = find_dff_value("enframer.cycle[2]");
+            let ecycle = (ec2 as u16) << 2 | (ec1 as u16) << 1 | ec0 as u16;
+
+            // fsm_state
+            let fsm0 = find_dff_value("fsm_state[0]");
+            let fsm1 = find_dff_value("fsm_state[1]");
+            let fsm2 = find_dff_value("fsm_state[2]");
+            let fsm3 = find_dff_value("fsm_state[3]");
+            let fsm = (fsm3 as u16) << 3 | (fsm2 as u16) << 2 | (fsm1 as u16) << 1 | fsm0 as u16;
+
+            // o_latch and buffer
+            let olatch_o = find_dff_value("o_latch.io0.o");
+            let olatch_oe = find_dff_value("o_latch.io0.oe");
+
+            // o_latch[2] = pin 40897 (MOSI data latch)
+            let olatch2 = if 40897 <= aig.num_aigpins { state.values[40897] } else { 255 };
+            // o_latch[0] = pin 40761 (CS enable)
+            let olatch0 = if 40761 <= aig.num_aigpins { state.values[40761] } else { 255 };
+            // SPI flash FSM state (using correct pins)
+            let spi_fsm0 = if 39858 <= aig.num_aigpins { state.values[39858] } else { 255 };
+            let spi_fsm1 = if 39862 <= aig.num_aigpins { state.values[39862] } else { 255 };
+            let spi_fsm2 = if 39860 <= aig.num_aigpins { state.values[39860] } else { 255 };
+            let spi_fsm3 = if 39859 <= aig.num_aigpins { state.values[39859] } else { 255 };
+
+            eprintln!("GEM cycle {:3} DFF: tx=0x{:02X} ecycle={} spi_fsm={}{}{}{} olatch2={} olatch0={} buf_io0_q={}",
+                     cycle, tx_byte, ecycle, spi_fsm3, spi_fsm2, spi_fsm1, spi_fsm0,
+                     olatch2, olatch0,
+                     find_dff_value("buffer_io0.o"));
+        }
+
+        // SPI debug: trace at rising-edge eval
+        if cycle >= 24 && cycle <= 32 {
+            let buf_o = buffer_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let str_o = str_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let olatch = o_latch_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let d0_pin = flash_d_out.get(0).and_then(|o| *o);
+            let d0 = d0_pin.map(|p| circ_state[p]).unwrap_or(255);
+            let clk_out = flash_clk_out.map(|p| circ_state[p]).unwrap_or(255);
+            let dff_d = if buffer_dff_d_pin != usize::MAX { circ_state[buffer_dff_d_pin] } else { 255 };
+            let dff_q = if buffer_dff_q_pin != usize::MAX { circ_state[buffer_dff_q_pin] } else { 255 };
+            // Trace AIG backwards from DFF D pin
+            if buffer_dff_d_pin != usize::MAX {
+                let d_aig = aig.pin2aigpin_iv.get(buffer_dff_d_pin).copied().unwrap_or(usize::MAX);
+                if d_aig != usize::MAX {
+                    let d_idx = d_aig >> 1;
+                    let d_inv = (d_aig & 1) != 0;
+                    let d_raw = if d_idx > 0 && d_idx <= aig.num_aigpins { state.values[d_idx] } else { 0 };
+
+                    // Level 1: D's gate inputs
+                    let (l1a_val, l1b_val, l1a_iv, l1b_iv) = if let DriverType::AndGate(a_iv, b_iv) = &aig.drivers[d_idx] {
+                        let a_i = a_iv >> 1; let a_inv = (a_iv & 1) != 0;
+                        let b_i = b_iv >> 1; let b_inv = (b_iv & 1) != 0;
+                        let a_v = if a_i > 0 && a_i <= aig.num_aigpins { state.values[a_i] ^ (a_inv as u8) } else { 0 ^ (a_inv as u8) };
+                        let b_v = if b_i > 0 && b_i <= aig.num_aigpins { state.values[b_i] ^ (b_inv as u8) } else { 0 ^ (b_inv as u8) };
+                        (a_v, b_v, *a_iv, *b_iv)
+                    } else {
+                        (255, 255, usize::MAX, usize::MAX)
+                    };
+
+                    // Level 2: Each L1 input's gate inputs
+                    let trace_gate = |iv: usize| -> String {
+                        let idx = iv >> 1;
+                        let inv = (iv & 1) != 0;
+                        if idx == 0 { return format!("const{}", if inv { 1 } else { 0 }); }
+                        if idx > aig.num_aigpins { return "OOB".to_string(); }
+                        let val = state.values[idx] ^ (inv as u8);
+                        match &aig.drivers[idx] {
+                            DriverType::AndGate(a, b) => {
+                                let ai = a >> 1; let bi = b >> 1;
+                                let ainv = (a & 1) != 0; let binv = (b & 1) != 0;
+                                let av = if ai > 0 && ai <= aig.num_aigpins { state.values[ai] ^ (ainv as u8) } else { 0 ^ (ainv as u8) };
+                                let bv = if bi > 0 && bi <= aig.num_aigpins { state.values[bi] ^ (binv as u8) } else { 0 ^ (binv as u8) };
+                                format!("AND({}={},{}={})={}", ai, av, bi, bv, val)
+                            }
+                            DriverType::DFF(c) => {
+                                let cn = format!("{:?}", netlistdb.cellnames[*c]);
+                                format!("DFF({})={}", &cn[..cn.len().min(40)], val)
+                            }
+                            DriverType::InputPort(p) => {
+                                let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
+                                format!("IN({})={}", &pn[..pn.len().min(30)], val)
+                            }
+                            d => format!("{:?}={}", d, val)
+                        }
+                    };
+
+                    // Recursive trace: follow specific AIG pins
+                    let trace_pin_deep = |target: usize, depth: usize| -> String {
+                        let mut result = String::new();
+                        let mut stack: Vec<(usize, usize)> = vec![(target, 0)];
+                        while let Some((idx, d)) = stack.pop() {
+                            if d > depth || idx == 0 || idx > aig.num_aigpins { continue; }
+                            let val = state.values[idx];
+                            let indent = "  ".repeat(d);
+                            match &aig.drivers[idx] {
+                                DriverType::AndGate(a, b) => {
+                                    let ai = a >> 1; let bi = b >> 1;
+                                    let ainv = (a & 1) != 0; let binv = (b & 1) != 0;
+                                    let av = if ai > 0 && ai <= aig.num_aigpins { state.values[ai] } else { 0 };
+                                    let bv = if bi > 0 && bi <= aig.num_aigpins { state.values[bi] } else { 0 };
+                                    result += &format!("\n{}  [{}] AND raw={} a[{}]raw={} inv={} b[{}]raw={} inv={}",
+                                                      indent, idx, val, ai, av, ainv, bi, bv, binv);
+                                    if d < depth { stack.push((ai, d+1)); stack.push((bi, d+1)); }
+                                }
+                                DriverType::DFF(c) => {
+                                    let cn = format!("{:?}", netlistdb.cellnames[*c]);
+                                    result += &format!("\n{}  [{}] DFF raw={} cell={}", indent, idx, val, &cn[..cn.len().min(60)]);
+                                }
+                                DriverType::InputPort(p) => {
+                                    let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
+                                    result += &format!("\n{}  [{}] INPUT raw={} {}", indent, idx, val, &pn[..pn.len().min(40)]);
+                                }
+                                d => { result += &format!("\n{}  [{}] {:?} raw={}", indent, idx, d, val); }
+                            }
+                        }
+                        result
+                    };
+
+                    // Trace pin 40826 (the root changing signal) to depth 6
+                    let deep_trace = trace_pin_deep(40826, 6);
+
+                    // Direct identification of key pins
+                    let identify_pin = |idx: usize| -> String {
+                        if idx == 0 || idx > aig.num_aigpins { return format!("[{}] OOB", idx); }
+                        let netpin = aigpin_to_netpin[idx];
+                        let net_name = if netpin != usize::MAX {
+                            netlistdb.pinnames[netpin].dbg_fmt_pin()
+                        } else {
+                            "no-netpin".to_string()
+                        };
+                        match &aig.drivers[idx] {
+                            DriverType::AndGate(a, b) => format!("[{}] AND({},{}) net={}", idx, a>>1, b>>1, &net_name[..net_name.len().min(60)]),
+                            DriverType::DFF(c) => {
+                                let cn = format!("{:?}", netlistdb.cellnames[*c]);
+                                format!("[{}] DFF cell={} net={}", idx, &cn[..cn.len().min(50)], &net_name[..net_name.len().min(60)])
+                            },
+                            DriverType::InputPort(p) => {
+                                let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
+                                format!("[{}] INPUT pin={} net={}", idx, &pn[..pn.len().min(50)], &net_name[..net_name.len().min(60)])
+                            },
+                            d => format!("[{}] {:?} net={}", idx, d, &net_name[..net_name.len().min(60)]),
+                        }
+                    };
+
+                    eprintln!("GEM cycle {} RISE: D_raw={} D_inv={} D={} | L1: A={} B={} | L2: A={} B={}",
+                             cycle, d_raw, d_inv, dff_d, l1a_val, l1b_val,
+                             trace_gate(l1a_iv), trace_gate(l1b_iv));
+                    eprintln!("  PIN IDs: 40826={} 40886={} 40893={} 11129={}",
+                             identify_pin(40826), identify_pin(40886), identify_pin(40893), identify_pin(11129));
+                    eprintln!("  VALS: 40826_raw={} 40886_raw={} 11129_raw={} 40893_raw={}",
+                             state.values[40826], state.values[40886], state.values[11129], state.values[40893]);
+                    eprintln!("  DEEP TRACE from 40826:{}", deep_trace);
+                }
+            }
+        }
+
+        // 6a. Cell-level and net verification at critical cycles
+        if cycle >= 20 && cycle <= 35 {
+            let (checked, mismatches) = verify_cell_outputs(
+                &netlistdb, &circ_state, cell_library, cycle, 10,
+            );
+            if mismatches > 0 {
+                eprintln!("cycle {}: {} cell mismatches out of {} cells checked", cycle, mismatches, checked);
+            }
+            let (nets_checked, net_mismatches) = verify_net_consistency(
+                &netlistdb, &circ_state, &aig, cycle, 10,
+            );
+            if net_mismatches > 0 {
+                eprintln!("cycle {}: {} net mismatches out of {} nets checked", cycle, net_mismatches, nets_checked);
+            }
+        }
+
+        // 6b. Step flash model AFTER rising edge eval (sees current SPI clock HIGH)
+        // This is when the flash controller samples data from flash
+        if let Some(ref mut fl) = flash {
+            step_flash(fl, &mut circ_state, in_reset, &mut prev_flash_d_out, &mut prev_flash_csn);
+        }
+
+        // 6c. (Removed) Edge-triggered DFF latching is now unified in step 5 above.
+        // All DFFs are latched based on their actual CLK pin edge detection.
+
         // === TICK END ===
-        // Flash is stepped once at the start of the next tick, matching CXXRTL.
-        // The clock remains HIGH until the start of the next tick sets it LOW.
 
         // UART TX decoding
         if let Some(tx_pin) = uart_tx_pin {
@@ -1612,6 +2708,12 @@ fn run_programmatic_simulation(
         let mut file = File::create(output_path).expect("Failed to create events file");
         file.write_all(json.as_bytes()).expect("Failed to write events");
         clilog::info!("Wrote events to {}", output_path);
+    }
+
+    // Print flash model statistics
+    if let Some(ref fl) = flash {
+        println!("Flash model: steps={}, posedges={}, negedges={}",
+                 fl.get_step_count(), fl.get_posedge_count(), fl.get_negedge_count());
     }
 
     println!();
@@ -1791,46 +2893,113 @@ fn main() {
 
         let mut entries = Vec::new();
         for sig in &watchlist.signals {
-            let mut found = false;
+            // Check if this is a bundle signal
+            if let Some(width) = sig.width {
+                // Find all bits of the bundle
+                let mut pins = vec![usize::MAX; width];
+                let mut found_count = 0;
 
-            // First try: find by net name (for internal wires)
-            for netid in 0..netlistdb.num_nets {
-                let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
-                if net_name == sig.net || net_name.ends_with(&sig.net) || net_name.contains(&sig.net) {
-                    // Find a pin on this net
-                    for pinid in netlistdb.net2pin.iter_set(netid) {
-                        entries.push(WatchlistEntry {
-                            name: sig.name.clone(),
-                            pin: pinid,
-                        });
-                        clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
-                        found = true;
-                        break;
+                for bit in 0..width {
+                    let bit_pattern = format!("{}[{}]", sig.net, bit);
+                    let dff_q_pattern = format!("{}[{}]$_", sig.net, bit); // DFF cell name pattern
+
+                    // Search for the bit pin - prefer DFF Q outputs over wire pins
+                    let mut wire_pin: Option<usize> = None;
+                    for pinid in 0..netlistdb.num_pins {
+                        let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+
+                        // Check for DFF Q output first (preferred)
+                        if pin_name.contains(&dff_q_pattern) && pin_name.ends_with(":Q") {
+                            pins[bit] = pinid;
+                            found_count += 1;
+                            break;
+                        }
+
+                        // Otherwise remember wire pin as fallback
+                        if wire_pin.is_none() {
+                            if let Some(pos) = pin_name.find(&bit_pattern) {
+                                let end_pos = pos + bit_pattern.len();
+                                let is_exact = end_pos == pin_name.len()
+                                    || !pin_name[end_pos..].starts_with(|c: char| c.is_ascii_digit());
+                                if is_exact {
+                                    wire_pin = Some(pinid);
+                                }
+                            }
+                        }
                     }
-                    if found {
-                        break;
+
+                    // Use wire pin if DFF Q not found
+                    if pins[bit] == usize::MAX {
+                        if let Some(wp) = wire_pin {
+                            pins[bit] = wp;
+                            found_count += 1;
+                        }
                     }
                 }
-            }
 
-            // Second try: any pin containing the pattern
-            if !found {
-                for pinid in 0..netlistdb.num_pins {
-                    let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                    if pin_name.contains(&sig.net) {
-                        entries.push(WatchlistEntry {
-                            name: sig.name.clone(),
-                            pin: pinid,
-                        });
-                        clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
-                        found = true;
-                        break;
+                if found_count > 0 {
+                    let format = sig.format.clone().unwrap_or_else(|| "hex".to_string());
+                    // Log some sample pin mappings for verification
+                    let sample_pins: Vec<String> = pins.iter().enumerate()
+                        .filter(|(_, &p)| p < usize::MAX)
+                        .take(5)
+                        .map(|(i, &p)| format!("[{}]={}", i, p))
+                        .collect();
+                    clilog::info!(
+                        "Watchlist: {} -> {}/{} bits found (bundle, format={}, pins: {}...)",
+                        sig.name, found_count, width, format, sample_pins.join(", ")
+                    );
+                    entries.push(WatchlistEntry::Bundle {
+                        name: sig.name.clone(),
+                        pins,
+                        format,
+                    });
+                } else {
+                    clilog::warn!("Watchlist: {} not found (bundle pattern: {}[0..{}])", sig.name, sig.net, width);
+                }
+            } else {
+                // Single-bit signal
+                let mut found = false;
+
+                // First try: find by net name (for internal wires)
+                for netid in 0..netlistdb.num_nets {
+                    let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
+                    if net_name == sig.net || net_name.ends_with(&sig.net) || net_name.contains(&sig.net) {
+                        // Find a pin on this net
+                        for pinid in netlistdb.net2pin.iter_set(netid) {
+                            entries.push(WatchlistEntry::Bit {
+                                name: sig.name.clone(),
+                                pin: pinid,
+                            });
+                            clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
+                            found = true;
+                            break;
+                        }
+                        if found {
+                            break;
+                        }
                     }
                 }
-            }
 
-            if !found {
-                clilog::warn!("Watchlist: {} not found (pattern: {})", sig.name, sig.net);
+                // Second try: any pin containing the pattern
+                if !found {
+                    for pinid in 0..netlistdb.num_pins {
+                        let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                        if pin_name.contains(&sig.net) {
+                            entries.push(WatchlistEntry::Bit {
+                                name: sig.name.clone(),
+                                pin: pinid,
+                            });
+                            clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !found {
+                    clilog::warn!("Watchlist: {} not found (pattern: {})", sig.name, sig.net);
+                }
             }
         }
         entries
@@ -1843,7 +3012,7 @@ fn main() {
         let mut f = File::create(path).expect("Failed to create trace output file");
         // Write CSV header
         let header: Vec<&str> = std::iter::once("cycle")
-            .chain(watchlist_entries.iter().map(|e| e.name.as_str()))
+            .chain(watchlist_entries.iter().map(|e| e.name()))
             .collect();
         writeln!(f, "{}", header.join(",")).expect("Failed to write trace header");
         f
@@ -1957,9 +3126,9 @@ fn main() {
         }
     }
 
-    // QSPI Flash setup for functional simulation
-    let mut flash = if args.firmware.is_some() {
-        Some(QspiFlash::new())
+    // QSPI Flash setup for functional simulation (using C++ model from chipflow-lib)
+    let mut flash: Option<CppSpiFlash> = if args.firmware.is_some() {
+        Some(CppSpiFlash::new(16 * 1024 * 1024)) // 16MB flash
     } else {
         None
     };
@@ -2242,63 +3411,130 @@ fn main() {
 
         let mut entries = Vec::new();
         for sig in &watchlist.signals {
-            let mut found = false;
+            // Check if this is a bundle signal
+            if let Some(width) = sig.width {
+                // Find all bits of the bundle
+                let mut pins = vec![usize::MAX; width];
+                let mut found_count = 0;
 
-            // First try: find by net name (for internal wires)
-            for netid in 0..netlistdb.num_nets {
-                let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
-                if net_name == sig.net || net_name.ends_with(&sig.net) {
-                    // Find a pin on this net
-                    for pinid in netlistdb.net2pin.iter_set(netid) {
-                        entries.push(WatchlistEntry {
-                            name: sig.name.clone(),
-                            pin: pinid,
-                        });
-                        clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
-                        found = true;
-                        break;
-                    }
-                    if found {
-                        break;
-                    }
-                }
-            }
+                for bit in 0..width {
+                    let bit_pattern = format!("{}[{}]", sig.net, bit);
+                    let dff_q_pattern = format!("{}[{}]$_", sig.net, bit); // DFF cell name pattern
 
-            // Second try: find Q output pin for registers
-            if !found && sig.signal_type == "reg" {
-                for pinid in 0..netlistdb.num_pins {
-                    let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                    // Look for Q pin on a DFF with matching name
-                    if pin_name.contains(&sig.net) && pin_name.ends_with(":Q") {
-                        entries.push(WatchlistEntry {
-                            name: sig.name.clone(),
-                            pin: pinid,
-                        });
-                        clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
-                        found = true;
-                        break;
-                    }
-                }
-            }
+                    // Search for the bit pin - prefer DFF Q outputs over wire pins
+                    let mut wire_pin: Option<usize> = None;
+                    for pinid in 0..netlistdb.num_pins {
+                        let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
 
-            // Third try: any pin containing the pattern
-            if !found {
-                for pinid in 0..netlistdb.num_pins {
-                    let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                    if pin_name.contains(&sig.net) {
-                        entries.push(WatchlistEntry {
-                            name: sig.name.clone(),
-                            pin: pinid,
-                        });
-                        clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
-                        found = true;
-                        break;
+                        // Check for DFF Q output first (preferred)
+                        if pin_name.contains(&dff_q_pattern) && pin_name.ends_with(":Q") {
+                            pins[bit] = pinid;
+                            found_count += 1;
+                            break;
+                        }
+
+                        // Otherwise remember wire pin as fallback
+                        if wire_pin.is_none() {
+                            if let Some(pos) = pin_name.find(&bit_pattern) {
+                                let end_pos = pos + bit_pattern.len();
+                                let is_exact = end_pos == pin_name.len()
+                                    || !pin_name[end_pos..].starts_with(|c: char| c.is_ascii_digit());
+                                if is_exact {
+                                    wire_pin = Some(pinid);
+                                }
+                            }
+                        }
+                    }
+
+                    // Use wire pin if DFF Q not found
+                    if pins[bit] == usize::MAX {
+                        if let Some(wp) = wire_pin {
+                            pins[bit] = wp;
+                            found_count += 1;
+                        }
                     }
                 }
-            }
 
-            if !found {
-                clilog::warn!("Watchlist: {} not found (pattern: {})", sig.name, sig.net);
+                if found_count > 0 {
+                    let format = sig.format.clone().unwrap_or_else(|| "hex".to_string());
+                    // Log some sample pin mappings for verification
+                    let sample_pins: Vec<String> = pins.iter().enumerate()
+                        .filter(|(_, &p)| p < usize::MAX)
+                        .take(5)
+                        .map(|(i, &p)| format!("[{}]={}", i, p))
+                        .collect();
+                    clilog::info!(
+                        "Watchlist: {} -> {}/{} bits found (bundle, format={}, pins: {}...)",
+                        sig.name, found_count, width, format, sample_pins.join(", ")
+                    );
+                    entries.push(WatchlistEntry::Bundle {
+                        name: sig.name.clone(),
+                        pins,
+                        format,
+                    });
+                } else {
+                    clilog::warn!("Watchlist: {} not found (bundle pattern: {}[0..{}])", sig.name, sig.net, width);
+                }
+            } else {
+                // Single-bit signal
+                let mut found = false;
+
+                // First try: find by net name (for internal wires)
+                for netid in 0..netlistdb.num_nets {
+                    let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
+                    if net_name == sig.net || net_name.ends_with(&sig.net) {
+                        // Find a pin on this net
+                        for pinid in netlistdb.net2pin.iter_set(netid) {
+                            entries.push(WatchlistEntry::Bit {
+                                name: sig.name.clone(),
+                                pin: pinid,
+                            });
+                            clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
+                            found = true;
+                            break;
+                        }
+                        if found {
+                            break;
+                        }
+                    }
+                }
+
+                // Second try: find Q output pin for registers
+                if !found && sig.signal_type == "reg" {
+                    for pinid in 0..netlistdb.num_pins {
+                        let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                        // Look for Q pin on a DFF with matching name
+                        if pin_name.contains(&sig.net) && pin_name.ends_with(":Q") {
+                            entries.push(WatchlistEntry::Bit {
+                                name: sig.name.clone(),
+                                pin: pinid,
+                            });
+                            clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Third try: any pin containing the pattern
+                if !found {
+                    for pinid in 0..netlistdb.num_pins {
+                        let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+                        if pin_name.contains(&sig.net) {
+                            entries.push(WatchlistEntry::Bit {
+                                name: sig.name.clone(),
+                                pin: pinid,
+                            });
+                            clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !found {
+                    clilog::warn!("Watchlist: {} not found (pattern: {})", sig.name, sig.net);
+                }
             }
         }
         entries
@@ -2311,7 +3547,7 @@ fn main() {
         let mut f = File::create(path).expect("Failed to create trace output file");
         // Write CSV header
         let header: Vec<&str> = std::iter::once("cycle")
-            .chain(watchlist_entries.iter().map(|e| e.name.as_str()))
+            .chain(watchlist_entries.iter().map(|e| e.name()))
             .collect();
         writeln!(f, "{}", header.join(",")).expect("Failed to write trace header");
         f
@@ -2597,7 +3833,7 @@ fn main() {
                     // Write watchlist trace output
                     if let Some(ref mut f) = trace_file {
                         let values: Vec<String> = std::iter::once(stats.cycles_simulated.to_string())
-                            .chain(watchlist_entries.iter().map(|e| circ_state[e.pin].to_string()))
+                            .chain(watchlist_entries.iter().map(|e| e.format_value(&circ_state)))
                             .collect();
                         writeln!(f, "{}", values.join(",")).expect("Failed to write trace");
                     }
@@ -2633,24 +3869,14 @@ fn main() {
 
                             clilog::debug!(
                                 "Cycle {}: reset={}, clk={}, csn={}, d_out=0x{:X}, oeb0={}, oeb1={}, byte_count={}, nonzero_pins={}",
-                                stats.cycles_simulated, reset_val, clk, csn, d_out, oeb0, oeb1, fl.byte_count, nonzero_count
+                                stats.cycles_simulated, reset_val, clk, csn, d_out, oeb0, oeb1, fl.get_byte_count(), nonzero_count
                             );
                         }
 
-                        // Step 1: Simulate falling edge (clk goes low) - this is when flash outputs data
-                        // We need to first set last_clk=true so the next step sees a falling edge
-                        if clk && fl.last_clk {
-                            // If we're at high and last was high, we missed the falling edge
-                            // Step once with clk=false to process the falling edge
-                            let d_in_fall = fl.step(false, csn, d_out);
-                            flash_last_d_in = d_in_fall;
-                        }
-
-                        // Step 2: Now step with the actual clock value (rising edge)
+                        // Step the C++ flash model - it handles edge detection and
+                        // maintains output value between clock edges internally
                         let d_in = fl.step(clk, csn, d_out);
-                        if d_in != 0 {
-                            flash_last_d_in = d_in;
-                        }
+                        flash_last_d_in = d_in;
 
                         // Drive flash data inputs back into design
                         for (i, opt_pin) in flash_d_in.iter().enumerate() {
@@ -2903,5 +4129,252 @@ fn match_vcd_var_to_pins(
                 match_one_input(Some(i), pos);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SramCell;
+
+    /// Helper: create a SramCell with mock pin assignments in a circ_state array.
+    /// Returns (sram, circ_state) where pins are at known offsets.
+    ///
+    /// Layout in circ_state:
+    ///   0: CLKin
+    ///   1: EN
+    ///   2: R_WB
+    ///   3..12: AD[0..9]
+    ///   13..44: BEN[0..31]
+    ///   45..76: DI[0..31]
+    ///   77..108: DO[0..31]
+    fn make_test_sram() -> (SramCell, Vec<u8>) {
+        let mut sram = SramCell::new(0);
+        sram.clk_pin = 0;
+        sram.en_pin = 1;
+        sram.r_wb_pin = 2;
+        sram.addr_pins = (3..13).collect();
+        sram.ben_pins = (13..45).collect();
+        sram.di_pins = (45..77).collect();
+        sram.do_pins = (77..109).collect();
+        let circ_state = vec![0u8; 109];
+        (sram, circ_state)
+    }
+
+    /// Helper: set a 32-bit value across pin indices in circ_state.
+    fn set_bus(circ_state: &mut [u8], base: usize, width: usize, value: u32) {
+        for i in 0..width {
+            circ_state[base + i] = ((value >> i) & 1) as u8;
+        }
+    }
+
+    /// Helper: read a 32-bit value from pin indices in circ_state.
+    fn read_bus(circ_state: &[u8], base: usize, width: usize) -> u32 {
+        let mut val = 0u32;
+        for i in 0..width {
+            if circ_state[base + i] != 0 {
+                val |= 1 << i;
+            }
+        }
+        val
+    }
+
+    /// Helper: perform a rising clock edge via step().
+    fn clock_edge(sram: &mut SramCell, circ_state: &mut [u8]) -> bool {
+        // Clock low → step (captures low)
+        circ_state[0] = 0;
+        sram.step(circ_state);
+        // Clock high → step (rising edge)
+        circ_state[0] = 1;
+        sram.step(circ_state)
+    }
+
+    #[test]
+    fn test_sram_step_requires_clock_edge() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        // Set up a write: EN=1, R_WB=0 (write), addr=0, BEN=all ones, DI=0xDEADBEEF
+        cs[1] = 1; // EN
+        cs[2] = 0; // R_WB = write
+        set_bus(&mut cs, 3, 10, 0);            // addr = 0
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN = all bits
+        set_bus(&mut cs, 45, 32, 0xDEADBEEF);  // DI = 0xDEADBEEF
+
+        // With clock held low - step() should NOT trigger (no rising edge)
+        cs[0] = 0;
+        assert!(!sram.step(&mut cs), "step() should not trigger without rising edge");
+        assert_eq!(sram.memory[0], 0, "memory should be unchanged");
+
+        // With clock held high (but no transition) - step() should NOT trigger
+        cs[0] = 1;
+        sram.last_clk = true; // Pretend clock was already high
+        assert!(!sram.step(&mut cs), "step() should not trigger when clock stays high");
+        assert_eq!(sram.memory[0], 0, "memory should be unchanged");
+
+        // Now do a proper rising edge
+        sram.last_clk = false;
+        cs[0] = 1;
+        assert!(sram.step(&mut cs), "step() should trigger on rising edge");
+        assert_eq!(sram.memory[0], 0xDEADBEEF, "write should have occurred");
+    }
+
+    #[test]
+    fn test_sram_write_then_read() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        // Write 0x12345678 to address 5
+        cs[1] = 1; // EN
+        cs[2] = 0; // R_WB = write
+        set_bus(&mut cs, 3, 10, 5);            // addr = 5
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN = all bits
+        set_bus(&mut cs, 45, 32, 0x12345678);  // DI
+        clock_edge(&mut sram, &mut cs);
+
+        // Now read from address 5
+        cs[2] = 1; // R_WB = read
+        set_bus(&mut cs, 3, 10, 5);  // addr = 5
+        clock_edge(&mut sram, &mut cs);
+
+        let do_val = read_bus(&cs, 77, 32);
+        assert_eq!(do_val, 0x12345678, "read should return written value");
+    }
+
+    #[test]
+    fn test_sram_byte_enable_masking() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        // Pre-load memory with known value
+        sram.memory[10] = 0xAAAAAAAA;
+
+        // Write with only lower 16 bits enabled (BEN[0..15] = 1, BEN[16..31] = 0)
+        cs[1] = 1; // EN
+        cs[2] = 0; // R_WB = write
+        set_bus(&mut cs, 3, 10, 10);          // addr = 10
+        set_bus(&mut cs, 13, 32, 0x0000FFFF); // BEN = lower 16 bits only
+        set_bus(&mut cs, 45, 32, 0x55555555); // DI
+        clock_edge(&mut sram, &mut cs);
+
+        // Upper 16 bits should be preserved from original, lower 16 should be new
+        assert_eq!(sram.memory[10], 0xAAAA5555,
+            "byte enable should mask write: expected 0xAAAA5555, got 0x{:08X}", sram.memory[10]);
+    }
+
+    #[test]
+    fn test_sram_en_required() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        // Set up write but with EN=0
+        cs[1] = 0; // EN = disabled
+        cs[2] = 0; // R_WB = write
+        set_bus(&mut cs, 3, 10, 0);            // addr = 0
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN
+        set_bus(&mut cs, 45, 32, 0xCAFEBABE);  // DI
+        clock_edge(&mut sram, &mut cs);
+
+        assert_eq!(sram.memory[0], 0, "write should not occur when EN=0");
+
+        // Also verify read doesn't drive output when EN=0
+        sram.memory[0] = 0xCAFEBABE;
+        cs[2] = 1; // R_WB = read
+        // Clear DO pins
+        set_bus(&mut cs, 77, 32, 0);
+        clock_edge(&mut sram, &mut cs);
+
+        let do_val = read_bus(&cs, 77, 32);
+        assert_eq!(do_val, 0, "read should not drive DO when EN=0");
+    }
+
+    #[test]
+    fn test_sram_address_range() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        // Write to max valid address (1023)
+        cs[1] = 1;
+        cs[2] = 0;
+        set_bus(&mut cs, 3, 10, 1023);
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);
+        set_bus(&mut cs, 45, 32, 0xBAADF00D);
+        clock_edge(&mut sram, &mut cs);
+        assert_eq!(sram.memory[1023], 0xBAADF00D);
+
+        // Address 1024 (out of range) should be rejected
+        set_bus(&mut cs, 3, 10, 1024);
+        set_bus(&mut cs, 45, 32, 0xDEADDEAD);
+        clock_edge(&mut sram, &mut cs);
+        // Memory at 1023 should be unchanged
+        assert_eq!(sram.memory[1023], 0xBAADF00D);
+    }
+
+    #[test]
+    fn test_sram_multiple_writes_same_address() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        cs[1] = 1; // EN
+        cs[2] = 0; // write
+        set_bus(&mut cs, 3, 10, 42);           // addr = 42
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN = all
+
+        // First write
+        set_bus(&mut cs, 45, 32, 0x11111111);
+        clock_edge(&mut sram, &mut cs);
+        assert_eq!(sram.memory[42], 0x11111111);
+
+        // Second write overwrites
+        set_bus(&mut cs, 45, 32, 0x22222222);
+        clock_edge(&mut sram, &mut cs);
+        assert_eq!(sram.memory[42], 0x22222222);
+    }
+
+    #[test]
+    fn test_sram_read_does_not_modify_memory() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        sram.memory[7] = 0xFEEDFACE;
+
+        // Read from address 7
+        cs[1] = 1; // EN
+        cs[2] = 1; // R_WB = read
+        set_bus(&mut cs, 3, 10, 7);
+        // Set DI to something (should be ignored during read)
+        set_bus(&mut cs, 45, 32, 0x00000000);
+        clock_edge(&mut sram, &mut cs);
+
+        assert_eq!(sram.memory[7], 0xFEEDFACE, "read should not modify memory");
+        assert_eq!(read_bus(&cs, 77, 32), 0xFEEDFACE, "DO should have read value");
+    }
+
+    /// This test demonstrates the bug in the inline SRAM simulation code.
+    /// The inline code (lines 2242-2258) is level-sensitive (checks EN directly)
+    /// while the real SRAM is clock-edge triggered (posedge CLKin).
+    /// The step() method correctly implements edge detection.
+    #[test]
+    fn test_sram_inline_vs_step_difference() {
+        let (mut sram, mut cs) = make_test_sram();
+
+        // Set up a write with EN=1
+        cs[1] = 1; // EN
+        cs[2] = 0; // R_WB = write
+        set_bus(&mut cs, 3, 10, 0);
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);
+        set_bus(&mut cs, 45, 32, 0xCAFEBABE);
+
+        // The INLINE code behavior: checks EN regardless of clock.
+        // Simulating what lines 2242-2258 do:
+        let en = cs[1] != 0;
+        assert!(en, "EN is high");
+        // Inline code would write immediately - no clock check!
+
+        // The step() behavior: requires rising clock edge.
+        // Clock is at 0 (from make_test_sram), last_clk is false.
+        // Setting clock to 0 → no rising edge.
+        cs[0] = 0;
+        let triggered = sram.step(&mut cs);
+        assert!(!triggered, "step() correctly requires rising edge - no write yet");
+        assert_eq!(sram.memory[0], 0, "memory unchanged without clock edge");
+
+        // Now give it a rising edge
+        cs[0] = 1;
+        let triggered = sram.step(&mut cs);
+        assert!(triggered, "step() triggers on rising edge");
+        assert_eq!(sram.memory[0], 0xCAFEBABE, "write occurs on rising edge");
     }
 }
