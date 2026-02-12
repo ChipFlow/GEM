@@ -96,3 +96,51 @@ cargo run -r --features cuda --bin cuda_test -- ... --check-with-cpu
 # Limit simulation cycles
 cargo run -r --features cuda --bin cuda_test -- ... --max-cycles 1000
 ```
+
+## Debugging Tools
+
+### Netlist Graph Analysis (`scripts/netlist_graph/`)
+
+**IMPORTANT**: Use this tool for tracing signal paths in post-synthesis netlists. It's much faster than manual grep-based analysis.
+
+```bash
+cd scripts/netlist_graph
+
+# Trace what drives a signal (backwards through logic)
+uv run netlist-graph drivers <netlist.v> "<signal>" -d 8
+
+# Trace where a signal goes (forwards through logic)
+uv run netlist-graph loads <netlist.v> "<signal>" -d 5
+
+# Find path between two signals
+uv run netlist-graph path <netlist.v> "<source>" "<target>"
+
+# Search for nets matching pattern
+uv run netlist-graph search <netlist.v> "<pattern>"
+
+# Generate watchlist JSON for timing_sim_cpu
+uv run netlist-graph watchlist <netlist.v> output.json signal1 signal2 ...
+
+# Interactive mode for exploration
+uv run netlist-graph interactive <netlist.v>
+```
+
+Example debugging session:
+```bash
+# Why isn't flash_ack being asserted?
+uv run netlist-graph drivers tests/timing_test/minimal_build/6_final.v "spiflash.ctrl.wb_bus__ack" -d 5
+
+# Trace reset path to CPU
+uv run netlist-graph path tests/timing_test/minimal_build/6_final.v "gpio_in[40]" "ibus__cyc"
+```
+
+### Timing Simulation with Signal Tracing
+
+```bash
+# Create watchlist and trace signals
+cargo run -r --bin timing_sim_cpu -- netlist.v \
+  --config testbench.json \
+  --watchlist signals.json \
+  --trace-output trace.csv \
+  --max-cycles 1000
+```

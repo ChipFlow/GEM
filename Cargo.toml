@@ -27,6 +27,7 @@ vcd-ng = { version = "0.2.0", path = "eda-infra-rs/vcd-ng" }
 
 [build-dependencies]
 ucc = { version = "0.2.5", path = "eda-infra-rs/ucc" }
+cc = "1.0"
 
 [features]
 cuda = ["ulib/cuda"]

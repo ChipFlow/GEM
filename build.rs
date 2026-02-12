@@ -5,6 +5,13 @@
 fn main() {
     println!("cargo:rerun-if-changed=csrc");
 
+    // Build the C++ SPI flash model
+    cc::Build::new()
+        .cpp(true)
+        .file("csrc/spiflash_model.cc")
+        .include("csrc")
+        .compile("spiflash_model");
+
     #[cfg(feature = "cuda")] {
         println!("Building CUDA source files for GEM...");
         let csrc_headers = ucc::import_csrc();
