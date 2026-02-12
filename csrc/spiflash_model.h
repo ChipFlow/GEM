@@ -28,6 +28,9 @@ int spiflash_load(SpiFlashModel* flash, const uint8_t* data, size_t len, size_t 
 // Returns: 4-bit data from flash to controller (MISO on bit 1 in single mode)
 uint8_t spiflash_step(SpiFlashModel* flash, int clk, int csn, uint8_t d_o);
 
+// Enable/disable verbose debug output
+void spiflash_set_verbose(SpiFlashModel* flash, int verbose);
+
 // Get the current command being processed
 uint8_t spiflash_get_command(SpiFlashModel* flash);
 

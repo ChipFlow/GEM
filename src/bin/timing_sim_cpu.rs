@@ -53,6 +53,7 @@ mod spiflash_ffi {
         pub fn spiflash_get_step_count(flash: *mut SpiFlashModel) -> u32;
         pub fn spiflash_get_posedge_count(flash: *mut SpiFlashModel) -> u32;
         pub fn spiflash_get_negedge_count(flash: *mut SpiFlashModel) -> u32;
+        pub fn spiflash_set_verbose(flash: *mut SpiFlashModel, verbose: c_int);
     }
 }
 
@@ -122,6 +123,10 @@ impl CppSpiFlash {
     #[allow(dead_code)]
     fn get_negedge_count(&self) -> u32 {
         unsafe { spiflash_ffi::spiflash_get_negedge_count(self.ptr) }
+    }
+
+    fn set_verbose(&mut self, verbose: bool) {
+        unsafe { spiflash_ffi::spiflash_set_verbose(self.ptr, if verbose { 1 } else { 0 }) }
     }
 }
 
@@ -204,6 +209,10 @@ struct Args {
     /// Flash D0 GPIO index (default: 2 for Caravel).
     #[clap(long, default_value = "2")]
     flash_d0_gpio: usize,
+
+    /// Enable verbose flash model debug output.
+    #[clap(long)]
+    flash_verbose: bool,
 
     /// JSON watchlist file with signals to trace.
     /// Format: {"signals": [{"name": "label", "net": "net_name"}, ...]}
@@ -499,14 +508,16 @@ impl QspiFlash {
 }
 
 /// SRAM cell information for simulation.
-/// Tracks the pin IDs for a CF_SRAM_1024x32 cell and its memory contents.
+/// Tracks the pin IDs for a CF_SRAM cell and its memory contents.
+/// The actual Amaranth design has sram_size=0x400, data_width=32, granularity=8,
+/// giving 256 words (0x400 * 8 / 32 = 0x100).
 struct SramCell {
     cell_id: usize,
     // Control pins
     clk_pin: usize,
     en_pin: usize,
     r_wb_pin: usize,  // 1=read, 0=write
-    // Address pins (10 bits for 1024 words)
+    // Address pins
     addr_pins: Vec<usize>,
     // Byte enable pins (32 bits)
     ben_pins: Vec<usize>,
@@ -514,7 +525,7 @@ struct SramCell {
     di_pins: Vec<usize>,
     // Data output pins (32 bits)
     do_pins: Vec<usize>,
-    // Memory contents (1024 x 32-bit words)
+    // Memory contents (256 words for the Amaranth SRAM)
     memory: Vec<u32>,
     // Last clock state for edge detection
     last_clk: bool,
@@ -531,7 +542,7 @@ impl SramCell {
             ben_pins: Vec::new(),
             di_pins: Vec::new(),
             do_pins: Vec::new(),
-            memory: vec![0; 1024],  // 1024 words, initialized to 0
+            memory: vec![0; 256],  // 256 words (0x100), matching Amaranth SRAM
             last_clk: false,
         }
     }
@@ -649,7 +660,7 @@ impl SramCell {
         let r_wb = self.r_wb_pin != usize::MAX && circ_state[self.r_wb_pin] != 0;
         let addr = self.read_addr(circ_state);
 
-        if addr >= 1024 {
+        if addr >= self.memory.len() {
             return false;  // Invalid address
         }
 
@@ -1220,244 +1231,6 @@ impl TimingState {
     }
 }
 
-/// Verify combinational cell outputs against truth tables.
-/// Returns (total_checked, mismatches). Logs the first `max_log` mismatches.
-fn verify_cell_outputs(
-    netlistdb: &NetlistDB,
-    circ_state: &[u8],
-    cell_library: CellLibrary,
-    cycle: usize,
-    max_log: usize,
-) -> (usize, usize) {
-    let mut checked = 0usize;
-    let mut mismatches = 0usize;
-
-    for cellid in 1..netlistdb.num_cells {
-        let celltype = netlistdb.celltypes[cellid].as_str();
-        if !is_sky130_cell(celltype) {
-            continue;
-        }
-        let ct = extract_cell_type(celltype);
-
-        // Skip sequential, tie, filler, tap, decap cells
-        if is_sequential_cell(ct)
-            || matches!(ct, "conb" | "fill" | "tap" | "decap" | "clkbuf" | "clkdlybuf")
-            || ct.starts_with("fill")
-            || ct.starts_with("tap")
-            || ct.starts_with("decap")
-        {
-            continue;
-        }
-
-        // Gather pins
-        let mut a_val = 0u8;
-        let mut b_val = 0u8;
-        let mut c_val = 0u8;
-        let mut d_val = 0u8;
-        let mut a1_val = 0u8;
-        let mut a2_val = 0u8;
-        let mut a3_val = 0u8;
-        let mut a4_val = 0u8;
-        let mut b1_val = 0u8;
-        let mut b2_val = 0u8;
-        let mut c1_val = 0u8;
-        let mut d1_val = 0u8;
-        let mut s_val = 0u8;
-        let mut s0_val = 0u8;
-        let mut s1_val = 0u8;
-        let mut a0_val = 0u8;
-        let mut y_pin = usize::MAX;
-        let mut x_pin = usize::MAX;
-
-        for pinid in netlistdb.cell2pin.iter_set(cellid) {
-            let pname = netlistdb.pinnames[pinid].1.as_str();
-            let v = circ_state[pinid];
-            match pname {
-                "A" => a_val = v,
-                "B" => b_val = v,
-                "C" => c_val = v,
-                "D" => d_val = v,
-                "A1" => a1_val = v,
-                "A2" => a2_val = v,
-                "A3" => a3_val = v,
-                "A4" => a4_val = v,
-                "B1" => b1_val = v,
-                "B2" => b2_val = v,
-                "C1" => c1_val = v,
-                "D1" => d1_val = v,
-                "S" => s_val = v,
-                "S0" => s0_val = v,
-                "S1" => s1_val = v,
-                "A0" => a0_val = v,
-                "Y" => y_pin = pinid,
-                "X" => x_pin = pinid,
-                _ => {}
-            }
-        }
-
-        // Determine output pin and expected value
-        let (out_pin, expected) = match ct {
-            "inv" => (y_pin, 1 - a_val),
-            "buf" | "clkbuf" => (x_pin, a_val),
-            "and2" => (x_pin, a_val & b_val),
-            "and3" => (x_pin, a_val & b_val & c_val),
-            "and4" => (x_pin, a_val & b_val & c_val & d_val),
-            "nand2" => (y_pin, 1 - (a_val & b_val)),
-            "nand3" => (y_pin, 1 - (a_val & b_val & c_val)),
-            "nand4" => (y_pin, 1 - (a_val & b_val & c_val & d_val)),
-            "or2" => (x_pin, a_val | b_val),
-            "or3" => (x_pin, a_val | b_val | c_val),
-            "or4" => (x_pin, a_val | b_val | c_val | d_val),
-            "nor2" => (y_pin, 1 - (a_val | b_val)),
-            "nor3" => (y_pin, 1 - (a_val | b_val | c_val)),
-            "nor4" => (y_pin, 1 - (a_val | b_val | c_val | d_val)),
-            "xor2" => (x_pin, a_val ^ b_val),
-            "xnor2" => (y_pin, 1 - (a_val ^ b_val)),
-            "a21oi" => (y_pin, 1 - ((a1_val & a2_val) | b1_val)),
-            "a21o" => (x_pin, (a1_val & a2_val) | b1_val),
-            "o21ai" => (y_pin, 1 - ((a1_val | a2_val) & b1_val)),
-            "o21a" => (x_pin, (a1_val | a2_val) & b1_val),
-            "a22o" => (x_pin, (a1_val & a2_val) | (b1_val & b2_val)),
-            "a22oi" => (y_pin, 1 - ((a1_val & a2_val) | (b1_val & b2_val))),
-            "o22a" => (x_pin, (a1_val | a2_val) & (b1_val | b2_val)),
-            "o22ai" => (y_pin, 1 - ((a1_val | a2_val) & (b1_val | b2_val))),
-            "a211o" => (x_pin, (a1_val & a2_val) | b1_val | c1_val),
-            "a211oi" => (y_pin, 1 - ((a1_val & a2_val) | b1_val | c1_val)),
-            "o211a" => (x_pin, (a1_val | a2_val) & b1_val & c1_val),
-            "o211ai" => (y_pin, 1 - ((a1_val | a2_val) & b1_val & c1_val)),
-            "a31o" => (x_pin, (a1_val & a2_val & a3_val) | b1_val),
-            "a31oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val) | b1_val)),
-            "o31a" => (x_pin, (a1_val | a2_val | a3_val) & b1_val),
-            "o31ai" => (y_pin, 1 - ((a1_val | a2_val | a3_val) & b1_val)),
-            "a32o" => (x_pin, (a1_val & a2_val & a3_val) | (b1_val & b2_val)),
-            "a32oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val) | (b1_val & b2_val))),
-            "o32a" => (x_pin, (a1_val | a2_val | a3_val) & (b1_val | b2_val)),
-            "o32ai" => (y_pin, 1 - ((a1_val | a2_val | a3_val) & (b1_val | b2_val))),
-            "a41oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val & a4_val) | b1_val)),
-            "o41ai" => (y_pin, 1 - ((a1_val | a2_val | a3_val | a4_val) & b1_val)),
-            "a221o" => (x_pin, (a1_val & a2_val) | (b1_val & b2_val) | c1_val),
-            "a221oi" => (y_pin, 1 - ((a1_val & a2_val) | (b1_val & b2_val) | c1_val)),
-            "a311o" => (x_pin, (a1_val & a2_val & a3_val) | b1_val | c1_val),
-            "a311oi" => (y_pin, 1 - ((a1_val & a2_val & a3_val) | b1_val | c1_val)),
-            "o221a" => (x_pin, (a1_val | a2_val) & (b1_val | b2_val) & c1_val),
-            "o221ai" => (y_pin, 1 - ((a1_val | a2_val) & (b1_val | b2_val) & c1_val)),
-            "mux2" => (x_pin, if s_val != 0 { a1_val } else { a0_val }),
-            "mux4" => {
-                let sel = (s1_val as usize) * 2 + (s0_val as usize);
-                let out = match sel {
-                    0 => a0_val,
-                    1 => a1_val,
-                    2 => a2_val,
-                    3 => a3_val,
-                    _ => 0,
-                };
-                (x_pin, out)
-            }
-            // Skip cells we don't have truth tables for
-            _ => continue,
-        };
-
-        if out_pin == usize::MAX {
-            continue;
-        }
-
-        checked += 1;
-        let actual = circ_state[out_pin];
-
-        if actual != expected {
-            mismatches += 1;
-            if mismatches <= max_log {
-                use netlistdb::GeneralHierName;
-                let cell_name = netlistdb.cellnames[cellid].dbg_fmt_hier();
-                let out_pname = netlistdb.pinnames[out_pin].1.as_str();
-                eprintln!(
-                    "CELL MISMATCH cycle {}: {} (type={}) {}={} expected={} | \
-                     A={} B={} C={} D={} A1={} A2={} A3={} B1={} B2={} C1={} S={} A0={}",
-                    cycle, cell_name, ct, out_pname, actual, expected,
-                    a_val, b_val, c_val, d_val, a1_val, a2_val, a3_val,
-                    b1_val, b2_val, c1_val, s_val, a0_val
-                );
-            }
-        }
-    }
-
-    (checked, mismatches)
-}
-
-/// Verify that all pins on the same net have the same circ_state value.
-/// Returns (nets_checked, mismatches). Logs mismatches to stderr.
-fn verify_net_consistency(
-    netlistdb: &NetlistDB,
-    circ_state: &[u8],
-    aig: &AIG,
-    cycle: usize,
-    max_log: usize,
-) -> (usize, usize) {
-    let mut checked = 0usize;
-    let mut mismatches = 0usize;
-
-    // For each net, find the driver pin value and compare all load pin values
-    for netid in 0..netlistdb.net2pin.start.len() - 1 {
-        let start = netlistdb.net2pin.start[netid];
-        let end = netlistdb.net2pin.start[netid + 1];
-        if end - start < 2 {
-            continue; // Skip nets with 0 or 1 pin
-        }
-
-        // Find driver pin (Direction::O or cell 0)
-        let mut driver_pin = None;
-        for &pinid in &netlistdb.net2pin.items[start..end] {
-            if netlistdb.pindirect[pinid] == Direction::O || netlistdb.pin2cell[pinid] == 0 {
-                driver_pin = Some(pinid);
-                break;
-            }
-        }
-
-        let driver_pin = match driver_pin {
-            Some(p) => p,
-            None => continue, // No driver found
-        };
-
-        let driver_val = circ_state[driver_pin];
-        checked += 1;
-
-        // Check all other pins on this net
-        for &pinid in &netlistdb.net2pin.items[start..end] {
-            if pinid == driver_pin {
-                continue;
-            }
-            // Only check pins that have AIG mappings
-            if aig.pin2aigpin_iv[pinid] == usize::MAX {
-                continue;
-            }
-            let pin_val = circ_state[pinid];
-            if pin_val != driver_val {
-                mismatches += 1;
-                if mismatches <= max_log {
-                    use netlistdb::GeneralHierName;
-                    let driver_name = netlistdb.pinnames[driver_pin].dbg_fmt_pin();
-                    let load_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                    let driver_celltype = netlistdb.celltypes[netlistdb.pin2cell[driver_pin]].as_str();
-                    let load_celltype = netlistdb.celltypes[netlistdb.pin2cell[pinid]].as_str();
-                    // Check AIG pin mappings
-                    let driver_aigpin = aig.pin2aigpin_iv[driver_pin];
-                    let load_aigpin = aig.pin2aigpin_iv[pinid];
-                    eprintln!(
-                        "NET MISMATCH cycle {}: driver {}({})={} vs load {}({})={} | \
-                         driver_aigpin_iv={} load_aigpin_iv={} same_aig={}",
-                        cycle, driver_name, driver_celltype, driver_val,
-                        load_name, load_celltype, pin_val,
-                        driver_aigpin, load_aigpin,
-                        (driver_aigpin >> 1) == (load_aigpin >> 1)
-                    );
-                }
-            }
-        }
-    }
-
-    (checked, mismatches)
-}
-
 /// Statistics from timing simulation.
 #[derive(Debug, Default)]
 struct TimingStats {
@@ -1660,6 +1433,7 @@ fn run_programmatic_simulation(
     // Initialize flash model (using C++ model from chipflow-lib)
     let mut flash: Option<CppSpiFlash> = if let Some(ref flash_cfg) = config.flash {
         let mut fl = CppSpiFlash::new(16 * 1024 * 1024); // 16MB flash
+        fl.set_verbose(args.flash_verbose);
         let firmware_path = std::path::Path::new(&flash_cfg.firmware);
         match fl.load_firmware(firmware_path, flash_cfg.firmware_offset) {
             Ok(size) => clilog::info!("Loaded {} bytes firmware at offset 0x{:X}", size, flash_cfg.firmware_offset),
@@ -1773,257 +1547,6 @@ fn run_programmatic_simulation(
                   sram_write_en[0], sram_write_en[1], sram_write_en[2], sram_write_en[3]);
     clilog::info!("dbus_adr pins found: {}/30", dbus_adr.iter().filter(|x| x.is_some()).count());
 
-    // Trace the ACK logic chain:
-    // wb_bus__ack DFF D input = _05294_ = NOR2(_40863_) of (net2951, _09347_)
-    // _09347_ = NAND3(_28768_) of (_09336_, _09337_, _09346_)
-    let ack_d_pin = find_net_pin("_05294_");      // D input of ACK DFF
-    let ack_nor_a = find_net_pin("net2951");       // NOR2 input A (rst_n related)
-    let ack_nor_b = find_net_pin("_09347_");       // NOR2 input B (from NAND3)
-    let ack_nand_a = find_net_pin("_09336_");      // NAND3 input A
-    let ack_nand_b = find_net_pin("_09337_");      // NAND3 input B
-    let ack_nand_c = find_net_pin("_09346_");      // NAND3 input C
-    clilog::info!("ACK logic: D={:?}, NOR_A={:?}, NOR_B={:?}, NAND_A={:?}, NAND_B={:?}, NAND_C={:?}",
-                  ack_d_pin, ack_nor_a, ack_nor_b, ack_nand_a, ack_nand_b, ack_nand_c);
-
-    // Find the ACK DFF's AIG pin and trace back through its D input logic
-    if let Some(ack_pin) = sram_wb_ack_pin {
-        // Find the ACK DFF in the AIG
-        for i in 1..=aig.num_aigpins {
-            if let DriverType::DFF(cellid) = &aig.drivers[i] {
-                let cn = format!("{:?}", netlistdb.cellnames[*cellid]);
-                if cn.contains("wb_bus__ack") {
-                    eprintln!("ACK DFF: aigpin={}, cell={}", i, cn);
-                    // Find the D input pin of this DFF
-                    for pinid in netlistdb.cell2pin.iter_set(*cellid) {
-                        let pn = netlistdb.pinnames[pinid].1.as_str();
-                        if pn == "D" {
-                            let d_aig_iv = aig.pin2aigpin_iv[pinid];
-                            if d_aig_iv != usize::MAX {
-                                let d_idx = d_aig_iv >> 1;
-                                let d_inv = (d_aig_iv & 1) != 0;
-                                eprintln!("  D pin={}, aig_iv=0x{:x} (aigpin={}, inv={})", pinid, d_aig_iv, d_idx, d_inv);
-                                if d_idx > 0 && d_idx <= aig.num_aigpins {
-                                    // Show what drives this AIG pin
-                                    eprintln!("  D driver: {:?}", aig.drivers[d_idx]);
-                                    if let DriverType::AndGate(a, b) = &aig.drivers[d_idx] {
-                                        let a_idx = (*a as usize) >> 1;
-                                        let a_inv = (*a & 1) != 0;
-                                        let b_idx = (*b as usize) >> 1;
-                                        let b_inv = (*b & 1) != 0;
-                                        eprintln!("    AND({}{}, {}{})",
-                                                 if a_inv {"!"} else {""}, a_idx,
-                                                 if b_inv {"!"} else {""}, b_idx);
-                                        if a_idx > 0 && a_idx <= aig.num_aigpins {
-                                            eprintln!("    input A (aigpin {}): {:?}", a_idx, aig.drivers[a_idx]);
-                                        }
-                                        if b_idx > 0 && b_idx <= aig.num_aigpins {
-                                            eprintln!("    input B (aigpin {}): {:?}", b_idx, aig.drivers[b_idx]);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-    }
-
-    // Find sink__payload bits - this holds the reset vector (0x0FFFFC = 0x100000 - 4)
-    let sink_payload: Vec<Option<usize>> = (0..32).map(|i| {
-        find_net_pin(&format!("soc.cpu.sink__payload[{}]", i))
-    }).collect();
-    let sink_found = sink_payload.iter().filter(|x| x.is_some()).count();
-    clilog::info!("sink__payload pins found: {}/32", sink_found);
-    // Also try without soc.cpu prefix
-    let sink_payload_20_pin = find_net_pin("sink__payload[20]");
-
-    // Debug: show which ibus_adr pins were found and their initial values
-    for (i, opt_pin) in ibus_adr.iter().enumerate() {
-        if let Some(pin) = opt_pin {
-            let pin_name = netlistdb.pinnames[*pin].dbg_fmt_pin();
-            // Only print a few to avoid spam
-            if i == 0 || i == 18 || i == 20 {
-                clilog::info!("ibus_adr[{}] = pin {} ({})", i, pin, pin_name);
-            }
-        }
-    }
-
-    // Find SPI debug signals for cycle-level comparison with Icarus
-    let buffer_io0_o_pin = find_net_pin("buffer_io0.o");
-    let str_io0_o_pin = find_net_pin("str_io0.o");
-    let o_latch_io0_o_pin = find_net_pin("o_latch.io0.o");
-    clilog::info!("SPI debug pins: buffer_io0.o={:?}, str_io0.o={:?}, o_latch.io0.o={:?}",
-                  buffer_io0_o_pin, str_io0_o_pin, o_latch_io0_o_pin);
-
-    // Trace specific nets in the buffer_io0.o combinational cone:
-    // buffer_io0.o = NAND(_18714_, _18715_)  [_40802_]
-    //   _18714_ = NAND(_18712_, _18713_)     [_40800_]
-    //   _18715_ = NAND(net806, o_latch.io0.o) [_40801_]
-    //   net806 = BUF(_18628_)                 [fanout807]
-    //   _18628_ = NAND3(_18246_, _18254_, _18359_) [_40712_]
-    // Find driver chain cells for o_latch[2] by instance name.
-    // From 6_final_fixed.v:
-    //   _40938_: nand2(.A(_18782_), .B(_18705_), .Y(_18783_))
-    //   _40939_: nand2(.A(_18360_), .B(o_latch.io0.o), .Y(_18784_))
-    //   _40941_: a21oi(.A1(_18783_), .A2(_18784_), .B1(net2982), .Y(_05278_))
-    // D formula: _05278_ = !((_18783_ & _18784_) | net2982)
-    //          = (_18782_ & _18705_) | (_18360_ & Q)  when net2982=0
-    struct CellPins {
-        a_pin: usize,  // First input
-        b_pin: usize,  // Second input
-        c_pin: usize,  // Third input (for a21oi B1)
-        y_pin: usize,  // Output
-    }
-    let empty_cell = CellPins { a_pin: usize::MAX, b_pin: usize::MAX, c_pin: usize::MAX, y_pin: usize::MAX };
-    let mut cell_40938 = CellPins { ..empty_cell }; // nand2: .A(_18782_), .B(_18705_), .Y(_18783_)
-    let mut cell_40939 = CellPins { ..empty_cell }; // nand2: .A(_18360_), .B(Q), .Y(_18784_)
-    let mut cell_40941 = CellPins { ..empty_cell }; // a21oi: .A1(_18783_), .A2(_18784_), .B1(net2982), .Y(_05278_)
-    let mut net2982_pin: usize = usize::MAX;
-
-    for cellid in 1..netlistdb.num_cells {
-        let cname = format!("{:?}", netlistdb.cellnames[cellid]);
-        // Match by exact cell instance names (trimmed)
-        let target = if cname.ends_with("_40938_)") { Some(&mut cell_40938) }
-                     else if cname.ends_with("_40939_)") { Some(&mut cell_40939) }
-                     else if cname.ends_with("_40941_)") { Some(&mut cell_40941) }
-                     else { None };
-        if let Some(cp) = target {
-            let ctype = netlistdb.celltypes[cellid].as_str();
-            let mut pins_info = String::new();
-            for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                let pname_str = netlistdb.pinnames[pinid].1.as_str();
-                match pname_str {
-                    "A" | "A1" => cp.a_pin = pinid,
-                    "B" | "A2" => cp.b_pin = pinid,
-                    "B1" => cp.c_pin = pinid,
-                    "Y" | "X" => cp.y_pin = pinid,
-                    _ => {}
-                }
-                pins_info += &format!(" {}={}", pname_str, pinid);
-            }
-            eprintln!("OLATCH DRIVER CELL '{}' type='{}':{}", cname, ctype, pins_info);
-        }
-    }
-    // Find net2982 pin (buffered rst_n_sync.rst)
-    if let Some(pid) = find_net_pin("net2982") {
-        net2982_pin = pid;
-    }
-
-    // Cell _40937_: o21ai(.A1(enframer.cycle[2]), .A2(_18743_), .B1(_18781_), .Y(_18782_))
-    // _18782_ = !((cycle[2] | _18743_) & _18781_)
-    let mut cell_40937 = CellPins { ..empty_cell };
-    // Cell _40936_: nand3(.A(_18758_), .B(_18777_), .C(_18780_), .Y(_18781_))
-    let mut cell_40936_a = usize::MAX;
-    let mut cell_40936_b = usize::MAX;
-    let mut cell_40936_c = usize::MAX;
-
-    for cellid in 1..netlistdb.num_cells {
-        let cname = format!("{:?}", netlistdb.cellnames[cellid]);
-        if cname.ends_with("_40937_)") {
-            let ctype = netlistdb.celltypes[cellid].as_str();
-            let mut pins_info = String::new();
-            for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                let pname_str = netlistdb.pinnames[pinid].1.as_str();
-                match pname_str {
-                    "A1" => cell_40937.a_pin = pinid,
-                    "A2" => cell_40937.b_pin = pinid,
-                    "B1" => cell_40937.c_pin = pinid,
-                    "Y" => cell_40937.y_pin = pinid,
-                    _ => {}
-                }
-                pins_info += &format!(" {}={}", pname_str, pinid);
-            }
-            eprintln!("CELL _40937_ type='{}': {}", ctype, pins_info);
-        } else if cname.ends_with("_40936_)") {
-            for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                let pname_str = netlistdb.pinnames[pinid].1.as_str();
-                match pname_str {
-                    "A" => cell_40936_a = pinid,
-                    "B" => cell_40936_b = pinid,
-                    "C" => cell_40936_c = pinid,
-                    _ => {}
-                }
-            }
-            eprintln!("CELL _40936_ (nand3 → _18781_): A(18758)={} B(18777)={} C(18780)={}", cell_40936_a, cell_40936_b, cell_40936_c);
-        }
-    }
-
-    // Also trace the enframer.cycle DFF Q values
-    let ecycle0_pin = find_net_pin("enframer.cycle[0]");
-    let ecycle1_pin = find_net_pin("enframer.cycle[1]");
-    let ecycle2_pin = find_net_pin("enframer.cycle[2]");
-    eprintln!("Enframer cycle pins: [0]={:?} [1]={:?} [2]={:?}", ecycle0_pin, ecycle1_pin, ecycle2_pin);
-
-    // Trace raw_tx_data[0..7] register bits (the SPI command byte the controller sends)
-    let mut raw_tx_data_pins: [Option<usize>; 8] = [None; 8];
-    for bit in 0..8 {
-        raw_tx_data_pins[bit] = find_net_pin(&format!("raw_tx_data[{}]", bit));
-    }
-    eprintln!("raw_tx_data pins: {:?}", raw_tx_data_pins);
-
-    // Trace SPI controller FSM state bits
-    let mut fsm_state_pins: [Option<usize>; 4] = [None; 4];
-    for bit in 0..4 {
-        fsm_state_pins[bit] = find_net_pin(&format!("spiflash.ctrl.fsm_state[{}]", bit));
-    }
-    eprintln!("FSM state pins: {:?}", fsm_state_pins);
-
-    // Trace cells in the _18777_ driver chain:
-    // _40932_: nand3(.A(_18769_), .B(cycle[2]), .C(_18776_)) → _18777_
-    // _40931_: nand3(.A(_18742_), .B(cycle[1]), .C(_18775_)) → _18776_
-    // _40930_: nand2(.A(_18774_), .B(_02744_)) → _18775_; _02744_ = !cycle[0]
-    // _40897_: o2111ai → _18742_
-    let mut cell_40932 = CellPins { ..empty_cell }; // nand3 → _18777_
-    let mut cell_40931 = CellPins { ..empty_cell }; // nand3 → _18776_
-    let mut cell_40930 = CellPins { ..empty_cell }; // nand2 → _18775_
-
-    for cellid in 1..netlistdb.num_cells {
-        let cname = format!("{:?}", netlistdb.cellnames[cellid]);
-        let target = if cname.ends_with("_40932_)") { Some(&mut cell_40932) }
-                     else if cname.ends_with("_40931_)") { Some(&mut cell_40931) }
-                     else if cname.ends_with("_40930_)") { Some(&mut cell_40930) }
-                     else { None };
-        if let Some(cp) = target {
-            let ctype = netlistdb.celltypes[cellid].as_str();
-            let mut pins_info = String::new();
-            for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                let pname_str = netlistdb.pinnames[pinid].1.as_str();
-                match pname_str {
-                    "A" | "A1" => cp.a_pin = pinid,
-                    "B" | "A2" => cp.b_pin = pinid,
-                    "C" | "B1" => cp.c_pin = pinid,
-                    "Y" | "X" => cp.y_pin = pinid,
-                    _ => {}
-                }
-                pins_info += &format!(" {}={}", pname_str, pinid);
-            }
-            eprintln!("DEEP TRACE CELL '{}' type='{}':{}", cname, ctype, pins_info);
-        }
-    }
-
-    // Find the DFF cell for buffer_io0.o and its D/Q pins
-    let mut buffer_dff_cellid = usize::MAX;
-    let mut buffer_dff_d_pin = usize::MAX;
-    let mut buffer_dff_q_pin = usize::MAX;
-    for cellid in 1..netlistdb.num_cells {
-        let cell_name = format!("{:?}", netlistdb.cellnames[cellid]);
-        if cell_name.contains("buffer_io0.o_ff") {
-            buffer_dff_cellid = cellid;
-            for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                match netlistdb.pinnames[pinid].1.as_str() {
-                    "D" => buffer_dff_d_pin = pinid,
-                    "Q" => buffer_dff_q_pin = pinid,
-                    _ => {}
-                }
-            }
-            let ct = netlistdb.celltypes[cellid].as_str();
-            clilog::info!("Found buffer_io0.o DFF: cell={}, type={}, D_pin={}, Q_pin={}", cellid, ct, buffer_dff_d_pin, buffer_dff_q_pin);
-            break;
-        }
-    }
-
     // Verify AIG topological order: for each AND gate, both inputs must have lower index
     {
         let mut topo_violations = 0usize;
@@ -2090,7 +1613,7 @@ fn run_programmatic_simulation(
     let mut uart_events: Vec<UartEvent> = Vec::new();
     let mut uart_last_tx = 1u8;
 
-    let max_cycles = config.num_cycles;
+    let max_cycles = args.max_cycles.unwrap_or(config.num_cycles);
     let reset_cycles = config.reset_cycles;
 
     clilog::info!("Starting programmatic simulation: {} reset cycles, {} total cycles",
@@ -2191,21 +1714,6 @@ fn run_programmatic_simulation(
         let rwb_aig = aig.pin2aigpin_iv[sram.r_wb_pin];
         let clk_aigpin = clk_aig >> 1;
         let en_aigpin = en_aig >> 1;
-        eprintln!("SRAM pin mappings: CLKin pin={} aig_iv=0x{:x} (aigpin={}), EN pin={} aig_iv=0x{:x} (aigpin={}), R_WB pin={} aig_iv=0x{:x}",
-                 sram.clk_pin, clk_aig, clk_aigpin, sram.en_pin, en_aig, en_aigpin, sram.r_wb_pin, rwb_aig);
-        // Show what type of AIG node drives CLKin
-        if clk_aigpin > 0 && clk_aigpin <= aig.num_aigpins {
-            eprintln!("  CLKin AIG driver: {:?}", aig.drivers[clk_aigpin]);
-        }
-        if en_aigpin > 0 && en_aigpin <= aig.num_aigpins {
-            eprintln!("  EN AIG driver: {:?}", aig.drivers[en_aigpin]);
-        }
-        // Check what the SRAM CLKin's net looks like
-        let clk_netid = netlistdb.pin2net[sram.clk_pin];
-        let en_netid = netlistdb.pin2net[sram.en_pin];
-        eprintln!("SRAM CLKin net={} ({}), EN net={} ({})",
-                 clk_netid, netlistdb.netnames[clk_netid].dbg_fmt_pin(),
-                 en_netid, netlistdb.netnames[en_netid].dbg_fmt_pin());
     }
 
     // Also build reverse propagation for SRAM DO (output) pins.
@@ -2488,14 +1996,7 @@ fn run_programmatic_simulation(
             *prev_csn = current_csn;
 
             // Only update gpio_in when NOT in reset
-            // DEBUG: trace flash d_in at critical cycles
-            static mut FLASH_STEP_COUNT: usize = 0;
-            let step_count = unsafe { FLASH_STEP_COUNT += 1; FLASH_STEP_COUNT };
             if !in_reset {
-                if step_count <= 80 || (d_in != 0) {
-                    eprintln!("FLASH step {}: clk={} csn={} d_out={:04b} d_in={:04b} (eff_csn={} prev_d={:04b})",
-                             step_count, clk, current_csn, current_d_out, d_in, effective_csn, *prev_d);
-                }
                 for (i, opt_pin) in flash_d_in.iter().enumerate() {
                     if let Some(pin) = opt_pin {
                         circ_state[*pin] = ((d_in >> i) & 1) as u8;
@@ -2511,148 +2012,6 @@ fn run_programmatic_simulation(
         // 2. Evaluate combinational on falling edge
         eval_combinational(&mut state, &circ_state);
         update_circ_from_aig(&state, &mut circ_state);
-
-        // Convergence check: re-evaluate and see if anything changes
-        if cycle >= 10 && cycle <= 30 {
-            let old_state: Vec<u8> = circ_state.clone();
-            eval_combinational(&mut state, &circ_state);
-            update_circ_from_aig(&state, &mut circ_state);
-            let mut changes = 0usize;
-            for i in 0..circ_state.len() {
-                if circ_state[i] != old_state[i] {
-                    changes += 1;
-                    if changes <= 5 {
-                        let pname = netlistdb.pinnames[i].dbg_fmt_pin();
-                        eprintln!("  CONVERGENCE: c{} pin {} '{}' changed {}→{}",
-                                 cycle, i, &pname[..pname.len().min(60)], old_state[i], circ_state[i]);
-                    }
-                }
-            }
-            if changes > 0 {
-                eprintln!("  CONVERGENCE FAIL c{}: {} pins changed on 2nd pass!", cycle, changes);
-            }
-        }
-
-        // SPI debug: trace o_latch[2] driver chain cells (from 6_final_fixed.v)
-        // _40938_: nand2(.A=_18782_, .B=_18705_, .Y=_18783_)
-        // _40939_: nand2(.A=_18360_, .B=Q, .Y=_18784_)
-        // _40941_: a21oi(.A1=_18783_, .A2=_18784_, .B1=net2982, .Y=_05278_)
-        // Broad trace: FSM state, raw_tx_data, cycle counter from reset onwards
-        if cycle >= 8 && cycle <= 35 {
-            let mut fsm = 0u8;
-            for bit in 0..4 {
-                if let Some(p) = fsm_state_pins[bit] {
-                    if circ_state[p] != 0 { fsm |= 1 << bit; }
-                }
-            }
-            let mut raw_tx = 0u8;
-            for bit in 0..8 {
-                if let Some(p) = raw_tx_data_pins[bit] {
-                    if circ_state[p] != 0 { raw_tx |= 1 << bit; }
-                }
-            }
-            let ec0 = ecycle0_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ec1 = ecycle1_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ec2 = ecycle2_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ecycle_val = ec0 as u32 | ((ec1 as u32) << 1) | ((ec2 as u32) << 2);
-            let csn_val = flash_csn_out.map(|p| circ_state[p]).unwrap_or(255);
-            let clk_val = flash_clk_out.map(|p| circ_state[p]).unwrap_or(255);
-            let olatch_q = o_latch_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ibus_cyc_v = ibus_cyc_pin.map(|p| circ_state[p]).unwrap_or(255);
-            eprintln!("TRACE c{}: fsm={} ecyc={} raw_tx=0x{:02x} csn={} sclk={} olatch={} ibus_cyc={}",
-                     cycle, fsm, ecycle_val, raw_tx, csn_val, clk_val, olatch_q, ibus_cyc_v);
-        }
-
-        // D = !((_18783_ & _18784_) | net2982) = (_18782_ & _18705_) | (_18360_ & Q)
-        if cycle >= 22 && cycle <= 32 {
-            let read_pin = |p: usize| -> u8 { if p != usize::MAX { circ_state[p] } else { 255 } };
-            let olatch_q = o_latch_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
-            // Cell _40938_: A=_18782_ B=_18705_ Y=_18783_
-            let c38_a = read_pin(cell_40938.a_pin); // _18782_
-            let c38_b = read_pin(cell_40938.b_pin); // _18705_
-            let c38_y = read_pin(cell_40938.y_pin); // _18783_ = nand(a,b)
-            // Cell _40939_: A=_18360_ B=Q Y=_18784_
-            let c39_a = read_pin(cell_40939.a_pin); // _18360_
-            let c39_b = read_pin(cell_40939.b_pin); // Q = o_latch.io0.o
-            let c39_y = read_pin(cell_40939.y_pin); // _18784_ = nand(a,b)
-            // Cell _40941_: A1=_18783_ A2=_18784_ B1=net2982 Y=_05278_
-            let c41_a1 = read_pin(cell_40941.a_pin); // _18783_
-            let c41_a2 = read_pin(cell_40941.b_pin); // _18784_
-            let c41_b1 = read_pin(cell_40941.c_pin); // net2982 (buffered rst)
-            let c41_y  = read_pin(cell_40941.y_pin); // _05278_ = D of o_latch[2]
-
-            // Verify cell truth tables
-            let exp_38 = if c38_a == 1 && c38_b == 1 { 0 } else { 1 }; // nand
-            let exp_39 = if c39_a == 1 && c39_b == 1 { 0 } else { 1 }; // nand
-            let exp_41 = if ((c41_a1 & c41_a2) | c41_b1) != 0 { 0 } else { 1 }; // a21oi
-            let m38 = if c38_y != exp_38 { "MISMATCH!" } else { "" };
-            let m39 = if c39_y != exp_39 { "MISMATCH!" } else { "" };
-            let m41 = if c41_y != exp_41 { "MISMATCH!" } else { "" };
-
-            // Cell _40937_: o21ai - _18782_ = !((cycle[2] | _18743_) & _18781_)
-            let c37_a1 = read_pin(cell_40937.a_pin); // enframer.cycle[2]
-            let c37_a2 = read_pin(cell_40937.b_pin); // _18743_
-            let c37_b1 = read_pin(cell_40937.c_pin); // _18781_
-            let c37_y  = read_pin(cell_40937.y_pin); // _18782_
-            let exp_37 = if ((c37_a1 | c37_a2) != 0) && c37_b1 != 0 { 0 } else { 1 }; // o21ai
-            let m37 = if c37_y != exp_37 { "MISMATCH!" } else { "" };
-
-            // enframer.cycle bits
-            let ec0 = ecycle0_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ec1 = ecycle1_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ec2 = ecycle2_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let ecycle_val = ec0 as u32 | ((ec1 as u32) << 1) | ((ec2 as u32) << 2);
-
-            // nand3 _40936_ inputs: _18758_, _18777_, _18780_ → _18781_
-            let n36_a = read_pin(cell_40936_a); // _18758_
-            let n36_b = read_pin(cell_40936_b); // _18777_
-            let n36_c = read_pin(cell_40936_c); // _18780_
-
-            // Deep trace: _18777_ driver chain
-            // _40932_: nand3(.A(_18769_), .B(cycle[2]), .C(_18776_)) → _18777_
-            let c32_a = read_pin(cell_40932.a_pin); // _18769_
-            let c32_b = read_pin(cell_40932.b_pin); // cycle[2]
-            let c32_c = read_pin(cell_40932.c_pin); // _18776_
-            let c32_y = read_pin(cell_40932.y_pin); // _18777_
-            // _40931_: nand3(.A(_18742_), .B(cycle[1]), .C(_18775_)) → _18776_
-            let c31_a = read_pin(cell_40931.a_pin); // _18742_
-            let c31_b = read_pin(cell_40931.b_pin); // cycle[1]
-            let c31_c = read_pin(cell_40931.c_pin); // _18775_
-            let c31_y = read_pin(cell_40931.y_pin); // _18776_
-            // _40930_: nand2(.A(_18774_), .B(_02744_)) → _18775_; _02744_ = !cycle[0]
-            let c30_a = read_pin(cell_40930.a_pin); // _18774_
-            let c30_b = read_pin(cell_40930.b_pin); // _02744_ = !cycle[0]
-            let c30_y = read_pin(cell_40930.y_pin); // _18775_
-
-            // raw_tx_data register value
-            let mut raw_tx = 0u8;
-            for bit in 0..8 {
-                if let Some(p) = raw_tx_data_pins[bit] {
-                    if circ_state[p] != 0 { raw_tx |= 1 << bit; }
-                }
-            }
-
-            eprintln!("FALL c{}: ecycle={} Q={} D={} raw_tx=0x{:02x} | nand3_36({},{},{})→{} | o21ai_37({},{},{})→{} {}",
-                     cycle, ecycle_val, olatch_q, c41_y, raw_tx,
-                     n36_a, n36_b, n36_c, c37_b1,
-                     c37_a1, c37_a2, c37_b1, c37_y, m37);
-            eprintln!("  _18777_ chain: nand3_32({},{},{})→{} | nand3_31(_742={},cyc1={},_775={})→{} | nand2_30(_774={},!c0={})→{}",
-                     c32_a, c32_b, c32_c, c32_y,
-                     c31_a, c31_b, c31_c, c31_y,
-                     c30_a, c30_b, c30_y);
-        }
-
-        // FALL eval cell verification
-        if cycle >= 24 && cycle <= 28 {
-            let (checked, mismatches) = verify_cell_outputs(
-                &netlistdb, &circ_state, cell_library, cycle, 0,
-            );
-            if mismatches > 0 {
-                eprintln!("FALL cycle {}: {} cell mismatches out of {} cells checked!", cycle, mismatches, checked);
-            } else {
-                eprintln!("FALL cycle {}: 0 cell mismatches ({} checked)", cycle, checked);
-            }
-        }
 
         // 2b. Step flash model AFTER falling edge eval (sees current SPI clock)
         // Pass in_reset flag to prevent spurious flash activity during reset
@@ -2755,216 +2114,6 @@ fn run_programmatic_simulation(
             }
         }
 
-        // Count DFF changes for activity monitoring
-        let mut dff_changes = 0usize;
-        static mut PREV_DFF_STATE: Vec<u8> = Vec::new();
-        unsafe {
-            if PREV_DFF_STATE.is_empty() {
-                PREV_DFF_STATE = circ_state.clone();
-            } else {
-                for i in 0..circ_state.len() {
-                    if circ_state[i] != PREV_DFF_STATE[i] {
-                        dff_changes += 1;
-                    }
-                }
-                PREV_DFF_STATE.copy_from_slice(&circ_state);
-            }
-        }
-
-        // Debug: show DFF activity and Wishbone state
-        let ibus_cyc = ibus_cyc_pin.map(|p| circ_state[p]).unwrap_or(255);
-        let ibus_stb = ibus_stb_pin.map(|p| circ_state[p]).unwrap_or(255);
-        let dbus_cyc = dbus_cyc_pin.map(|p| circ_state[p]).unwrap_or(255);
-
-        // SRAM peripheral trace: log whenever dbus_cyc is active
-        {
-            let sram_ack = sram_wb_ack_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let sram_ren = sram_read_en_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let sram_wen: Vec<u8> = sram_write_en.iter().map(|p| p.map(|p| circ_state[p]).unwrap_or(255)).collect();
-            let mut dbus_addr: u32 = 0;
-            for (i, opt_pin) in dbus_adr.iter().enumerate() {
-                if let Some(pin) = opt_pin {
-                    if circ_state[*pin] != 0 { dbus_addr |= 1 << i; }
-                }
-            }
-            // ACK logic chain values
-            let ack_d = ack_d_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let nor_a = ack_nor_a.map(|p| circ_state[p]).unwrap_or(255);
-            let nor_b = ack_nor_b.map(|p| circ_state[p]).unwrap_or(255);
-            let nand_a = ack_nand_a.map(|p| circ_state[p]).unwrap_or(255);
-            let nand_b = ack_nand_b.map(|p| circ_state[p]).unwrap_or(255);
-            let nand_c = ack_nand_c.map(|p| circ_state[p]).unwrap_or(255);
-            // Log first dbus-active cycle with deep recursive AIG trace
-            static mut ACK_TRACE_DONE: bool = false;
-            let do_ack_trace = dbus_cyc == 1 && unsafe { !ACK_TRACE_DONE };
-            if do_ack_trace {
-                unsafe { ACK_TRACE_DONE = true; }
-                let v = |idx: usize| -> u8 { if idx <= aig.num_aigpins { state.values[idx] } else { 255 } };
-                let net_name = |idx: usize| -> String {
-                    if idx == 0 || idx > aig.num_aigpins { return String::new(); }
-                    let np = aigpin_to_netpin[idx];
-                    if np != usize::MAX {
-                        format!(" net={}", &netlistdb.pinnames[np].dbg_fmt_pin()[..60.min(netlistdb.pinnames[np].dbg_fmt_pin().len())])
-                    } else { String::new() }
-                };
-                // Find ACK DFF D input aigpin dynamically from DFF cell
-                let ack_d_aigpin = {
-                    let mut d_aigpin = 0usize;
-                    for cellid in 0..netlistdb.cellnames.len() {
-                        let cn = format!("{:?}", &netlistdb.cellnames[cellid]);
-                        if cn.contains("sram.wb_bus__ack$") {
-                            for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                                if netlistdb.pinnames[pinid].1.as_str() == "D" {
-                                    let aig_iv = aig.pin2aigpin_iv[pinid];
-                                    if aig_iv != usize::MAX { d_aigpin = aig_iv >> 1; }
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    d_aigpin
-                };
-                eprintln!("  ACK DFF D aigpin = {}, val = {}", ack_d_aigpin, v(ack_d_aigpin));
-                // Recursive trace - follow ALL 0-valued paths to depth 12
-                let mut trace_result = String::new();
-                let mut stack: Vec<(usize, bool, usize, &str)> = vec![(ack_d_aigpin, false, 0, "ACK_D")];
-                while let Some((idx, inv, depth, label)) = stack.pop() {
-                    if depth > 12 || idx > aig.num_aigpins { continue; }
-                    let raw = if idx == 0 { 0 } else { v(idx) };
-                    let val = raw ^ (inv as u8);
-                    let prefix = "  ".repeat(depth);
-                    if idx == 0 {
-                        trace_result += &format!("\n{}{}: CONST inv={} val={}", prefix, label, inv, val);
-                        continue;
-                    }
-                    match &aig.drivers[idx] {
-                        DriverType::AndGate(a, b) => {
-                            let ai = (*a as usize) >> 1; let ainv = (*a & 1) != 0;
-                            let bi = (*b as usize) >> 1; let binv = (*b & 1) != 0;
-                            let av = if ai == 0 { ainv as u8 } else if ai <= aig.num_aigpins { v(ai) ^ (ainv as u8) } else { 255 };
-                            let bv = if bi == 0 { binv as u8 } else if bi <= aig.num_aigpins { v(bi) ^ (binv as u8) } else { 255 };
-                            trace_result += &format!("\n{}{}: [{}]{}AND({}{}={}, {}{}={}) raw={} val={}{}",
-                                prefix, label, idx, if inv {"!"} else {""},
-                                if ainv {"!"} else {""}, ai, av,
-                                if binv {"!"} else {""}, bi, bv, raw, val, net_name(idx));
-                            // Follow ALL 0-valued inputs when this gate output is 0
-                            if val == 0 && depth < 12 {
-                                if av == 0 { stack.push((ai, ainv, depth+1, "A")); }
-                                if bv == 0 { stack.push((bi, binv, depth+1, "B")); }
-                            }
-                        }
-                        DriverType::DFF(c) => {
-                            let cn = format!("{:?}", netlistdb.cellnames[*c]);
-                            trace_result += &format!("\n{}{}: [{}]{} DFF raw={} val={} cell={}",
-                                prefix, label, idx, if inv {"!"} else {""}, raw, val, &cn[..cn.len().min(80)]);
-                        }
-                        DriverType::InputPort(p) => {
-                            let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
-                            trace_result += &format!("\n{}{}: [{}]{} INPUT raw={} val={} pin={}",
-                                prefix, label, idx, if inv {"!"} else {""}, raw, val, &pn[..pn.len().min(80)]);
-                        }
-                        d => {
-                            trace_result += &format!("\n{}{}: [{}]{} {:?} raw={} val={}",
-                                prefix, label, idx, if inv {"!"} else {""}, d, raw, val);
-                        }
-                    }
-                }
-                eprintln!("ACK DEEP TRACE at cycle {}:{}", cycle, trace_result);
-                // Direct check: ACK DFF, NOR2 _41001_, NAND3 _28827_ and related cells
-                let check_cells = ["sram.wb_bus__ack$", "_40863_", "_28768_", "_28758_", "_28757_", "_28756_", "_28727_", "_28755_",
-                                   "dbus__adr[26]$", "dbus__adr[22]$", "ibus__adr[26]$", "ibus__adr[22]$", "wb_arbiter.grant$"];
-                for pattern in &check_cells {
-                    for cellid in 0..netlistdb.cellnames.len() {
-                        let cn = format!("{:?}", &netlistdb.cellnames[cellid]);
-                        if !cn.contains(pattern) { continue; }
-                        let macro_name = &netlistdb.celltypes[cellid];
-                        eprintln!("  CELL {} [{}]: {}", cellid, macro_name, cn);
-                        for pinid in netlistdb.cell2pin.iter_set(cellid) {
-                            let pn = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                            let aig_iv = aig.pin2aigpin_iv[pinid];
-                            let (idx, inv) = if aig_iv != usize::MAX { (aig_iv >> 1, aig_iv & 1) } else { (usize::MAX, 0) };
-                            let aig_val = if idx == 0 { inv as u8 }
-                                else if idx != usize::MAX && idx <= aig.num_aigpins { state.values[idx] ^ (inv as u8) }
-                                else { 255 };
-                            let net = netlistdb.pin2net[pinid];
-                            let net_name = if net < netlistdb.netnames.len() { format!("{:?}", &netlistdb.netnames[net]) } else { "?".to_string() };
-                            eprintln!("    pin={} {} net={}({}) aig({}:{})=>{} circ={}",
-                                     pinid, &pn[..pn.len().min(50)], net, &net_name[..net_name.len().min(40)],
-                                     idx, inv, aig_val, circ_state[pinid]);
-                        }
-                    }
-                }
-                // Identify key leaf aigpins (including 1008, 1009 found in many leaves)
-                for leaf in [504, 1008, 1009, 18182, 18121, 18185, 18203, 18155, 18132, 18124,
-                             18151, 18153, 18127, 18129, 18179, 18226] {
-                    if leaf > 0 && leaf <= aig.num_aigpins {
-                        let raw = v(leaf);
-                        let np = aigpin_to_netpin[leaf];
-                        let name = if np != usize::MAX { netlistdb.pinnames[np].dbg_fmt_pin() } else { "no-netpin".to_string() };
-                        let driver = format!("{:?}", &aig.drivers[leaf]);
-                        eprintln!("  LEAF [{}] raw={} {} driver={}", leaf, raw, &name[..name.len().min(80)], &driver[..driver.len().min(80)]);
-                    }
-                }
-            }
-            if dbus_cyc == 1 && (cycle <= 7750 || cycle % 1000 == 0) {
-                // Trace NOR4 _28727_ address decoder inputs
-                // _09270_ = aigpin 18129 (inv from aig), _09277_ = aigpin 18140 (inv)
-                // _09280_ = aigpin 18145 (inv), _09305_ = aigpin 18186 (inv)
-                let v = |idx: usize| -> u8 { if idx > 0 && idx <= aig.num_aigpins { state.values[idx] } else { 0 } };
-                // NOR4 _28727_ inputs (from cell dump, these are inverted from the AIG pins)
-                let nor4_a = v(18129) ^ 1; // _09270_ = !aigpin18129
-                let nor4_b = v(18140) ^ 1; // _09277_ = !aigpin18140
-                let nor4_c = v(18145) ^ 1; // _09280_ = !aigpin18145
-                let nor4_d = v(18186) ^ 1; // _09305_ = !aigpin18186
-                let nor4_y = v(18189); // _09306_ = raw aigpin18189
-
-                // Also NOR4 _28755_ inputs for _09346_ (NAND3 input C)
-                let nor4b_a = v(18194); // _09308_
-                let nor4b_b = v(18199) ^ 1; // _09311_ (inverted)
-                let nor4b_c = v(18222) ^ 1; // _09326_ (inverted)
-                let nor4b_d = v(18233) ^ 1; // _09333_ (inverted)
-                let nor4b_y = v(18236); // _09334_
-
-                eprintln!("DBUS c{}: addr=0x{:08X} ack={} | NOR4_28727({},{},{},{})={} NOR4_28755({},{},{},{})={} | NAND({},{},{}) NOR({},{})",
-                         cycle, dbus_addr, sram_ack,
-                         nor4_a, nor4_b, nor4_c, nor4_d, nor4_y,
-                         nor4b_a, nor4b_b, nor4b_c, nor4b_d, nor4b_y,
-                         nand_a, nand_b, nand_c, nor_a, nor_b);
-            }
-        }
-
-        // Reconstruct sink__payload value (reset vector)
-        let mut sink_val: u32 = 0;
-        for (i, opt_pin) in sink_payload.iter().enumerate() {
-            if let Some(pin) = opt_pin {
-                if circ_state[*pin] != 0 {
-                    sink_val |= 1 << i;
-                }
-            }
-        }
-        // Also get single bit for comparison
-        let sink_20 = sink_payload_20_pin.map(|p| circ_state[p]).unwrap_or(255);
-
-        // Reconstruct fetch address
-        let mut fetch_addr: u32 = 0;
-        for (i, opt_pin) in ibus_adr.iter().enumerate() {
-            if let Some(pin) = opt_pin {
-                if circ_state[*pin] != 0 {
-                    fetch_addr |= 1 << i;
-                }
-            }
-        }
-
-        // Get reset sync values
-        let stage0 = rst_sync_stage0_pin.map(|p| circ_state[p]).unwrap_or(255);
-        let rst_sync = rst_sync_rst_pin.map(|p| circ_state[p]).unwrap_or(255);
-
-        // Simple trace for reset test: show sink_payload and addr on every cycle for first 50
-        if cycle <= 50 {
-            clilog::info!("cycle {:2}: rst={}, rst_sync={}, ibus_cyc={}, sink=0x{:08X}, addr=0x{:06X}",
-                         cycle, circ_state[reset_pin], rst_sync, ibus_cyc, sink_val, fetch_addr);
-        }
-
         // Write watchlist trace output
         if let Some(ref mut f) = trace_file {
             let values: Vec<String> = std::iter::once(cycle.to_string())
@@ -2973,7 +2122,7 @@ fn run_programmatic_simulation(
             writeln!(f, "{}", values.join(",")).expect("Failed to write trace");
         }
 
-        // Simulate SRAM cells (edge-triggered, matching CF_SRAM_1024x32 Verilog model).
+        // Simulate SRAM cells (edge-triggered, matching CF_SRAM Verilog model).
         // SRAM input pins are NOT in the AIG, so we must propagate net values first.
         //
         // We call step() twice per simulation cycle:
@@ -3002,24 +2151,7 @@ fn run_programmatic_simulation(
             circ_state[sram_pin] = circ_state[driver_pin];
         }
         for sram in sram_cells.iter_mut() {
-            if cycle <= 20 {
-                let sram_clk = if sram.clk_pin != usize::MAX { circ_state[sram.clk_pin] } else { 255 };
-                let sram_en = if sram.en_pin != usize::MAX { circ_state[sram.en_pin] } else { 255 };
-                eprintln!("SRAM cycle {}: CLKin={} EN={} last_clk={}",
-                         cycle, sram_clk, sram_en, sram.last_clk);
-            }
-            let acted = sram.step(&mut circ_state);
-            if acted && cycle <= 500 {
-                let addr = sram.read_addr(&circ_state);
-                let r_wb = sram.r_wb_pin != usize::MAX && circ_state[sram.r_wb_pin] != 0;
-                if r_wb {
-                    eprintln!("SRAM cycle {}: READ  addr={} data=0x{:08X}", cycle, addr, sram.memory[addr.min(1023)]);
-                } else {
-                    let di = sram.read_di(&circ_state);
-                    let ben = sram.read_ben(&circ_state);
-                    eprintln!("SRAM cycle {}: WRITE addr={} data=0x{:08X} ben=0x{:08X}", cycle, addr, di, ben);
-                }
-            }
+            sram.step(&mut circ_state);
         }
         // Propagate SRAM DO outputs back to the net (for reads)
         for &(ref do_pin, ref load_pins) in &sram_do_prop {
@@ -3032,294 +2164,6 @@ fn run_programmatic_simulation(
         // 6. Evaluate combinational again to propagate new Q/DO values
         eval_combinational(&mut state, &circ_state);
         update_circ_from_aig(&state, &mut circ_state);
-
-        // Post-final-eval trace: check SRAM ACK chain with latest AIG values
-        if dbus_cyc_pin.map(|p| circ_state[p]).unwrap_or(0) == 1 && (cycle <= 7750 || cycle % 5000 == 0) {
-            let v = |idx: usize| -> u8 { if idx > 0 && idx <= aig.num_aigpins { state.values[idx] } else { 0 } };
-            let dbus_adr26_circ = find_net_pin("dbus__adr[26]").map(|p| circ_state[p]).unwrap_or(255);
-            let dbus_adr26_aig = v(18182);
-            let grant_circ = find_net_pin("wb_arbiter.grant").map(|p| circ_state[p]).unwrap_or(255);
-            let grant_aig = v(504);
-            let nor4_y = v(18189); // _09306_
-            let nand3_a = v(18237); // _09336_ (inverted = !nand2)
-            // NOR4 _28727_ inputs (these are the inverted AIG pins)
-            let nor4_a = v(18129) ^ 1; // _09270_
-            let nor4_b = v(18140) ^ 1; // _09277_
-            let nor4_c = v(18145) ^ 1; // _09280_
-            let nor4_d = v(18186) ^ 1; // _09305_
-            // Trace _09305_ (NOR4 input D) = NAND3(_28726_) of (_09295_, _09301_, _09304_)
-            // From deep trace: aigpin 18186 = AND(!18184, 18185), inverted → _09305_ = !18186
-            // 18184 = AND(!18181, !18183) and 18185 = AND(18168, 18179)
-            // These represent sub-checks of the address comparison
-            let p18184 = v(18184); // AND sub-tree 1
-            let p18185 = v(18185); // AND sub-tree 2
-            let p18168 = v(18168); // deeper
-            let p18179 = v(18179); // deeper
-            // 18168 = AND(18156, 18167) — address comparison sub-tree
-            let p18156 = v(18156);
-            let p18167 = v(18167);
-            // 18156 = AND(18150, !18155)
-            // 18150 = AND(!18147, !18149)
-            // 18147 = AND(!504, 18146) — 504 is grant DFF
-            // 18149 = AND(!18148, ...) or similar
-            let p18150 = v(18150);
-            let p18155 = v(18155);
-            let p18147 = v(18147);
-            let p18149 = v(18149);
-            let p18146 = v(18146);
-            let p504 = v(504); // grant DFF
-            // Deep trace: find what cells these AIG pins correspond to
-            let npi = |idx: usize| -> String {
-                if idx == 0 || idx > aig.num_aigpins { return "const".to_string(); }
-                let np = aigpin_to_netpin[idx];
-                if np != usize::MAX {
-                    let s = netlistdb.pinnames[np].dbg_fmt_pin();
-                    s[..s.len().min(50)].to_string()
-                } else { format!("aig#{}", idx) }
-            };
-            // Print raw AIG values and driver info
-            let driver_info = |idx: usize| -> String {
-                if idx == 0 || idx > aig.num_aigpins { return "const".to_string(); }
-                match &aig.drivers[idx] {
-                    DriverType::AndGate(a, b) => {
-                        let ai = (*a as usize) >> 1; let ainv = (*a & 1) != 0;
-                        let bi = (*b as usize) >> 1; let binv = (*b & 1) != 0;
-                        let av = if ai == 0 { ainv as u8 } else { v(ai) ^ ainv as u8 };
-                        let bv = if bi == 0 { binv as u8 } else { v(bi) ^ binv as u8 };
-                        format!("AND({}{}={}raw{}, {}{}={}raw{})", if ainv {"!"} else {""}, ai, av, v(ai),
-                                if binv {"!"} else {""}, bi, bv, v(bi))
-                    }
-                    DriverType::DFF(c) => {
-                        let cn = format!("{:?}", netlistdb.cellnames[*c]);
-                        format!("DFF({})", &cn[..cn.len().min(40)])
-                    }
-                    d => format!("{:?}", d)
-                }
-            };
-            // When grant=1: the 18149 path is active (AND(grant, 18148))
-            // 18150 = AND(!18147, !18149). grant=1 → 18147=0, so !18147=1. 18149=AND(1,18148).
-            // So 18150 = !18148. If 18148=1 → 18150=0 → blocking.
-            // 18148 is the dbus-side address comparison bit.
-            let p18148 = v(18148);
-            eprintln!("POST-EVAL c{}: grant={} | 18148(dbus_addr_cmp)={} {} | 18146(ibus_addr_cmp)={} | 18152={} 18154={}",
-                     cycle, p504, p18148, driver_info(18148), p18146, v(18152), v(18154));
-        }
-
-        // SPI debug: trace raw_tx_data and enframer.cycle DFF values
-        if cycle >= 0 && cycle <= 40 {
-            // Find DFF Q values by searching AIG for named DFFs
-            let find_dff_value = |name_part: &str| -> u8 {
-                for i in 1..=aig.num_aigpins {
-                    if let DriverType::DFF(cellid) = &aig.drivers[i] {
-                        let cn = format!("{:?}", netlistdb.cellnames[*cellid]);
-                        if cn.contains(name_part) {
-                            return state.values[i];
-                        }
-                    }
-                }
-                255
-            };
-
-            // One-time dump of all DFF matching for debugging
-            if cycle == 0 {
-                for pattern in &["raw_tx_data[0]", "raw_tx_data[1]", "fsm_state[0]", "fsm_state[1]",
-                                "o_latch.io0.o", "o_latch", "enframer.cycle[2]"] {
-                    let mut matches = Vec::new();
-                    for i in 1..=aig.num_aigpins {
-                        if let DriverType::DFF(cellid) = &aig.drivers[i] {
-                            let cn = format!("{:?}", netlistdb.cellnames[*cellid]);
-                            if cn.contains(pattern) {
-                                matches.push((i, cn));
-                            }
-                        }
-                    }
-                    eprintln!("DFF LOOKUP '{}': {} matches: {:?}", pattern, matches.len(),
-                             matches.iter().map(|(i, n)| format!("pin{}={}", i, &n[..n.len().min(80)])).collect::<Vec<_>>());
-                }
-            }
-
-            // raw_tx_data[0..7]
-            let mut tx_byte: u8 = 0;
-            for bit in 0..8 {
-                let name = format!("raw_tx_data[{}]", bit);
-                let val = find_dff_value(&name);
-                if val == 1 { tx_byte |= 1 << bit; }
-            }
-
-            // enframer.cycle[0..2]
-            let ec0 = find_dff_value("enframer.cycle[0]");
-            let ec1 = find_dff_value("enframer.cycle[1]");
-            let ec2 = find_dff_value("enframer.cycle[2]");
-            let ecycle = (ec2 as u16) << 2 | (ec1 as u16) << 1 | ec0 as u16;
-
-            // fsm_state
-            let fsm0 = find_dff_value("fsm_state[0]");
-            let fsm1 = find_dff_value("fsm_state[1]");
-            let fsm2 = find_dff_value("fsm_state[2]");
-            let fsm3 = find_dff_value("fsm_state[3]");
-            let fsm = (fsm3 as u16) << 3 | (fsm2 as u16) << 2 | (fsm1 as u16) << 1 | fsm0 as u16;
-
-            // o_latch and buffer
-            let olatch_o = find_dff_value("o_latch.io0.o");
-            let olatch_oe = find_dff_value("o_latch.io0.oe");
-
-            // o_latch[2] = pin 40897 (MOSI data latch)
-            let olatch2 = if 40897 <= aig.num_aigpins { state.values[40897] } else { 255 };
-            // o_latch[0] = pin 40761 (CS enable)
-            let olatch0 = if 40761 <= aig.num_aigpins { state.values[40761] } else { 255 };
-            // SPI flash FSM state (using correct pins)
-            let spi_fsm0 = if 39858 <= aig.num_aigpins { state.values[39858] } else { 255 };
-            let spi_fsm1 = if 39862 <= aig.num_aigpins { state.values[39862] } else { 255 };
-            let spi_fsm2 = if 39860 <= aig.num_aigpins { state.values[39860] } else { 255 };
-            let spi_fsm3 = if 39859 <= aig.num_aigpins { state.values[39859] } else { 255 };
-
-            eprintln!("GEM cycle {:3} DFF: tx=0x{:02X} ecycle={} spi_fsm={}{}{}{} olatch2={} olatch0={} buf_io0_q={}",
-                     cycle, tx_byte, ecycle, spi_fsm3, spi_fsm2, spi_fsm1, spi_fsm0,
-                     olatch2, olatch0,
-                     find_dff_value("buffer_io0.o"));
-        }
-
-        // SPI debug: trace at rising-edge eval
-        if cycle >= 24 && cycle <= 32 {
-            let buf_o = buffer_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let str_o = str_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let olatch = o_latch_io0_o_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let d0_pin = flash_d_out.get(0).and_then(|o| *o);
-            let d0 = d0_pin.map(|p| circ_state[p]).unwrap_or(255);
-            let clk_out = flash_clk_out.map(|p| circ_state[p]).unwrap_or(255);
-            let dff_d = if buffer_dff_d_pin != usize::MAX { circ_state[buffer_dff_d_pin] } else { 255 };
-            let dff_q = if buffer_dff_q_pin != usize::MAX { circ_state[buffer_dff_q_pin] } else { 255 };
-            // Trace AIG backwards from DFF D pin
-            if buffer_dff_d_pin != usize::MAX {
-                let d_aig = aig.pin2aigpin_iv.get(buffer_dff_d_pin).copied().unwrap_or(usize::MAX);
-                if d_aig != usize::MAX {
-                    let d_idx = d_aig >> 1;
-                    let d_inv = (d_aig & 1) != 0;
-                    let d_raw = if d_idx > 0 && d_idx <= aig.num_aigpins { state.values[d_idx] } else { 0 };
-
-                    // Level 1: D's gate inputs
-                    let (l1a_val, l1b_val, l1a_iv, l1b_iv) = if let DriverType::AndGate(a_iv, b_iv) = &aig.drivers[d_idx] {
-                        let a_i = a_iv >> 1; let a_inv = (a_iv & 1) != 0;
-                        let b_i = b_iv >> 1; let b_inv = (b_iv & 1) != 0;
-                        let a_v = if a_i > 0 && a_i <= aig.num_aigpins { state.values[a_i] ^ (a_inv as u8) } else { 0 ^ (a_inv as u8) };
-                        let b_v = if b_i > 0 && b_i <= aig.num_aigpins { state.values[b_i] ^ (b_inv as u8) } else { 0 ^ (b_inv as u8) };
-                        (a_v, b_v, *a_iv, *b_iv)
-                    } else {
-                        (255, 255, usize::MAX, usize::MAX)
-                    };
-
-                    // Level 2: Each L1 input's gate inputs
-                    let trace_gate = |iv: usize| -> String {
-                        let idx = iv >> 1;
-                        let inv = (iv & 1) != 0;
-                        if idx == 0 { return format!("const{}", if inv { 1 } else { 0 }); }
-                        if idx > aig.num_aigpins { return "OOB".to_string(); }
-                        let val = state.values[idx] ^ (inv as u8);
-                        match &aig.drivers[idx] {
-                            DriverType::AndGate(a, b) => {
-                                let ai = a >> 1; let bi = b >> 1;
-                                let ainv = (a & 1) != 0; let binv = (b & 1) != 0;
-                                let av = if ai > 0 && ai <= aig.num_aigpins { state.values[ai] ^ (ainv as u8) } else { 0 ^ (ainv as u8) };
-                                let bv = if bi > 0 && bi <= aig.num_aigpins { state.values[bi] ^ (binv as u8) } else { 0 ^ (binv as u8) };
-                                format!("AND({}={},{}={})={}", ai, av, bi, bv, val)
-                            }
-                            DriverType::DFF(c) => {
-                                let cn = format!("{:?}", netlistdb.cellnames[*c]);
-                                format!("DFF({})={}", &cn[..cn.len().min(40)], val)
-                            }
-                            DriverType::InputPort(p) => {
-                                let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
-                                format!("IN({})={}", &pn[..pn.len().min(30)], val)
-                            }
-                            d => format!("{:?}={}", d, val)
-                        }
-                    };
-
-                    // Recursive trace: follow specific AIG pins
-                    let trace_pin_deep = |target: usize, depth: usize| -> String {
-                        let mut result = String::new();
-                        let mut stack: Vec<(usize, usize)> = vec![(target, 0)];
-                        while let Some((idx, d)) = stack.pop() {
-                            if d > depth || idx == 0 || idx > aig.num_aigpins { continue; }
-                            let val = state.values[idx];
-                            let indent = "  ".repeat(d);
-                            match &aig.drivers[idx] {
-                                DriverType::AndGate(a, b) => {
-                                    let ai = a >> 1; let bi = b >> 1;
-                                    let ainv = (a & 1) != 0; let binv = (b & 1) != 0;
-                                    let av = if ai > 0 && ai <= aig.num_aigpins { state.values[ai] } else { 0 };
-                                    let bv = if bi > 0 && bi <= aig.num_aigpins { state.values[bi] } else { 0 };
-                                    result += &format!("\n{}  [{}] AND raw={} a[{}]raw={} inv={} b[{}]raw={} inv={}",
-                                                      indent, idx, val, ai, av, ainv, bi, bv, binv);
-                                    if d < depth { stack.push((ai, d+1)); stack.push((bi, d+1)); }
-                                }
-                                DriverType::DFF(c) => {
-                                    let cn = format!("{:?}", netlistdb.cellnames[*c]);
-                                    result += &format!("\n{}  [{}] DFF raw={} cell={}", indent, idx, val, &cn[..cn.len().min(60)]);
-                                }
-                                DriverType::InputPort(p) => {
-                                    let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
-                                    result += &format!("\n{}  [{}] INPUT raw={} {}", indent, idx, val, &pn[..pn.len().min(40)]);
-                                }
-                                d => { result += &format!("\n{}  [{}] {:?} raw={}", indent, idx, d, val); }
-                            }
-                        }
-                        result
-                    };
-
-                    // Trace pin 40826 (the root changing signal) to depth 6
-                    let deep_trace = trace_pin_deep(40826, 6);
-
-                    // Direct identification of key pins
-                    let identify_pin = |idx: usize| -> String {
-                        if idx == 0 || idx > aig.num_aigpins { return format!("[{}] OOB", idx); }
-                        let netpin = aigpin_to_netpin[idx];
-                        let net_name = if netpin != usize::MAX {
-                            netlistdb.pinnames[netpin].dbg_fmt_pin()
-                        } else {
-                            "no-netpin".to_string()
-                        };
-                        match &aig.drivers[idx] {
-                            DriverType::AndGate(a, b) => format!("[{}] AND({},{}) net={}", idx, a>>1, b>>1, &net_name[..net_name.len().min(60)]),
-                            DriverType::DFF(c) => {
-                                let cn = format!("{:?}", netlistdb.cellnames[*c]);
-                                format!("[{}] DFF cell={} net={}", idx, &cn[..cn.len().min(50)], &net_name[..net_name.len().min(60)])
-                            },
-                            DriverType::InputPort(p) => {
-                                let pn = netlistdb.pinnames[*p].dbg_fmt_pin();
-                                format!("[{}] INPUT pin={} net={}", idx, &pn[..pn.len().min(50)], &net_name[..net_name.len().min(60)])
-                            },
-                            d => format!("[{}] {:?} net={}", idx, d, &net_name[..net_name.len().min(60)]),
-                        }
-                    };
-
-                    eprintln!("GEM cycle {} RISE: D_raw={} D_inv={} D={} | L1: A={} B={} | L2: A={} B={}",
-                             cycle, d_raw, d_inv, dff_d, l1a_val, l1b_val,
-                             trace_gate(l1a_iv), trace_gate(l1b_iv));
-                    eprintln!("  PIN IDs: 40826={} 40886={} 40893={} 11129={}",
-                             identify_pin(40826), identify_pin(40886), identify_pin(40893), identify_pin(11129));
-                    eprintln!("  VALS: 40826_raw={} 40886_raw={} 11129_raw={} 40893_raw={}",
-                             state.values[40826], state.values[40886], state.values[11129], state.values[40893]);
-                    eprintln!("  DEEP TRACE from 40826:{}", deep_trace);
-                }
-            }
-        }
-
-        // 6a. Cell-level and net verification at critical cycles
-        if cycle >= 20 && cycle <= 35 {
-            let (checked, mismatches) = verify_cell_outputs(
-                &netlistdb, &circ_state, cell_library, cycle, 10,
-            );
-            if mismatches > 0 {
-                eprintln!("cycle {}: {} cell mismatches out of {} cells checked", cycle, mismatches, checked);
-            }
-            let (nets_checked, net_mismatches) = verify_net_consistency(
-                &netlistdb, &circ_state, &aig, cycle, 10,
-            );
-            if net_mismatches > 0 {
-                eprintln!("cycle {}: {} net mismatches out of {} nets checked", cycle, net_mismatches, nets_checked);
-            }
-        }
 
         // 6b. Step flash model AFTER rising edge eval (sees current SPI clock HIGH)
         // This is when the flash controller samples data from flash
@@ -3882,7 +2726,9 @@ fn main() {
 
     // QSPI Flash setup for functional simulation (using C++ model from chipflow-lib)
     let mut flash: Option<CppSpiFlash> = if args.firmware.is_some() {
-        Some(CppSpiFlash::new(16 * 1024 * 1024)) // 16MB flash
+        let mut fl = CppSpiFlash::new(16 * 1024 * 1024); // 16MB flash
+        fl.set_verbose(args.flash_verbose);
+        Some(fl)
     } else {
         None
     };
@@ -5041,21 +3887,21 @@ mod tests {
     fn test_sram_address_range() {
         let (mut sram, mut cs) = make_test_sram();
 
-        // Write to max valid address (1023)
+        // Write to max valid address (255 for 256-word SRAM)
         cs[1] = 1;
         cs[2] = 0;
-        set_bus(&mut cs, 3, 10, 1023);
+        set_bus(&mut cs, 3, 10, 255);
         set_bus(&mut cs, 13, 32, 0xFFFFFFFF);
         set_bus(&mut cs, 45, 32, 0xBAADF00D);
         clock_edge(&mut sram, &mut cs);
-        assert_eq!(sram.memory[1023], 0xBAADF00D);
+        assert_eq!(sram.memory[255], 0xBAADF00D);
 
-        // Address 1024 (out of range) should be rejected
-        set_bus(&mut cs, 3, 10, 1024);
+        // Address 256 (out of range) should be rejected
+        set_bus(&mut cs, 3, 10, 256);
         set_bus(&mut cs, 45, 32, 0xDEADDEAD);
         clock_edge(&mut sram, &mut cs);
-        // Memory at 1023 should be unchanged
-        assert_eq!(sram.memory[1023], 0xBAADF00D);
+        // Memory at 255 should be unchanged
+        assert_eq!(sram.memory[255], 0xBAADF00D);
     }
 
     #[test]

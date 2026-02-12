@@ -37,6 +37,7 @@ struct SpiFlashModel {
     uint32_t posedge_count = 0;
     uint32_t negedge_count = 0;
     uint32_t step_count = 0;
+    bool verbose = false;
 
     SpiFlashModel(size_t size) : data(size, 0xFF) {}
 
@@ -110,8 +111,10 @@ struct SpiFlashModel {
 
         if (posedge_csn()) {
             // Rising edge of CSN - deselect, reset state
-            fprintf(stderr, "flash: CSN HIGH (deselect), cmd=0x%02x, bytes=%d, addr=0x%06x, posedges=%u\n",
-                    s.command, s.byte_count, s.addr, posedge_count);
+            if (verbose) {
+                fprintf(stderr, "flash: CSN HIGH (deselect), cmd=0x%02x, bytes=%d, addr=0x%06x, posedges=%u\n",
+                        s.command, s.byte_count, s.addr, posedge_count);
+            }
             sn.bit_count = 0;
             sn.byte_count = 0;
             sn.data_width = 1;
@@ -134,7 +137,7 @@ struct SpiFlashModel {
                 ++sn.byte_count;
                 sn.bit_count = 0;
                 // Log every byte completion for first 20 bytes, then every 100th
-                if (sn.byte_count <= 20 || sn.byte_count % 100 == 0) {
+                if (verbose && (sn.byte_count <= 20 || sn.byte_count % 100 == 0)) {
                     fprintf(stderr, "  -> byte complete #%d: cmd=0x%02x, addr=0x%06x, out_buf=0x%02x\n",
                             sn.byte_count, sn.command, sn.addr, sn.out_buffer);
                 }
@@ -204,6 +207,10 @@ int spiflash_load(SpiFlashModel* flash, const uint8_t* data, size_t len, size_t 
 uint8_t spiflash_step(SpiFlashModel* flash, int clk, int csn, uint8_t d_o) {
     if (!flash) return 0;
     return flash->step(clk != 0, csn != 0, d_o);
+}
+
+void spiflash_set_verbose(SpiFlashModel* flash, int verbose) {
+    if (flash) flash->verbose = (verbose != 0);
 }
 
 uint8_t spiflash_get_command(SpiFlashModel* flash) {
