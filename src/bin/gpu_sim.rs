@@ -25,7 +25,7 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use ulib::{AsUPtr, Device};
 
-use metal::{Device as MTLDevice, MTLSize, ComputePipelineState, CommandQueue, MTLResourceOptions};
+use metal::{Device as MTLDevice, MTLSize, ComputePipelineState, CommandQueue, MTLResourceOptions, SharedEvent};
 
 // ── CLI Arguments ────────────────────────────────────────────────────────────
 
@@ -90,10 +90,18 @@ struct MetalSimulator {
     device: metal::Device,
     command_queue: CommandQueue,
     pipeline_state: ComputePipelineState,
+    /// Pre-allocated params buffers for each stage (shared memory, rewritten each dispatch).
+    /// We need one per stage since multi-stage designs encode all stages before commit.
+    params_buffers: Vec<metal::Buffer>,
+    /// Shared event for GPU↔CPU synchronization within a single command buffer.
+    /// Allows encoding both half-cycle dispatches in one buffer with CPU work between them.
+    shared_event: SharedEvent,
+    /// Monotonic counter for shared event signaling (increments by 3 per tick)
+    event_counter: std::cell::Cell<u64>,
 }
 
 impl MetalSimulator {
-    fn new() -> Self {
+    fn new(num_stages: usize) -> Self {
         let device = MTLDevice::system_default().expect("No Metal device found");
         clilog::info!("Using Metal device: {}", device.name());
 
@@ -112,14 +120,32 @@ impl MetalSimulator {
 
         let command_queue = device.new_command_queue();
 
+        // Pre-allocate one params buffer per stage
+        let params_buffers: Vec<_> = (0..num_stages.max(1))
+            .map(|_| {
+                device.new_buffer(
+                    std::mem::size_of::<SimParams>() as u64,
+                    MTLResourceOptions::StorageModeShared,
+                )
+            })
+            .collect();
+
+        let shared_event = device.new_shared_event();
+
         Self {
             device,
             command_queue,
             pipeline_state,
+            params_buffers,
+            shared_event,
+            event_counter: std::cell::Cell::new(0),
         }
     }
 
-    /// Dispatch a single stage of the simulation kernel.
+    /// Dispatch a single stage (standalone, with own command buffer).
+    /// Used as fallback when dual-tick pattern isn't applicable.
+    #[allow(dead_code)]
+    #[inline]
     fn dispatch_stage(
         &self,
         num_blocks: usize,
@@ -133,30 +159,64 @@ impl MetalSimulator {
         states_buffer: &metal::Buffer,
         event_buffer_metal: &metal::Buffer,
     ) {
+        self.write_params(stage_i, num_blocks, num_major_stages, state_size, cycle_i);
+
+        let command_buffer = self.command_queue.new_command_buffer();
+        self.encode_dispatch(
+            &command_buffer, num_blocks, stage_i,
+            blocks_start_buffer, blocks_data_buffer,
+            sram_data_buffer, states_buffer, event_buffer_metal,
+        );
+        command_buffer.commit();
+        command_buffer.wait_until_completed();
+    }
+
+    /// Write params for a given stage into the pre-allocated shared memory buffer.
+    #[inline]
+    fn write_params(
+        &self,
+        stage_i: usize,
+        num_blocks: usize,
+        num_major_stages: usize,
+        state_size: usize,
+        cycle_i: usize,
+    ) {
         let params = SimParams {
             num_blocks: num_blocks as u64,
             num_major_stages: num_major_stages as u64,
-            num_cycles: 1, // hybrid mode: always 1 cycle at a time
+            num_cycles: 1,
             state_size: state_size as u64,
             current_cycle: cycle_i as u64,
             current_stage: stage_i as u64,
         };
+        unsafe {
+            std::ptr::write(
+                self.params_buffers[stage_i].contents() as *mut SimParams,
+                params,
+            );
+        }
+    }
 
-        let params_buffer = self.device.new_buffer_with_data(
-            &params as *const SimParams as *const _,
-            std::mem::size_of::<SimParams>() as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-
-        let command_buffer = self.command_queue.new_command_buffer();
+    /// Encode a compute dispatch into an existing command buffer (no commit).
+    #[inline]
+    fn encode_dispatch(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        num_blocks: usize,
+        stage_i: usize,
+        blocks_start_buffer: &metal::Buffer,
+        blocks_data_buffer: &metal::Buffer,
+        sram_data_buffer: &metal::Buffer,
+        states_buffer: &metal::Buffer,
+        event_buffer_metal: &metal::Buffer,
+    ) {
         let encoder = command_buffer.new_compute_command_encoder();
-
         encoder.set_compute_pipeline_state(&self.pipeline_state);
         encoder.set_buffer(0, Some(blocks_start_buffer), 0);
         encoder.set_buffer(1, Some(blocks_data_buffer), 0);
         encoder.set_buffer(2, Some(sram_data_buffer), 0);
         encoder.set_buffer(3, Some(states_buffer), 0);
-        encoder.set_buffer(4, Some(&params_buffer), 0);
+        encoder.set_buffer(4, Some(&self.params_buffers[stage_i]), 0);
         encoder.set_buffer(5, Some(event_buffer_metal), 0);
 
         let threads_per_threadgroup = MTLSize::new(256, 1, 1);
@@ -164,9 +224,20 @@ impl MetalSimulator {
 
         encoder.dispatch_thread_groups(threadgroups, threads_per_threadgroup);
         encoder.end_encoding();
+    }
 
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
+    /// Spin-wait for shared event to reach target value.
+    #[inline]
+    fn spin_wait(&self, target: u64) {
+        while self.shared_event.signaled_value() < target {
+            std::hint::spin_loop();
+        }
+    }
+
+    /// CPU signals the shared event (unblocks GPU waiting on this value).
+    #[inline]
+    fn cpu_signal(&self, value: u64) {
+        self.shared_event.set_signaled_value(value);
     }
 }
 
@@ -667,7 +738,7 @@ fn main() {
     // ── Initialize Metal simulator and GPU state buffers ─────────────────
 
     let timer_init = clilog::stimer!("init_gpu");
-    let simulator = MetalSimulator::new();
+    let simulator = MetalSimulator::new(script.num_major_stages);
 
     let state_size = script.reg_io_state_size as usize;
 
@@ -793,6 +864,11 @@ fn main() {
         (clk, csn, d_out)
     };
 
+    // Pre-write params for all stages (they don't change between ticks)
+    for stage_i in 0..num_major_stages {
+        simulator.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
+    }
+
     for tick in 0..max_ticks {
         // Reset event buffer
         unsafe { (*event_buffer_ptr).reset(); }
@@ -819,18 +895,49 @@ fn main() {
             set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, flash_din);
         }
 
-        // ── 2. GPU dispatch: falling edge ───────────────────────────────
+        // ── 2-5. Dual dispatch with CPU intervention between edges ──────
+        // Encode BOTH half-cycle dispatches into a SINGLE command buffer.
+        // GPU signals event after falling edge, waits for CPU to update state,
+        // then proceeds with rising edge dispatch. This eliminates one
+        // command buffer creation per tick (~50-100μs savings).
+        let base = simulator.event_counter.get();
+        let fall_done = base + 1;   // GPU signals after falling edge
+        let cpu_done = base + 2;    // CPU signals after state update
+        let rise_done = base + 3;   // GPU signals after rising edge
+        simulator.event_counter.set(rise_done);
+
+        let command_buffer = simulator.command_queue.new_command_buffer();
+
+        // Encode falling edge dispatch(es)
         for stage_i in 0..num_major_stages {
-            simulator.dispatch_stage(
-                num_blocks, num_major_stages, state_size,
-                0, stage_i,
+            simulator.encode_dispatch(
+                &command_buffer, num_blocks, stage_i,
                 &blocks_start_buffer, &blocks_data_buffer,
                 &sram_data_buffer, &states_buffer, &event_buffer_metal,
             );
         }
 
-        // ── 3. Step flash after falling edge (matches CPU sim step 2b) ──
-        // Flash sees clk CURRENT (from falling-edge eval), csn/d_out DELAYED
+        // GPU signals fall_done, then waits for CPU to signal cpu_done
+        command_buffer.encode_signal_event(&simulator.shared_event, fall_done);
+        command_buffer.encode_wait_for_event(&simulator.shared_event, cpu_done);
+
+        // Encode rising edge dispatch(es)
+        for stage_i in 0..num_major_stages {
+            simulator.encode_dispatch(
+                &command_buffer, num_blocks, stage_i,
+                &blocks_start_buffer, &blocks_data_buffer,
+                &sram_data_buffer, &states_buffer, &event_buffer_metal,
+            );
+        }
+
+        // GPU signals rise_done after rising edge
+        command_buffer.encode_signal_event(&simulator.shared_event, rise_done);
+        command_buffer.commit();
+
+        // ── 3. CPU: wait for falling edge, step flash, update state ─────
+        simulator.spin_wait(fall_done);
+
+        // Step flash after falling edge (matches CPU sim step 2b)
         let flash_din_fall = if let Some(ref mut fl) = flash {
             let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
             let effective_csn = if in_reset { true } else { prev_flash_csn };
@@ -848,7 +955,7 @@ fn main() {
             0u8
         };
 
-        // ── 4. Copy falling output → input, set rising edge ────────────
+        // Copy falling output → input, set rising edge
         states.copy_within(state_size..2 * state_size, 0);
         set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
         set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 1);
@@ -858,23 +965,17 @@ fn main() {
         for &pos in &gpio_map.negedge_flag_bits {
             clear_bit(&mut states[..state_size], pos);
         }
-        // Write flash din from falling-edge flash step
         if let Some(ref flash_cfg) = config.flash {
             set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, flash_din_fall);
         }
 
-        // ── 5. GPU dispatch: rising edge (DFFs latch) ───────────────────
-        for stage_i in 0..num_major_stages {
-            simulator.dispatch_stage(
-                num_blocks, num_major_stages, state_size,
-                0, stage_i,
-                &blocks_start_buffer, &blocks_data_buffer,
-                &sram_data_buffer, &states_buffer, &event_buffer_metal,
-            );
-        }
+        // Signal GPU to proceed with rising edge
+        simulator.cpu_signal(cpu_done);
 
-        // ── 6. Step flash after rising edge (matches CPU sim step 6b) ───
-        // Flash sees the post-rising-edge outputs (SPI clock may now be HIGH)
+        // ── 6. Wait for rising edge, step flash + UART ──────────────────
+        simulator.spin_wait(rise_done);
+
+        // Step flash after rising edge (matches CPU sim step 6b)
         flash_din = if let Some(ref mut fl) = flash {
             let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
             let effective_csn = if in_reset { true } else { prev_flash_csn };
@@ -887,7 +988,7 @@ fn main() {
             0u8
         };
 
-        // ── 7. UART: read TX from rising-edge output ────────────────────
+        // UART: read TX from rising-edge output
         if let Some(tx_gpio) = uart_tx_gpio {
             if let Some(&pos) = gpio_map.output_bits.get(&tx_gpio) {
                 let tx = read_bit(&states[state_size..2 * state_size], pos);
