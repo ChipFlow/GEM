@@ -13,16 +13,17 @@
 
 use gem::aig::{DriverType, AIG};
 use gem::aigpdk::AIGPDKLeafPins;
+use gem::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
 use gem::flatten::FlattenedScriptV1;
 use gem::staging::build_staged_aigs;
 use gem::pe::Partition;
 use gem::testbench::{CppSpiFlash, TestbenchConfig, UartMonitor};
-use netlistdb::{Direction, GeneralPinName, NetlistDB};
+use netlistdb::{GeneralPinName, NetlistDB};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use ulib::{AsUPtr, AsUPtrMut, Device, UVec};
+use ulib::{AsUPtr, Device};
 
 use metal::{Device as MTLDevice, MTLSize, ComputePipelineState, CommandQueue, MTLResourceOptions};
 
@@ -248,18 +249,30 @@ fn build_gpio_mapping(
     }
 
     // Map output ports (gpio_out) → state buffer positions
+    // Search by name across all cell-0 pins (direction conventions vary by netlist)
     for i in netlistdb.cell2pin.iter_set(0) {
-        if netlistdb.pindirect[i] == Direction::I {
+        let pin_name = netlistdb.pinnames[i].dbg_fmt_pin();
+        if let Some(gpio_idx) = parse_gpio_index(&pin_name, "gpio_out") {
             let aigpin_iv = aig.pin2aigpin_iv[i];
-            if aigpin_iv == usize::MAX || aigpin_iv <= 1 {
+            if aigpin_iv == usize::MAX {
+                clilog::info!("gpio_out[{}] pin {} has no AIG connection (usize::MAX)", gpio_idx, i);
                 continue;
             }
-            let aigpin = aigpin_iv >> 1;
-            if let Some(&pos) = script.output_map.get(&aigpin) {
-                let pin_name = netlistdb.pinnames[i].dbg_fmt_pin();
-                if let Some(gpio_idx) = parse_gpio_index(&pin_name, "gpio_out") {
-                    output_bits.insert(gpio_idx, pos);
-                }
+            if aigpin_iv <= 1 {
+                clilog::info!("gpio_out[{}] pin {} is constant (aigpin_iv={})", gpio_idx, i, aigpin_iv);
+                continue;
+            }
+            // output_map is keyed by idx_iv (with inversion bit), same as pin2aigpin_iv
+            if let Some(&pos) = script.output_map.get(&aigpin_iv) {
+                output_bits.insert(gpio_idx, pos);
+            } else if let Some(&pos) = script.output_map.get(&(aigpin_iv ^ 1)) {
+                // Try with flipped inversion bit
+                output_bits.insert(gpio_idx, pos);
+                clilog::debug!("gpio_out[{}] found with flipped inv bit, aigpin_iv={}→{}",
+                              gpio_idx, aigpin_iv, aigpin_iv ^ 1);
+            } else {
+                clilog::info!("gpio_out[{}] pin {} aigpin_iv={} (aigpin={}) not in output_map (dir={:?})",
+                              gpio_idx, i, aigpin_iv, aigpin_iv >> 1, netlistdb.pindirect[i]);
             }
         }
     }
@@ -534,11 +547,24 @@ fn main() {
     // ── Load netlist and build AIG ───────────────────────────────────────
 
     let timer_load = clilog::stimer!("load_netlist");
-    let netlistdb = NetlistDB::from_sverilog_file(
-        &args.netlist_verilog,
-        args.top_module.as_deref(),
-        &AIGPDKLeafPins(),
-    )
+
+    // Detect cell library (AIGPDK vs SKY130)
+    let cell_library = detect_library_from_file(&args.netlist_verilog)
+        .expect("Failed to read netlist file for library detection");
+    clilog::info!("Detected cell library: {}", cell_library);
+
+    let netlistdb = match cell_library {
+        CellLibrary::SKY130 => NetlistDB::from_sverilog_file(
+            &args.netlist_verilog,
+            args.top_module.as_deref(),
+            &SKY130LeafPins,
+        ),
+        CellLibrary::AIGPDK | CellLibrary::Mixed => NetlistDB::from_sverilog_file(
+            &args.netlist_verilog,
+            args.top_module.as_deref(),
+            &AIGPDKLeafPins(),
+        ),
+    }
     .expect("cannot build netlist");
 
     let aig = AIG::from_netlistdb(&netlistdb);
@@ -642,16 +668,46 @@ fn main() {
 
     let timer_init = clilog::stimer!("init_gpu");
     let simulator = MetalSimulator::new();
-    let device = Device::Metal(0);
 
     let state_size = script.reg_io_state_size as usize;
 
-    // The Metal kernel expects states laid out as:
-    //   [cycle 0 input (state_size)] [cycle 0 output (state_size)] [cycle 1 input] ...
-    // For hybrid mode with num_cycles=1, we need exactly 2 * state_size:
-    //   [input state] [output state]
-    let mut states = UVec::new_zeroed(2 * state_size, device);
-    let mut sram_storage: UVec<u32> = UVec::new_zeroed(script.sram_storage_size as usize, device);
+    // IMPORTANT: We use Metal shared-memory buffers DIRECTLY for state, NOT UVec.
+    // UVec maintains separate CPU and Metal allocations and syncs between them,
+    // which breaks our hybrid model where CPU modifies state between GPU dispatches.
+    // With Metal StorageModeShared on Apple Silicon, the CPU and GPU share the
+    // same physical memory, so we allocate a Metal buffer and access it as a
+    // mutable slice from the CPU side.
+
+    // States: [input state (state_size)] [output state (state_size)]
+    let states_buffer = simulator.device.new_buffer(
+        (2 * state_size * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    // SAFETY: Metal shared buffer is CPU-accessible. We ensure no aliasing by
+    // waiting for GPU completion before CPU access and vice versa.
+    let states: &mut [u32] = unsafe {
+        std::slice::from_raw_parts_mut(
+            states_buffer.contents() as *mut u32,
+            2 * state_size,
+        )
+    };
+    // Zero-initialize
+    states.fill(0);
+
+    // SRAM storage
+    let sram_data_buffer = simulator.device.new_buffer(
+        (script.sram_storage_size as usize * std::mem::size_of::<u32>()) as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    let sram_data: &mut [u32] = unsafe {
+        std::slice::from_raw_parts_mut(
+            sram_data_buffer.contents() as *mut u32,
+            script.sram_storage_size as usize,
+        )
+    };
+    sram_data.fill(0);
+    // Keep sram_data alive but we don't use it from CPU after init
+    let _ = sram_data;
 
     // Initialize: set reset active
     let reset_val = if config.reset_active_high { 1u8 } else { 0u8 };
@@ -663,11 +719,10 @@ fn main() {
         set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, 0x0F);
     }
 
-    // Create Metal buffers (shared memory = zero-copy on Apple Silicon)
-    let states_ptr = states.as_mut_uptr(device);
+    // Create Metal buffers for script data (read-only, use UVec's Metal path)
+    let device = Device::Metal(0);
     let blocks_start_ptr = script.blocks_start.as_uptr(device);
     let blocks_data_ptr = script.blocks_data.as_uptr(device);
-    let sram_ptr = sram_storage.as_mut_uptr(device);
 
     let blocks_start_buffer = simulator.device.new_buffer_with_bytes_no_copy(
         blocks_start_ptr as *const _,
@@ -678,18 +733,6 @@ fn main() {
     let blocks_data_buffer = simulator.device.new_buffer_with_bytes_no_copy(
         blocks_data_ptr as *const _,
         (script.blocks_data.len() * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-        None,
-    );
-    let sram_data_buffer = simulator.device.new_buffer_with_bytes_no_copy(
-        sram_ptr as *mut _ as *const _,
-        (sram_storage.len() * std::mem::size_of::<u32>()) as u64,
-        MTLResourceOptions::StorageModeShared,
-        None,
-    );
-    let states_buffer = simulator.device.new_buffer_with_bytes_no_copy(
-        states_ptr as *mut _ as *const _,
-        (states.len() * std::mem::size_of::<u32>()) as u64,
         MTLResourceOptions::StorageModeShared,
         None,
     );
@@ -725,184 +768,137 @@ fn main() {
     let num_major_stages = script.num_major_stages;
     let num_blocks = script.num_blocks;
 
-    // Track previous flash data for setup timing delay (same as timing_sim_cpu)
+    // Track previous flash data for setup timing delay (same as timing_sim_cpu).
+    // The CPU sim's step_flash reads clk CURRENT, but csn/d_out PREVIOUS,
+    // to match real hardware setup timing where data is stable before clock edge.
     let mut prev_flash_d_out: u8 = 0;
     let mut prev_flash_csn: bool = true;
+    // Flash din from the previous tick's rising-edge step (used for falling edge input)
+    let mut flash_din: u8 = 0;
+
+    // Helper: read flash signals from output state
+    let read_flash_out = |states: &[u32], state_size: usize| -> (bool, bool, u8) {
+        let out = &states[state_size..2 * state_size];
+        let clk = config.flash.as_ref().map(|f| {
+            gpio_map.output_bits.get(&f.clk_gpio)
+                .map(|&pos| read_bit(out, pos) != 0).unwrap_or(false)
+        }).unwrap_or(false);
+        let csn = config.flash.as_ref().map(|f| {
+            gpio_map.output_bits.get(&f.csn_gpio)
+                .map(|&pos| read_bit(out, pos) != 0).unwrap_or(true)
+        }).unwrap_or(true);
+        let d_out = config.flash.as_ref().map(|f| {
+            read_flash_nibble(out, &gpio_map, f.d0_gpio)
+        }).unwrap_or(0);
+        (clk, csn, d_out)
+    };
 
     for tick in 0..max_ticks {
         // Reset event buffer
         unsafe { (*event_buffer_ptr).reset(); }
 
         let in_reset = tick < reset_cycles;
-
-        // ── 1. Read gpio_out from output state ──────────────────────────
-        // Read all values we need into locals before any mutable borrows.
-        let flash_clk = config.flash.as_ref().map(|f| {
-            gpio_map.output_bits.get(&f.clk_gpio)
-                .map(|&pos| read_bit(&states[state_size..2 * state_size], pos) != 0)
-                .unwrap_or(false)
-        }).unwrap_or(false);
-
-        let current_flash_csn = config.flash.as_ref().map(|f| {
-            gpio_map.output_bits.get(&f.csn_gpio)
-                .map(|&pos| read_bit(&states[state_size..2 * state_size], pos) != 0)
-                .unwrap_or(true)
-        }).unwrap_or(true);
-
-        let current_flash_d_out = config.flash.as_ref().map(|f| {
-            read_flash_nibble(&states[state_size..2 * state_size], &gpio_map, f.d0_gpio)
-        }).unwrap_or(0);
-
-        let uart_tx_val = uart_tx_gpio.and_then(|tx_gpio| {
-            gpio_map.output_bits.get(&tx_gpio)
-                .map(|&pos| read_bit(&states[state_size..2 * state_size], pos))
-        });
-
-        // ── 2. Step peripheral models ───────────────────────────────────
-
-        // Flash: use delayed data/CSN for setup timing (same as timing_sim_cpu)
-        if let Some(ref mut fl) = flash {
-            let effective_csn = if in_reset { true } else { prev_flash_csn };
-            let din = fl.step(flash_clk, effective_csn, prev_flash_d_out);
-
-            // Update GPIO inputs with flash response (only when not in reset)
-            if !in_reset {
-                if let Some(ref flash_cfg) = config.flash {
-                    set_flash_din(&mut states[state_size..2 * state_size], &gpio_map, flash_cfg.d0_gpio, din);
-                }
-            }
-
-            prev_flash_d_out = current_flash_d_out;
-            prev_flash_csn = current_flash_csn;
-
-            if tick <= 5 || tick == reset_cycles || tick == reset_cycles + 1 || tick == reset_cycles + 100 {
-                clilog::info!("tick {}: flash clk={}, csn={}, d_out={:04b}, din={:04b}",
-                             tick, flash_clk, current_flash_csn, current_flash_d_out, din);
-            }
-        }
-
-        // UART: read TX from output state
-        if let Some(tx) = uart_tx_val {
-            uart_monitor.step(tx, tick);
-        }
-
-        // ── 3. Copy output → input, set falling edge ───────────────────
-        // For the first tick, output state is all zeros (initial).
-        // After that, we copy the previous tick's output to become the new input.
-        states.copy_within(state_size..2 * state_size, 0);
-
-        // Set reset GPIO
         let reset_val = if in_reset {
             if config.reset_active_high { 1u8 } else { 0u8 }
         } else {
             if config.reset_active_high { 0u8 } else { 1u8 }
         };
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
 
-        // Set clock LOW (falling edge)
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 0);
-
-        // Clear clock flags for falling edge
-        for &pos in &gpio_map.posedge_flag_bits {
-            clear_bit(&mut states[..state_size], pos);
-        }
-        // Set negedge flag if design has negedge-triggered elements
-        for &pos in &gpio_map.negedge_flag_bits {
-            set_bit(&mut states[..state_size], pos, 1);
-        }
-
-        // Note: flash D_IN values were set in the output state (step 2 above).
-        // The copy_within propagated them to the input state automatically.
-
-        // ── 4. GPU dispatch: falling edge ───────────────────────────────
-        for stage_i in 0..num_major_stages {
-            simulator.dispatch_stage(
-                num_blocks,
-                num_major_stages,
-                state_size,
-                0, // cycle_i = 0 (single-cycle mode)
-                stage_i,
-                &blocks_start_buffer,
-                &blocks_data_buffer,
-                &sram_data_buffer,
-                &states_buffer,
-                &event_buffer_metal,
-            );
-        }
-
-        // ── 5. Copy output → input, set rising edge ────────────────────
+        // ── 1. Copy prev output → input, set falling edge ──────────────
         states.copy_within(state_size..2 * state_size, 0);
-
-        // Re-set reset GPIO (it was overwritten by copy)
         set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
-
-        // Set clock HIGH (rising edge)
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 1);
-
-        // Set posedge flag (DFFs latch on this evaluation)
+        set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 0);
         for &pos in &gpio_map.posedge_flag_bits {
-            set_bit(&mut states[..state_size], pos, 1);
-        }
-        // Clear negedge flags
-        for &pos in &gpio_map.negedge_flag_bits {
             clear_bit(&mut states[..state_size], pos);
         }
+        for &pos in &gpio_map.negedge_flag_bits {
+            set_bit(&mut states[..state_size], pos, 1);
+        }
+        // Write flash din from previous tick's rising-edge flash step
+        if let Some(ref flash_cfg) = config.flash {
+            set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, flash_din);
+        }
 
-        // ── 6. GPU dispatch: rising edge (DFFs latch) ───────────────────
+        // ── 2. GPU dispatch: falling edge ───────────────────────────────
         for stage_i in 0..num_major_stages {
             simulator.dispatch_stage(
-                num_blocks,
-                num_major_stages,
-                state_size,
-                0,
-                stage_i,
-                &blocks_start_buffer,
-                &blocks_data_buffer,
-                &sram_data_buffer,
-                &states_buffer,
-                &event_buffer_metal,
+                num_blocks, num_major_stages, state_size,
+                0, stage_i,
+                &blocks_start_buffer, &blocks_data_buffer,
+                &sram_data_buffer, &states_buffer, &event_buffer_metal,
             );
         }
 
-        // ── 7. Clear posedge flags in output (ready for next tick) ──────
+        // ── 3. Step flash after falling edge (matches CPU sim step 2b) ──
+        // Flash sees clk CURRENT (from falling-edge eval), csn/d_out DELAYED
+        let flash_din_fall = if let Some(ref mut fl) = flash {
+            let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
+            let effective_csn = if in_reset { true } else { prev_flash_csn };
+            let din = fl.step(clk, effective_csn, prev_flash_d_out);
+
+            prev_flash_d_out = current_d_out;
+            prev_flash_csn = current_csn;
+
+            if tick <= 5 || tick == reset_cycles || tick == reset_cycles + 1 || tick == reset_cycles + 100 {
+                clilog::info!("tick {}: fall flash clk={}, csn={}, d_out={:04b}, din={:04b}",
+                             tick, clk, current_csn, current_d_out, din);
+            }
+            if in_reset { 0u8 } else { din }
+        } else {
+            0u8
+        };
+
+        // ── 4. Copy falling output → input, set rising edge ────────────
+        states.copy_within(state_size..2 * state_size, 0);
+        set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
+        set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 1);
         for &pos in &gpio_map.posedge_flag_bits {
-            clear_bit(&mut states[state_size..], pos);
+            set_bit(&mut states[..state_size], pos, 1);
+        }
+        for &pos in &gpio_map.negedge_flag_bits {
+            clear_bit(&mut states[..state_size], pos);
+        }
+        // Write flash din from falling-edge flash step
+        if let Some(ref flash_cfg) = config.flash {
+            set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, flash_din_fall);
         }
 
-        // Step flash again after rising edge (sees SPI clock HIGH)
-        if let Some(ref mut fl) = flash {
-            // Re-read output after rising edge evaluation
-            let out2 = &states[state_size..2 * state_size];
-            let flash_clk2 = config.flash.as_ref().map(|f| {
-                gpio_map.output_bits.get(&f.clk_gpio).map(|&pos| read_bit(out2, pos) != 0).unwrap_or(false)
-            }).unwrap_or(false);
+        // ── 5. GPU dispatch: rising edge (DFFs latch) ───────────────────
+        for stage_i in 0..num_major_stages {
+            simulator.dispatch_stage(
+                num_blocks, num_major_stages, state_size,
+                0, stage_i,
+                &blocks_start_buffer, &blocks_data_buffer,
+                &sram_data_buffer, &states_buffer, &event_buffer_metal,
+            );
+        }
 
+        // ── 6. Step flash after rising edge (matches CPU sim step 6b) ───
+        // Flash sees the post-rising-edge outputs (SPI clock may now be HIGH)
+        flash_din = if let Some(ref mut fl) = flash {
+            let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
             let effective_csn = if in_reset { true } else { prev_flash_csn };
-            let din = fl.step(flash_clk2, effective_csn, prev_flash_d_out);
+            let din = fl.step(clk, effective_csn, prev_flash_d_out);
 
-            // Update flash D_IN in output state for next tick
-            if !in_reset {
-                if let Some(ref flash_cfg) = config.flash {
-                    set_flash_din(&mut states[state_size..2 * state_size], &gpio_map, flash_cfg.d0_gpio, din);
-                }
+            prev_flash_d_out = current_d_out;
+            prev_flash_csn = current_csn;
+            if in_reset { 0u8 } else { din }
+        } else {
+            0u8
+        };
+
+        // ── 7. UART: read TX from rising-edge output ────────────────────
+        if let Some(tx_gpio) = uart_tx_gpio {
+            if let Some(&pos) = gpio_map.output_bits.get(&tx_gpio) {
+                let tx = read_bit(&states[state_size..2 * state_size], pos);
+                uart_monitor.step(tx, tick);
             }
-
-            // Update delayed state
-            let out2 = &states[state_size..2 * state_size];
-            prev_flash_d_out = config.flash.as_ref().map(|f| {
-                read_flash_nibble(out2, &gpio_map, f.d0_gpio)
-            }).unwrap_or(0);
-            prev_flash_csn = config.flash.as_ref().map(|f| {
-                gpio_map.output_bits.get(&f.csn_gpio).map(|&pos| read_bit(out2, pos) != 0).unwrap_or(true)
-            }).unwrap_or(true);
         }
 
         // Progress logging
         if tick > 0 && tick % 100000 == 0 {
             clilog::info!("Tick {} / {}", tick, max_ticks);
         }
-
-        // Log transition out of reset
         if tick == reset_cycles {
             clilog::info!("Reset released at tick {}", tick);
         }
