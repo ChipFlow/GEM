@@ -409,36 +409,7 @@ struct StatePrepParams {
     u32 tick_number;   // current tick number (written to control block on callback)
 };
 
-// Peripheral monitor descriptor — describes a GPIO output bit to watch for edges.
-struct MonitorConfig {
-    u32 position;   // bit position in state buffer to monitor
-    u32 edge_type;  // 0 = any edge, 1 = rising, 2 = falling
-};
-
-// GPU↔CPU peripheral callback control block (shared memory).
-// GPU sets needs_callback=1 when a monitored edge fires.
-// CPU reads snapshot, steps peripheral model, writes response, clears flag.
-struct PeripheralControl {
-    // GPU → CPU: callback request
-    u32 needs_callback;  // 1 = monitor fired, CPU must respond
-    u32 monitor_id;      // which monitor triggered
-    u32 tick_number;     // which tick triggered
-    u32 _pad;
-    // GPU → CPU: output snapshot (populated when needs_callback=1)
-    u32 flash_clk;
-    u32 flash_csn;
-    u32 flash_d_out;     // 4-bit nibble in low bits
-    // CPU → GPU: peripheral response
-    u32 flash_d_in;      // 4-bit nibble, CPU writes before signaling back
-    // Tracked previous output values for edge detection (max 16 monitors)
-    u32 prev_values[16]; // stores previous output bit value per monitor
-    // Autonomous mode fields
-    u32 autonomous_break_tick;       // tick offset where monitor first fired (0 = none, 1-indexed)
-    u32 autonomous_ticks_completed;  // counter incremented per autonomous tick
-};
-
-// ── state_prep: basic variant (no monitors) ──────────────────────────────
-// Kept for backward compatibility — same signature as original.
+// ── state_prep: copy output→input and apply bit ops ──────────────────────
 
 kernel void state_prep(
     device u32* states [[buffer(0)]],
@@ -472,145 +443,416 @@ kernel void state_prep(
     }
 }
 
-// ── state_prep_monitored: lightweight peripheral edge detection ───────────
+// ── GPU-side Flash + UART IO Models ──────────────────────────────────────────
 //
-// Does NOT copy state or apply bit ops. Only checks for edges in monitored
-// signals by comparing tracked previous values vs current output state.
+// These kernels move SPI flash and UART decoding entirely to the GPU,
+// eliminating the per-tick CPU round-trip that was the simulation bottleneck.
 //
-// Uses prev_values[] in PeripheralControl to track the output value from the
-// end of the previous tick. This is necessary because state_prep(rise) copies
-// the falling edge output → input, overwriting the previous tick's output
-// before this kernel runs.
-//
-// The actual copy+ops for the next tick happens in the regular state_prep
-// kernel at the start of the next tick. This avoids double-copy and ensures
-// CPU patches (flash_din updates) are not overwritten.
-//
-// Runs as a single threadgroup dispatch; only thread 0 does work.
+// Per-tick pipeline (all GPU, no CPU interaction):
+//   state_prep(fall) -> gpu_apply_flash_din -> simulate×N (fall)
+//   -> state_prep(rise) -> gpu_apply_flash_din -> simulate×N (rise)
+//   -> gpu_flash_model_step -> gpu_uart_step
+//   [repeat × K ticks]
+//   -> signal(batch_done)
+//   CPU: drain UART channel
 
-kernel void state_prep_monitored(
+// ── Flash State (persistent across ticks) ────────────────────────────────────
+
+struct FlashState {
+    int bit_count;       // bits received in current byte
+    int byte_count;      // bytes in current transaction
+    uint data_width;     // 1 (SPI) or 4 (QSPI)
+    uint addr;           // 24-bit read address
+    uchar curr_byte;     // byte accumulator
+    uchar command;       // current command (0x03, 0xEB, etc.)
+    uchar out_buffer;    // MISO shift register
+    uchar _pad1;
+    uint prev_clk;       // model internal: last clk seen by flash_eval_commit
+    uint prev_csn;       // delayed csn: output csn from previous tick
+    uchar d_i;           // current MISO output nibble (4 bits)
+    uchar _pad2[3];
+    uchar prev_d_out;    // previous MOSI for setup delay
+    uchar _pad3[3];
+    uint in_reset;       // 1 = reset active, forces d_i=0x0F
+    uint last_error_cmd; // nonzero if unknown command encountered
+    uint model_prev_csn; // model internal: last csn seen by flash_eval_commit (for edge detection)
+};
+
+struct FlashDinParams {
+    u32 d_in_pos[4];     // input state bit positions for d0..d3
+    u32 has_flash;       // 0 = skip
+};
+
+struct FlashModelParams {
+    u32 state_size;       // words per state slot
+    u32 clk_out_pos;      // output state bit position: flash_clk
+    u32 csn_out_pos;      // output state bit position: flash_csn
+    u32 d_out_pos[4];     // output state bit positions: d0..d3
+    u32 flash_data_size;  // firmware size in bytes
+};
+
+// ── Flash model inline helpers (ported from spiflash_model.cc) ───────────────
+
+// Process a completed byte (command decode + address accumulation + data lookup)
+inline void flash_process_byte(
+    thread int& bit_count,
+    thread int& byte_count,
+    thread uint& data_width,
+    thread uint& addr,
+    thread uchar& curr_byte,
+    thread uchar& command,
+    thread uchar& out_buffer,
+    thread uint& last_error_cmd,
+    device const uchar* flash_data,
+    u32 flash_data_size
+) {
+    out_buffer = 0;
+    if (byte_count == 0) {
+        addr = 0;
+        data_width = 1;
+        command = curr_byte;
+        if (command == 0xab) {
+            // power up - nothing to do
+        } else if (command == 0x03 || command == 0x9f || command == 0xff
+            || command == 0x35 || command == 0x31 || command == 0x50
+            || command == 0x05 || command == 0x01 || command == 0x06) {
+            // nothing to do
+        } else if (command == 0xeb) {
+            data_width = 4;
+        } else {
+            last_error_cmd = command;
+        }
+    } else {
+        if (command == 0x03) {
+            // Single read
+            if (byte_count <= 3) {
+                addr |= (uint(curr_byte) << ((3 - byte_count) * 8));
+            }
+            if (byte_count >= 3) {
+                uint idx = addr & 0x00FFFFFFu;
+                if (idx < flash_data_size) {
+                    out_buffer = flash_data[idx];
+                } else {
+                    out_buffer = 0xFF;
+                }
+                addr = (addr + 1) & 0x00FFFFFFu;
+            }
+        } else if (command == 0xeb) {
+            // Quad read
+            if (byte_count <= 3) {
+                addr |= (uint(curr_byte) << ((3 - byte_count) * 8));
+            }
+            if (byte_count >= 6) { // 1 mode, 2 dummy clocks
+                uint idx = addr & 0x00FFFFFFu;
+                if (idx < flash_data_size) {
+                    out_buffer = flash_data[idx];
+                } else {
+                    out_buffer = 0xFF;
+                }
+                addr = (addr + 1) & 0x00FFFFFFu;
+            }
+        }
+    }
+    if (command == 0x9f) {
+        // Read ID
+        const uchar flash_id[4] = {0xCA, 0x7C, 0xA7, 0xFF};
+        out_buffer = flash_id[byte_count % 4];
+    }
+}
+
+// Single eval+commit step with persistent d_i (matching C++ p_d_i member behavior).
+// d_i is only modified on negedge_clk; otherwise retains its previous value.
+inline void flash_eval_commit_persistent(
+    uint clk,
+    uint csn,
+    uchar d_out,
+    // State (read/write):
+    thread int& bit_count,
+    thread int& byte_count,
+    thread uint& data_width,
+    thread uint& addr,
+    thread uchar& curr_byte,
+    thread uchar& command,
+    thread uchar& out_buffer,
+    thread uint& prev_clk,
+    thread uint& prev_csn,
+    thread uint& last_error_cmd,
+    thread uchar& d_i,  // persistent: only updated on negedge
+    // Flash data:
+    device const uchar* flash_data,
+    u32 flash_data_size
+) {
+    // Edge detection
+    bool posedge_clk = (clk != 0) && (prev_clk == 0);
+    bool negedge_clk = (clk == 0) && (prev_clk != 0);
+    bool posedge_csn = (csn != 0) && (prev_csn == 0);
+
+    if (posedge_csn) {
+        bit_count = 0;
+        byte_count = 0;
+        data_width = 1;
+    } else if (posedge_clk && csn == 0) {
+        if (data_width == 4) {
+            curr_byte = (curr_byte << 4U) | (d_out & 0xF);
+        } else {
+            curr_byte = (curr_byte << 1U) | (d_out & 0x1);
+        }
+        out_buffer = out_buffer << data_width;
+        bit_count += data_width;
+        if ((uint)bit_count >= 8) {
+            flash_process_byte(bit_count, byte_count, data_width, addr,
+                curr_byte, command, out_buffer, last_error_cmd,
+                flash_data, flash_data_size);
+            ++byte_count;
+            bit_count = 0;
+        }
+    } else if (negedge_clk && csn == 0) {
+        // Only update d_i on negedge (matching C++ p_d_i behavior)
+        if (data_width == 4) {
+            d_i = (out_buffer >> 4U) & 0xFU;
+        } else {
+            d_i = ((out_buffer >> 7U) & 0x1U) << 1U;
+        }
+    }
+    prev_clk = clk;
+    prev_csn = csn;
+}
+
+// ── gpu_apply_flash_din: write FlashState.d_i → input state ──────────────────
+//
+// Trivial single-thread kernel. Runs after each state_prep to apply flash
+// data input bits before simulation.
+
+kernel void gpu_apply_flash_din(
     device u32* states [[buffer(0)]],
-    constant StatePrepParams& params [[buffer(1)]],
-    device PeripheralControl* control [[buffer(2)]],
-    constant MonitorConfig* monitors [[buffer(3)]],
+    device const FlashState* flash_state [[buffer(1)]],
+    constant FlashDinParams& params [[buffer(2)]],
     uint tid [[thread_position_in_threadgroup]]
 ) {
-    if (tid != 0) return;
+    if (tid != 0 || params.has_flash == 0) return;
 
-    u32 state_size = params.state_size;
-    u32 num_monitors = params.num_monitors;
+    uchar d_i = flash_state->d_i;
 
-    // Compare tracked previous values vs current output state.
-    // prev_values[m] stores the output value from the end of the previous tick.
-    for (uint m = 0; m < num_monitors && m < 16; m++) {
-        u32 pos = monitors[m].position;
+    for (uint i = 0; i < 4; i++) {
+        u32 pos = params.d_in_pos[i];
+        if (pos == 0xFFFFFFFFu) continue;
         u32 word_idx = pos >> 5;
-        u32 bit = (pos & 31u);
-
-        // Old value: from tracked previous output (stored in control block)
-        u32 old_val = control->prev_values[m];
-
-        // New value: from current output state (states[state_size..])
-        u32 new_val = (states[state_size + word_idx] >> bit) & 1u;
-
-        // Always update tracked value for next tick
-        control->prev_values[m] = new_val;
-
-        if (old_val == new_val) continue;
-
-        u32 edge = monitors[m].edge_type;
-        bool triggered = false;
-        if (edge == 0) {
-            triggered = true;  // any edge
-        } else if (edge == 1 && old_val == 0 && new_val == 1) {
-            triggered = true;  // rising edge
-        } else if (edge == 2 && old_val == 1 && new_val == 0) {
-            triggered = true;  // falling edge
-        }
-
-        if (triggered) {
-            control->needs_callback = 1;
-            control->monitor_id = m;
-            control->tick_number = params.tick_number;
-            // Don't break — continue updating prev_values for remaining monitors
+        u32 bit_mask = 1u << (pos & 31u);
+        if ((d_i >> i) & 1) {
+            states[word_idx] |= bit_mask;
+        } else {
+            states[word_idx] &= ~bit_mask;
         }
     }
 }
 
-// ── Autonomous mode: state_prep_autonomous ────────────────────────────────
+// ── gpu_flash_model_step: SPI flash FSM (one step per tick) ──────────────────
 //
-// Lightweight kernel for autonomous GPU mode (no CPU round-trip per tick).
-// Replaces state_prep_monitored when the CPU determines flash is idle.
+// Direct port of SpiFlashModel from spiflash_model.cc.
+// Reads flash_clk, flash_csn, d_out from output state.
+// Performs dual-step (setup delay): eval_commit(prev_d_out), eval_commit(d_out).
+// Stores result d_i in FlashState for next tick's gpu_apply_flash_din.
 //
-// Responsibilities:
-//   1. Capture UART TX bit from output state into a ring buffer
-//   2. Monitor peripheral signals for edge changes (same as state_prep_monitored)
-//   3. Record break tick if monitor fires (GPU continues running, CPU handles on completion)
-//
-// Does NOT copy state or apply bit ops (those are done by state_prep).
-// Runs as a single threadgroup dispatch; only thread 0 does work.
+// Runs ONCE per tick after both half-cycles complete.
 
-struct AutonomousParams {
-    u32 state_size;        // number of u32 words per state slot
-    u32 num_monitors;      // number of peripheral monitors to check
-    u32 uart_tx_position;  // bit position for UART TX in output state (0xFFFFFFFF = no UART)
-    u32 _pad;
-};
-
-kernel void state_prep_autonomous(
+kernel void gpu_flash_model_step(
     device u32* states [[buffer(0)]],
-    constant AutonomousParams& params [[buffer(1)]],
-    device PeripheralControl* control [[buffer(2)]],
-    constant MonitorConfig* monitors [[buffer(3)]],
-    device uchar* uart_ring [[buffer(4)]],
+    device FlashState* flash_state [[buffer(1)]],
+    constant FlashModelParams& params [[buffer(2)]],
+    device const uchar* flash_data [[buffer(3)]],
     uint tid [[thread_position_in_threadgroup]]
 ) {
     if (tid != 0) return;
 
     u32 state_size = params.state_size;
-    u32 num_monitors = params.num_monitors;
 
-    // Get current tick offset within autonomous batch and increment
-    u32 tick = control->autonomous_ticks_completed;
-    control->autonomous_ticks_completed = tick + 1;
+    // Read current output state signals
+    u32 clk_word = params.clk_out_pos >> 5;
+    u32 clk_bit = params.clk_out_pos & 31u;
+    uint clk = (states[state_size + clk_word] >> clk_bit) & 1u;
 
-    // Capture UART TX bit from output state into ring buffer
-    if (params.uart_tx_position != 0xFFFFFFFFu) {
-        u32 tx_pos = params.uart_tx_position;
-        u32 tx_word = tx_pos >> 5;
-        u32 tx_bit = tx_pos & 31u;
-        u32 tx_val = (states[state_size + tx_word] >> tx_bit) & 1u;
-        uart_ring[tick] = (uchar)tx_val;
+    u32 csn_word = params.csn_out_pos >> 5;
+    u32 csn_bit = params.csn_out_pos & 31u;
+    uint csn = (states[state_size + csn_word] >> csn_bit) & 1u;
+
+    // Read d_out nibble from output state
+    uchar d_out = 0;
+    for (uint i = 0; i < 4; i++) {
+        u32 pos = params.d_out_pos[i];
+        if (pos == 0xFFFFFFFFu) continue;
+        u32 w = pos >> 5;
+        u32 b = pos & 31u;
+        d_out |= (uchar)(((states[state_size + w] >> b) & 1u) << i);
     }
 
-    // Monitor check — same edge detection as state_prep_monitored.
-    // On first trigger, record break tick (but continue updating prev_values).
-    for (uint m = 0; m < num_monitors && m < 16; m++) {
-        u32 pos = monitors[m].position;
-        u32 word_idx = pos >> 5;
-        u32 bit = (pos & 31u);
+    // If in reset, force d_i high and update prev values
+    if (flash_state->in_reset) {
+        flash_state->d_i = 0x0F;
+        flash_state->prev_clk = clk;
+        flash_state->prev_csn = csn;
+        flash_state->model_prev_csn = csn;
+        flash_state->prev_d_out = d_out;
+        return;
+    }
 
-        u32 old_val = control->prev_values[m];
-        u32 new_val = (states[state_size + word_idx] >> bit) & 1u;
+    // Load state into locals for eval_commit
+    int bit_count = flash_state->bit_count;
+    int byte_count = flash_state->byte_count;
+    uint data_width = flash_state->data_width;
+    uint addr = flash_state->addr;
+    uchar curr_byte = flash_state->curr_byte;
+    uchar command = flash_state->command;
+    uchar out_buffer = flash_state->out_buffer;
+    uint prev_clk = flash_state->prev_clk;
+    uint prev_csn = flash_state->prev_csn;
+    uint last_error_cmd = flash_state->last_error_cmd;
+    uchar prev_d_out = flash_state->prev_d_out;
 
-        // Always update tracked value for next tick
-        control->prev_values[m] = new_val;
+    // Dual-step for setup delay (matches old GPU sim CPU callback behavior):
+    // The SPI clock, CSN, and data DFFs all advance simultaneously on the system
+    // clock edge. We feed delayed CSN/data with current clock to model setup timing.
+    //
+    // model_prev_csn tracks the model's internal edge detection state (the CSN value
+    // the model last saw). prev_csn holds the delayed CSN (previous tick's output).
+    uint model_prev_csn = flash_state->model_prev_csn;
 
-        if (old_val == new_val) continue;
+    // d_i persists across steps (matching C++ p_d_i member variable behavior).
+    // It's only updated on negedge_clk inside flash_eval_commit.
+    uchar d_i = flash_state->d_i;
 
-        u32 edge = monitors[m].edge_type;
-        bool triggered = false;
-        if (edge == 0) {
-            triggered = true;  // any edge
-        } else if (edge == 1 && old_val == 0 && new_val == 1) {
-            triggered = true;  // rising edge
-        } else if (edge == 2 && old_val == 1 && new_val == 0) {
-            triggered = true;  // falling edge
+    // Step 1: eval with prev_csn + prev_d_out (processes posedge, samples old data)
+    flash_eval_commit_persistent(clk, prev_csn, prev_d_out,
+        bit_count, byte_count, data_width, addr,
+        curr_byte, command, out_buffer, prev_clk, model_prev_csn,
+        last_error_cmd, d_i, flash_data, params.flash_data_size);
+
+    // Step 2: eval with prev_csn + current d_out
+    flash_eval_commit_persistent(clk, prev_csn, d_out,
+        bit_count, byte_count, data_width, addr,
+        curr_byte, command, out_buffer, prev_clk, model_prev_csn,
+        last_error_cmd, d_i, flash_data, params.flash_data_size);
+
+    // Write state back
+    flash_state->bit_count = bit_count;
+    flash_state->byte_count = byte_count;
+    flash_state->data_width = data_width;
+    flash_state->addr = addr;
+    flash_state->curr_byte = curr_byte;
+    flash_state->command = command;
+    flash_state->out_buffer = out_buffer;
+    flash_state->prev_clk = clk;
+    flash_state->prev_csn = csn;  // store current output csn → becomes next tick's delayed csn
+    flash_state->model_prev_csn = model_prev_csn;  // model's edge detection state
+    flash_state->d_i = d_i;
+    flash_state->prev_d_out = d_out;
+    flash_state->last_error_cmd = last_error_cmd;
+}
+
+// ── UART Decoder State + Channel ─────────────────────────────────────────────
+
+struct UartDecoderState {
+    u32 state;          // 0=IDLE, 1=START, 2=DATA, 3=STOP
+    u32 last_tx;
+    u32 start_cycle;
+    u32 bits_received;
+    u32 value;
+    u32 current_cycle;  // incremented each call
+};
+
+struct UartParams {
+    u32 state_size;
+    u32 tx_out_pos;       // output state bit position for UART TX
+    u32 cycles_per_bit;   // clock_hz / baud_rate
+    u32 has_uart;         // 0 = skip
+};
+
+struct UartChannel {
+    u32 write_head;       // CPU reads this to know how many bytes are available
+    u32 capacity;
+    u32 _pad[2];
+    uchar data[4096];     // decoded bytes ring buffer
+};
+
+// ── gpu_uart_step: UART TX decoder (one step per tick) ───────────────────────
+//
+// Direct port of UartMonitor::step() from testbench.rs.
+// Reads UART TX from output state, decodes bytes, writes to UartChannel.
+
+kernel void gpu_uart_step(
+    device u32* states [[buffer(0)]],
+    device UartDecoderState* uart_state [[buffer(1)]],
+    constant UartParams& params [[buffer(2)]],
+    device UartChannel* channel [[buffer(3)]],
+    uint tid [[thread_position_in_threadgroup]]
+) {
+    if (tid != 0 || params.has_uart == 0) return;
+
+    u32 state_size = params.state_size;
+    u32 cycles_per_bit = params.cycles_per_bit;
+
+    // Read TX bit from output state
+    u32 tx_pos = params.tx_out_pos;
+    u32 tx_word = tx_pos >> 5;
+    u32 tx_bit = tx_pos & 31u;
+    u32 tx = (states[state_size + tx_word] >> tx_bit) & 1u;
+
+    u32 cycle = uart_state->current_cycle;
+    u32 st = uart_state->state;
+    u32 last_tx = uart_state->last_tx;
+    u32 start_cycle = uart_state->start_cycle;
+    u32 bits_received = uart_state->bits_received;
+    u32 value = uart_state->value;
+
+    // State machine (matches UartMonitor::step exactly)
+    if (st == 0) {
+        // IDLE
+        if (last_tx == 1 && tx == 0) {
+            st = 1; // -> START
+            start_cycle = cycle;
         }
-
-        if (triggered && control->autonomous_break_tick == 0) {
-            // Record break at tick+1 (1-indexed so 0 means "no break")
-            control->autonomous_break_tick = tick + 1;
+    } else if (st == 1) {
+        // START
+        if (cycle >= start_cycle + cycles_per_bit / 2) {
+            if (tx == 0) {
+                st = 2; // -> DATA
+                start_cycle = start_cycle + cycles_per_bit;
+                bits_received = 0;
+                value = 0;
+            } else {
+                st = 0; // -> IDLE (false start)
+            }
+        }
+    } else if (st == 2) {
+        // DATA
+        u32 bit_center = start_cycle + bits_received * cycles_per_bit + cycles_per_bit / 2;
+        if (cycle >= bit_center) {
+            value = value | (tx << bits_received);
+            if (bits_received >= 7) {
+                st = 3; // -> STOP
+                start_cycle = start_cycle + 8 * cycles_per_bit;
+            } else {
+                bits_received = bits_received + 1;
+            }
+        }
+    } else if (st == 3) {
+        // STOP
+        if (cycle >= start_cycle + cycles_per_bit / 2) {
+            if (tx == 1) {
+                // Valid byte received — write to channel
+                u32 head = channel->write_head;
+                u32 cap = channel->capacity;
+                channel->data[head % cap] = (uchar)(value & 0xFF);
+                channel->write_head = head + 1;
+            }
+            st = 0; // -> IDLE
         }
     }
+
+    // Write state back
+    uart_state->state = st;
+    uart_state->last_tx = tx;
+    uart_state->start_cycle = start_cycle;
+    uart_state->bits_received = bits_received;
+    uart_state->value = value;
+    uart_state->current_cycle = cycle + 1;
 }
