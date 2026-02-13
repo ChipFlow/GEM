@@ -450,11 +450,17 @@ kernel void state_prep(
 //
 // Per-tick pipeline (all GPU, no CPU interaction):
 //   state_prep(fall) -> gpu_apply_flash_din -> simulate×N (fall)
+//   -> gpu_flash_model_step (sees SPI CLK after falling edge)
 //   -> state_prep(rise) -> gpu_apply_flash_din -> simulate×N (rise)
-//   -> gpu_flash_model_step -> gpu_uart_step
+//   -> gpu_flash_model_step (sees SPI CLK after rising edge)
+//   -> gpu_io_step (UART + bus trace)
 //   [repeat × K ticks]
 //   -> signal(batch_done)
-//   CPU: drain UART channel
+//   CPU: drain UART channel + bus trace
+//
+// Flash runs TWICE per tick to match timing_sim_cpu behavior: the SPI CLK
+// passes through clock gating (Q = sys_CLK & EN_latch), so the flash sees
+// CLK=0 after the falling edge and CLK=EN_latch after the rising edge.
 
 // ── Flash State (persistent across ticks) ────────────────────────────────────
 
@@ -646,14 +652,15 @@ kernel void gpu_apply_flash_din(
     }
 }
 
-// ── gpu_flash_model_step: SPI flash FSM (one step per tick) ──────────────────
+// ── gpu_flash_model_step: SPI flash FSM (dual-step with setup delay) ─────────
 //
 // Direct port of SpiFlashModel from spiflash_model.cc.
 // Reads flash_clk, flash_csn, d_out from output state.
 // Performs dual-step (setup delay): eval_commit(prev_d_out), eval_commit(d_out).
-// Stores result d_i in FlashState for next tick's gpu_apply_flash_din.
+// Stores result d_i in FlashState for next gpu_apply_flash_din.
 //
-// Runs ONCE per tick after both half-cycles complete.
+// Runs TWICE per tick: once after falling-edge simulate, once after rising-edge
+// simulate. This matches timing_sim_cpu's dual flash stepping.
 
 kernel void gpu_flash_model_step(
     device u32* states [[buffer(0)]],
@@ -773,86 +780,179 @@ struct UartChannel {
     uchar data[4096];     // decoded bytes ring buffer
 };
 
-// ── gpu_uart_step: UART TX decoder (one step per tick) ───────────────────────
-//
-// Direct port of UartMonitor::step() from testbench.rs.
-// Reads UART TX from output state, decodes bytes, writes to UartChannel.
+// ── Wishbone Bus Trace Structs ──────────────────────────────────────────────
 
-kernel void gpu_uart_step(
+#define WB_TRACE_MAX_ADR_BITS 30
+#define WB_TRACE_MAX_DAT_BITS 32
+#define WB_TRACE_CHANNEL_CAP 16384
+
+struct WbTraceParams {
+    // ibus signal positions (in output state, 0xFFFFFFFF = unused)
+    u32 ibus_cyc_pos;
+    u32 ibus_stb_pos;
+    u32 ibus_adr_pos[WB_TRACE_MAX_ADR_BITS];
+    u32 ibus_rdata_pos[WB_TRACE_MAX_DAT_BITS];
+    // dbus signal positions
+    u32 dbus_cyc_pos;
+    u32 dbus_stb_pos;
+    u32 dbus_we_pos;
+    u32 dbus_adr_pos[WB_TRACE_MAX_ADR_BITS];
+    // ack positions
+    u32 spiflash_ack_pos;
+    u32 sram_ack_pos;
+    u32 csr_ack_pos;
+    // control
+    u32 has_trace;  // 0 = skip
+};
+
+// Compact per-tick bus snapshot
+struct WbTraceEntry {
+    u32 tick;
+    u32 flags;      // [0]=ibus_cyc [1]=ibus_stb [2]=dbus_cyc [3]=dbus_stb
+                    // [4]=dbus_we [5]=spiflash_ack [6]=sram_ack [7]=csr_ack
+    u32 ibus_adr;   // packed 30-bit address
+    u32 ibus_rdata; // packed 32-bit instruction data
+    u32 dbus_adr;   // packed 30-bit address
+};
+
+struct WbTraceChannel {
+    u32 write_head;
+    u32 capacity;
+    u32 current_tick;
+    u32 prev_flags;   // previous flags for edge detection
+    // entries[capacity] follow immediately in memory (at byte offset 16)
+};
+
+// ── gpu_io_step: Combined UART decoder + Wishbone bus trace ─────────────────
+//
+// Runs once per tick. Decodes UART TX bytes, captures bus transactions.
+// Single dispatch replaces both gpu_uart_step and gpu_wb_trace.
+
+kernel void gpu_io_step(
     device u32* states [[buffer(0)]],
     device UartDecoderState* uart_state [[buffer(1)]],
-    constant UartParams& params [[buffer(2)]],
-    device UartChannel* channel [[buffer(3)]],
+    constant UartParams& uart_params [[buffer(2)]],
+    device UartChannel* uart_channel [[buffer(3)]],
+    device WbTraceChannel* wb_channel [[buffer(4)]],
+    constant WbTraceParams& wb_params [[buffer(5)]],
     uint tid [[thread_position_in_threadgroup]]
 ) {
-    if (tid != 0 || params.has_uart == 0) return;
+    if (tid != 0) return;
 
-    u32 state_size = params.state_size;
-    u32 cycles_per_bit = params.cycles_per_bit;
+    u32 state_size = uart_params.state_size;
 
-    // Read TX bit from output state
-    u32 tx_pos = params.tx_out_pos;
-    u32 tx_word = tx_pos >> 5;
-    u32 tx_bit = tx_pos & 31u;
-    u32 tx = (states[state_size + tx_word] >> tx_bit) & 1u;
+    // Helper: read bit from output state
+    #define READ_OUT_BIT(pos) \
+        (((pos) != 0xFFFFFFFFu) ? ((states[state_size + ((pos) >> 5)] >> ((pos) & 31u)) & 1u) : 0u)
 
-    u32 cycle = uart_state->current_cycle;
-    u32 st = uart_state->state;
-    u32 last_tx = uart_state->last_tx;
-    u32 start_cycle = uart_state->start_cycle;
-    u32 bits_received = uart_state->bits_received;
-    u32 value = uart_state->value;
+    // ── UART TX decoder ─────────────────────────────────────────────────
+    if (uart_params.has_uart != 0) {
+        u32 cycles_per_bit = uart_params.cycles_per_bit;
+        u32 tx = READ_OUT_BIT(uart_params.tx_out_pos);
 
-    // State machine (matches UartMonitor::step exactly)
-    if (st == 0) {
-        // IDLE
-        if (last_tx == 1 && tx == 0) {
-            st = 1; // -> START
-            start_cycle = cycle;
-        }
-    } else if (st == 1) {
-        // START
-        if (cycle >= start_cycle + cycles_per_bit / 2) {
-            if (tx == 0) {
-                st = 2; // -> DATA
-                start_cycle = start_cycle + cycles_per_bit;
-                bits_received = 0;
-                value = 0;
-            } else {
-                st = 0; // -> IDLE (false start)
+        u32 cycle = uart_state->current_cycle;
+        u32 st = uart_state->state;
+        u32 last_tx = uart_state->last_tx;
+        u32 start_cycle = uart_state->start_cycle;
+        u32 bits_received = uart_state->bits_received;
+        u32 value = uart_state->value;
+
+        if (st == 0) {
+            if (last_tx == 1 && tx == 0) {
+                st = 1;
+                start_cycle = cycle;
+            }
+        } else if (st == 1) {
+            if (cycle >= start_cycle + cycles_per_bit / 2) {
+                if (tx == 0) {
+                    st = 2;
+                    start_cycle = start_cycle + cycles_per_bit;
+                    bits_received = 0;
+                    value = 0;
+                } else {
+                    st = 0;
+                }
+            }
+        } else if (st == 2) {
+            u32 bit_center = start_cycle + bits_received * cycles_per_bit + cycles_per_bit / 2;
+            if (cycle >= bit_center) {
+                value = value | (tx << bits_received);
+                if (bits_received >= 7) {
+                    st = 3;
+                    start_cycle = start_cycle + 8 * cycles_per_bit;
+                } else {
+                    bits_received = bits_received + 1;
+                }
+            }
+        } else if (st == 3) {
+            if (cycle >= start_cycle + cycles_per_bit / 2) {
+                if (tx == 1) {
+                    u32 head = uart_channel->write_head;
+                    u32 cap = uart_channel->capacity;
+                    uart_channel->data[head % cap] = (uchar)(value & 0xFF);
+                    uart_channel->write_head = head + 1;
+                }
+                st = 0;
             }
         }
-    } else if (st == 2) {
-        // DATA
-        u32 bit_center = start_cycle + bits_received * cycles_per_bit + cycles_per_bit / 2;
-        if (cycle >= bit_center) {
-            value = value | (tx << bits_received);
-            if (bits_received >= 7) {
-                st = 3; // -> STOP
-                start_cycle = start_cycle + 8 * cycles_per_bit;
-            } else {
-                bits_received = bits_received + 1;
-            }
-        }
-    } else if (st == 3) {
-        // STOP
-        if (cycle >= start_cycle + cycles_per_bit / 2) {
-            if (tx == 1) {
-                // Valid byte received — write to channel
-                u32 head = channel->write_head;
-                u32 cap = channel->capacity;
-                channel->data[head % cap] = (uchar)(value & 0xFF);
-                channel->write_head = head + 1;
-            }
-            st = 0; // -> IDLE
-        }
+
+        uart_state->state = st;
+        uart_state->last_tx = tx;
+        uart_state->start_cycle = start_cycle;
+        uart_state->bits_received = bits_received;
+        uart_state->value = value;
+        uart_state->current_cycle = cycle + 1;
     }
 
-    // Write state back
-    uart_state->state = st;
-    uart_state->last_tx = tx;
-    uart_state->start_cycle = start_cycle;
-    uart_state->bits_received = bits_received;
-    uart_state->value = value;
-    uart_state->current_cycle = cycle + 1;
+    // ── Wishbone bus trace ──────────────────────────────────────────────
+    if (wb_params.has_trace != 0) {
+        u32 ibus_cyc = READ_OUT_BIT(wb_params.ibus_cyc_pos);
+        u32 ibus_stb = READ_OUT_BIT(wb_params.ibus_stb_pos);
+        u32 dbus_cyc = READ_OUT_BIT(wb_params.dbus_cyc_pos);
+        u32 dbus_stb = READ_OUT_BIT(wb_params.dbus_stb_pos);
+        u32 dbus_we  = READ_OUT_BIT(wb_params.dbus_we_pos);
+        u32 spi_ack  = READ_OUT_BIT(wb_params.spiflash_ack_pos);
+        u32 sram_ack = READ_OUT_BIT(wb_params.sram_ack_pos);
+        u32 csr_ack  = READ_OUT_BIT(wb_params.csr_ack_pos);
+
+        u32 flags = (ibus_cyc) | (ibus_stb << 1) | (dbus_cyc << 2) | (dbus_stb << 3)
+                  | (dbus_we << 4) | (spi_ack << 5) | (sram_ack << 6) | (csr_ack << 7);
+
+        u32 tick = wb_channel->current_tick;
+        bool active = (ibus_cyc && ibus_stb) || (dbus_cyc && dbus_stb);
+        bool changed = (flags != wb_channel->prev_flags);
+
+        if (active || changed) {
+            u32 ibus_adr = 0;
+            for (u32 i = 0; i < WB_TRACE_MAX_ADR_BITS; i++) {
+                ibus_adr |= READ_OUT_BIT(wb_params.ibus_adr_pos[i]) << i;
+            }
+            u32 ibus_rdata = 0;
+            for (u32 i = 0; i < WB_TRACE_MAX_DAT_BITS; i++) {
+                ibus_rdata |= READ_OUT_BIT(wb_params.ibus_rdata_pos[i]) << i;
+            }
+            u32 dbus_adr = 0;
+            for (u32 i = 0; i < WB_TRACE_MAX_ADR_BITS; i++) {
+                dbus_adr |= READ_OUT_BIT(wb_params.dbus_adr_pos[i]) << i;
+            }
+
+            u32 head = wb_channel->write_head;
+            u32 cap = wb_channel->capacity;
+            if (head < cap) {
+                device WbTraceEntry* entries = (device WbTraceEntry*)((device uchar*)wb_channel + 16);
+                device WbTraceEntry* e = &entries[head % cap];
+                e->tick = tick;
+                e->flags = flags;
+                e->ibus_adr = ibus_adr;
+                e->ibus_rdata = ibus_rdata;
+                e->dbus_adr = dbus_adr;
+                wb_channel->write_head = head + 1;
+            }
+        }
+
+        wb_channel->prev_flags = flags;
+        wb_channel->current_tick = tick + 1;
+    }
+
+    #undef READ_OUT_BIT
 }

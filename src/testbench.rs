@@ -200,6 +200,8 @@ pub struct TestbenchConfig {
     pub reset_active_high: bool,
     pub reset_cycles: usize,
     pub num_cycles: usize,
+    /// Clock period in picoseconds (e.g. 40000 for 25MHz). Used for UART baud rate calculation.
+    pub clock_period_ps: Option<u64>,
     pub flash: Option<FlashConfig>,
     pub uart: Option<UartConfig>,
     #[serde(default)]

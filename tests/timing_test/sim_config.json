@@ -6,6 +6,7 @@
     "reset_active_high": false,
     "reset_cycles": 10,
     "num_cycles": 100000,
+    "clock_period_ps": 40000,
     "flash": {
         "clk_gpio": 0,
         "csn_gpio": 1,

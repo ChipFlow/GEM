@@ -65,9 +65,9 @@ struct Args {
     #[clap(long)]
     flash_verbose: bool,
 
-    /// Clock period in picoseconds (default: 1000 = 1ns, for UART baud calc).
-    #[clap(long, default_value = "1000")]
-    clock_period: u64,
+    /// Clock period in picoseconds (overrides config file value, for UART baud calc).
+    #[clap(long)]
+    clock_period: Option<u64>,
 
     /// Verify GPU results against CPU baseline.
     #[clap(long)]
@@ -159,7 +159,7 @@ struct UartDecoderState {
     current_cycle: u32,
 }
 
-/// Parameters for gpu_uart_step kernel (must match Metal UartParams).
+/// Parameters for UART in gpu_io_step kernel (must match Metal UartParams).
 #[repr(C)]
 struct UartParams {
     state_size: u32,
@@ -177,6 +177,48 @@ struct UartChannel {
     data: [u8; 4096],
 }
 
+const WB_TRACE_MAX_ADR_BITS: usize = 30;
+const WB_TRACE_MAX_DAT_BITS: usize = 32;
+const WB_TRACE_CHANNEL_CAP: usize = 16384;
+
+/// Parameters for Wishbone bus trace (must match Metal WbTraceParams).
+#[repr(C)]
+struct WbTraceParams {
+    ibus_cyc_pos: u32,
+    ibus_stb_pos: u32,
+    ibus_adr_pos: [u32; WB_TRACE_MAX_ADR_BITS],
+    ibus_rdata_pos: [u32; WB_TRACE_MAX_DAT_BITS],
+    dbus_cyc_pos: u32,
+    dbus_stb_pos: u32,
+    dbus_we_pos: u32,
+    dbus_adr_pos: [u32; WB_TRACE_MAX_ADR_BITS],
+    spiflash_ack_pos: u32,
+    sram_ack_pos: u32,
+    csr_ack_pos: u32,
+    has_trace: u32,
+}
+
+/// Per-tick bus snapshot (must match Metal WbTraceEntry).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct WbTraceEntry {
+    tick: u32,
+    flags: u32,
+    ibus_adr: u32,
+    ibus_rdata: u32,
+    dbus_adr: u32,
+}
+
+/// GPU→CPU bus trace ring buffer header (must match Metal WbTraceChannel).
+#[repr(C)]
+struct WbTraceChannel {
+    write_head: u32,
+    capacity: u32,
+    current_tick: u32,
+    prev_flags: u32,
+    // entries[capacity] follow in memory
+}
+
 /// Batch size for GPU-only simulation (no per-tick CPU interaction).
 const BATCH_SIZE: usize = 1024;
 
@@ -192,8 +234,8 @@ struct MetalSimulator {
     gpu_apply_flash_din_pipeline: ComputePipelineState,
     /// Pipeline state for gpu_flash_model_step kernel.
     gpu_flash_model_step_pipeline: ComputePipelineState,
-    /// Pipeline state for gpu_uart_step kernel.
-    gpu_uart_step_pipeline: ComputePipelineState,
+    /// Pipeline state for gpu_io_step kernel (UART + bus trace combined).
+    gpu_io_step_pipeline: ComputePipelineState,
     /// Pre-allocated params buffers for each stage (shared memory, rewritten each dispatch).
     /// We need one per stage since multi-stage designs encode all stages before commit.
     params_buffers: Vec<metal::Buffer>,
@@ -242,12 +284,12 @@ impl MetalSimulator {
             .new_compute_pipeline_state_with_function(&flash_step_fn)
             .expect("Failed to create gpu_flash_model_step pipeline");
 
-        let uart_step_fn = library
-            .get_function("gpu_uart_step", None)
-            .expect("Failed to get gpu_uart_step function");
-        let gpu_uart_step_pipeline = device
-            .new_compute_pipeline_state_with_function(&uart_step_fn)
-            .expect("Failed to create gpu_uart_step pipeline");
+        let io_step_fn = library
+            .get_function("gpu_io_step", None)
+            .expect("Failed to get gpu_io_step function");
+        let gpu_io_step_pipeline = device
+            .new_compute_pipeline_state_with_function(&io_step_fn)
+            .expect("Failed to create gpu_io_step pipeline");
 
         let command_queue = device.new_command_queue();
 
@@ -270,7 +312,7 @@ impl MetalSimulator {
             state_prep_pipeline,
             gpu_apply_flash_din_pipeline,
             gpu_flash_model_step_pipeline,
-            gpu_uart_step_pipeline,
+            gpu_io_step_pipeline,
             params_buffers,
             shared_event,
             event_counter: std::cell::Cell::new(0),
@@ -428,22 +470,26 @@ impl MetalSimulator {
         encoder.end_encoding();
     }
 
-    /// Encode a gpu_uart_step dispatch into an existing command buffer.
+    /// Encode a gpu_io_step dispatch (UART + bus trace) into an existing command buffer.
     #[inline]
-    fn encode_uart_step(
+    fn encode_io_step(
         &self,
         command_buffer: &metal::CommandBufferRef,
         states_buffer: &metal::Buffer,
         uart_state_buffer: &metal::Buffer,
         uart_params_buffer: &metal::Buffer,
         uart_channel_buffer: &metal::Buffer,
+        wb_trace_channel_buffer: &metal::Buffer,
+        wb_trace_params_buffer: &metal::Buffer,
     ) {
         let encoder = command_buffer.new_compute_command_encoder();
-        encoder.set_compute_pipeline_state(&self.gpu_uart_step_pipeline);
+        encoder.set_compute_pipeline_state(&self.gpu_io_step_pipeline);
         encoder.set_buffer(0, Some(states_buffer), 0);
         encoder.set_buffer(1, Some(uart_state_buffer), 0);
         encoder.set_buffer(2, Some(uart_params_buffer), 0);
         encoder.set_buffer(3, Some(uart_channel_buffer), 0);
+        encoder.set_buffer(4, Some(wb_trace_channel_buffer), 0);
+        encoder.set_buffer(5, Some(wb_trace_params_buffer), 0);
         let tpg = MTLSize::new(256, 1, 1);
         encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), tpg);
         encoder.end_encoding();
@@ -461,8 +507,16 @@ impl MetalSimulator {
     ///   4. state_prep (rising edge ops)
     ///   5. gpu_apply_flash_din
     ///   6. simulate_v1_stage × num_stages (rising edge)
-    ///   7. gpu_flash_model_step
-    ///   8. gpu_uart_step
+    ///   7. gpu_flash_model_step (after rising edge — sees posedge SPI CLK)
+    ///   8. gpu_io_step (UART + bus trace)
+    ///
+    /// The flash model runs TWICE per tick (after each half-cycle simulate),
+    /// matching timing_sim_cpu behavior. This is critical because the SPI CLK
+    /// signal passes through clock gating logic (Q = system_CLK & EN_latch),
+    /// so the flash sees CLK=0 after the falling edge and CLK=EN_latch after
+    /// the rising edge. The d_in from the falling-edge flash step is picked up
+    /// by the rising-edge apply_flash_din, allowing the flash controller to
+    /// see the MISO response within the same tick.
     ///
     /// Returns the event value that signals batch completion.
     #[allow(clippy::too_many_arguments)]
@@ -488,6 +542,8 @@ impl MetalSimulator {
         uart_state_buffer: &metal::Buffer,
         uart_params_buffer: &metal::Buffer,
         uart_channel_buffer: &metal::Buffer,
+        wb_trace_channel_buffer: &metal::Buffer,
+        wb_trace_params_buffer: &metal::Buffer,
     ) -> u64 {
         let batch_done = self.event_counter.get() + 1;
         let cb = self.command_queue.new_command_buffer();
@@ -511,6 +567,14 @@ impl MetalSimulator {
                 );
             }
 
+            // ── Flash model step after falling edge ──
+            // Flash sees SPI CLK=0 (clock gated low when system CLK=0).
+            // Produces d_in that will be applied before rising-edge simulate.
+            self.encode_flash_model_step(
+                cb, states_buffer,
+                flash_state_buffer, flash_model_params_buffer, flash_data_buffer,
+            );
+
             // ── Rising edge: state_prep + flash_din + simulate ──
             self.encode_state_prep(
                 cb, states_buffer,
@@ -529,14 +593,16 @@ impl MetalSimulator {
                 );
             }
 
-            // ── Flash model step + UART step (GPU-only, no CPU round-trip) ──
+            // ── Flash model step after rising edge + IO step ──
+            // Flash sees SPI CLK after DFFs have latched (posedge system CLK).
             self.encode_flash_model_step(
                 cb, states_buffer,
                 flash_state_buffer, flash_model_params_buffer, flash_data_buffer,
             );
-            self.encode_uart_step(
+            self.encode_io_step(
                 cb, states_buffer,
                 uart_state_buffer, uart_params_buffer, uart_channel_buffer,
+                wb_trace_channel_buffer, wb_trace_params_buffer,
             );
         }
 
@@ -573,6 +639,8 @@ impl MetalSimulator {
         uart_state_buffer: &metal::Buffer,
         uart_params_buffer: &metal::Buffer,
         uart_channel_buffer: &metal::Buffer,
+        wb_trace_channel_buffer: &metal::Buffer,
+        wb_trace_params_buffer: &metal::Buffer,
     ) {
         #[inline]
         fn gpu_times(cb: &metal::CommandBufferRef) -> (f64, f64) {
@@ -587,7 +655,7 @@ impl MetalSimulator {
 
         println!("\n=== GPU Kernel Profiling ({} ticks) ===\n", num_ticks);
 
-        // Warmup: 10 ticks
+        // Warmup: 10 ticks (with dual flash stepping)
         for _ in 0..10 {
             let cb = self.command_queue.new_command_buffer();
             self.encode_state_prep(cb, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
@@ -597,6 +665,8 @@ impl MetalSimulator {
                 self.encode_dispatch(cb, num_blocks, stage_i, blocks_start_buffer,
                     blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal);
             }
+            self.encode_flash_model_step(cb, states_buffer, flash_state_buffer,
+                flash_model_params_buffer, flash_data_buffer);
             self.encode_state_prep(cb, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
             self.encode_apply_flash_din(cb, states_buffer, flash_state_buffer, flash_din_params_buffer);
             for stage_i in 0..num_major_stages {
@@ -606,8 +676,9 @@ impl MetalSimulator {
             }
             self.encode_flash_model_step(cb, states_buffer, flash_state_buffer,
                 flash_model_params_buffer, flash_data_buffer);
-            self.encode_uart_step(cb, states_buffer, uart_state_buffer,
-                uart_params_buffer, uart_channel_buffer);
+            self.encode_io_step(cb, states_buffer, uart_state_buffer,
+                uart_params_buffer, uart_channel_buffer,
+                wb_trace_channel_buffer, wb_trace_params_buffer);
             cb.commit();
             cb.wait_until_completed();
         }
@@ -615,10 +686,11 @@ impl MetalSimulator {
         let mut time_state_prep_fall = 0.0f64;
         let mut time_flash_din = 0.0f64;
         let mut time_simulate_fall = 0.0f64;
+        let mut time_flash_step_fall = 0.0f64;
         let mut time_state_prep_rise = 0.0f64;
         let mut time_simulate_rise = 0.0f64;
-        let mut time_flash_step = 0.0f64;
-        let mut time_uart_step = 0.0f64;
+        let mut time_flash_step_rise = 0.0f64;
+        let mut time_io_step = 0.0f64;
         let mut time_full_tick = 0.0f64;
 
         let wall_start = std::time::Instant::now();
@@ -649,6 +721,14 @@ impl MetalSimulator {
                 time_simulate_fall += e - s;
             }
 
+            // 3b. gpu_flash_model_step after falling edge — isolated
+            let cb2b = self.command_queue.new_command_buffer();
+            self.encode_flash_model_step(cb2b, states_buffer, flash_state_buffer,
+                flash_model_params_buffer, flash_data_buffer);
+            cb2b.commit(); cb2b.wait_until_completed();
+            let (s, e) = gpu_times(cb2b);
+            time_flash_step_fall += e - s;
+
             // 4. state_prep (rising) — isolated
             let cb3 = self.command_queue.new_command_buffer();
             self.encode_state_prep(cb3, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
@@ -674,21 +754,22 @@ impl MetalSimulator {
                 time_simulate_rise += e - s;
             }
 
-            // 7. gpu_flash_model_step — isolated
+            // 7. gpu_flash_model_step after rising edge — isolated
             let cb5 = self.command_queue.new_command_buffer();
             self.encode_flash_model_step(cb5, states_buffer, flash_state_buffer,
                 flash_model_params_buffer, flash_data_buffer);
             cb5.commit(); cb5.wait_until_completed();
             let (s, e) = gpu_times(cb5);
-            time_flash_step += e - s;
+            time_flash_step_rise += e - s;
 
-            // 8. gpu_uart_step — isolated
+            // 8. gpu_io_step — isolated
             let cb6 = self.command_queue.new_command_buffer();
-            self.encode_uart_step(cb6, states_buffer, uart_state_buffer,
-                uart_params_buffer, uart_channel_buffer);
+            self.encode_io_step(cb6, states_buffer, uart_state_buffer,
+                uart_params_buffer, uart_channel_buffer,
+                wb_trace_channel_buffer, wb_trace_params_buffer);
             cb6.commit(); cb6.wait_until_completed();
             let (s, e) = gpu_times(cb6);
-            time_uart_step += e - s;
+            time_io_step += e - s;
 
             // Full tick in single CB for comparison
             let cb_full = self.command_queue.new_command_buffer();
@@ -699,6 +780,8 @@ impl MetalSimulator {
                 self.encode_dispatch(cb_full, num_blocks, stage_i, blocks_start_buffer,
                     blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal);
             }
+            self.encode_flash_model_step(cb_full, states_buffer, flash_state_buffer,
+                flash_model_params_buffer, flash_data_buffer);
             self.encode_state_prep(cb_full, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
             self.encode_apply_flash_din(cb_full, states_buffer, flash_state_buffer, flash_din_params_buffer);
             for stage_i in 0..num_major_stages {
@@ -708,8 +791,9 @@ impl MetalSimulator {
             }
             self.encode_flash_model_step(cb_full, states_buffer, flash_state_buffer,
                 flash_model_params_buffer, flash_data_buffer);
-            self.encode_uart_step(cb_full, states_buffer, uart_state_buffer,
-                uart_params_buffer, uart_channel_buffer);
+            self.encode_io_step(cb_full, states_buffer, uart_state_buffer,
+                uart_params_buffer, uart_channel_buffer,
+                wb_trace_channel_buffer, wb_trace_params_buffer);
             cb_full.commit(); cb_full.wait_until_completed();
             let (s, e) = gpu_times(cb_full);
             time_full_tick += e - s;
@@ -718,39 +802,42 @@ impl MetalSimulator {
         let wall_elapsed = wall_start.elapsed();
         let n = num_ticks as f64;
 
+        let time_flash_step = time_flash_step_fall + time_flash_step_rise;
         let total_isolated = time_state_prep_fall + time_flash_din + time_simulate_fall
-            + time_state_prep_rise + time_simulate_rise + time_flash_step + time_uart_step;
+            + time_flash_step_fall + time_state_prep_rise + time_simulate_rise
+            + time_flash_step_rise + time_io_step;
 
         let print_kernel = |name: &str, t: f64| {
             let us = t / n * 1e6;
             let pct = if total_isolated > 0.0 { 100.0 * t / total_isolated } else { 0.0 };
-            println!("  {:<32} {:>8.2}μs/tick  {:>5.1}%", name, us, pct);
+            println!("  {:<36} {:>8.2}μs/tick  {:>5.1}%", name, us, pct);
         };
 
         println!("Per-kernel GPU time (isolated command buffers):");
         print_kernel("state_prep (falling)", time_state_prep_fall);
-        print_kernel("gpu_apply_flash_din", time_flash_din);
+        print_kernel("gpu_apply_flash_din (2×)", time_flash_din);
         print_kernel("simulate_v1_stage (falling)", time_simulate_fall);
+        print_kernel("gpu_flash_model_step (falling)", time_flash_step_fall);
         print_kernel("state_prep (rising)", time_state_prep_rise);
         print_kernel("simulate_v1_stage (rising)", time_simulate_rise);
-        print_kernel("gpu_flash_model_step", time_flash_step);
-        print_kernel("gpu_uart_step", time_uart_step);
-        println!("  {:<32} {:>8.2}μs/tick",
+        print_kernel("gpu_flash_model_step (rising)", time_flash_step_rise);
+        print_kernel("gpu_io_step", time_io_step);
+        println!("  {:<36} {:>8.2}μs/tick",
             "TOTAL (isolated sum)", total_isolated / n * 1e6);
         println!();
-        println!("  {:<32} {:>8.2}μs/tick",
+        println!("  {:<36} {:>8.2}μs/tick",
             "Full tick (single CB)", time_full_tick / n * 1e6);
-        println!("  {:<32} {:>8.2}μs/tick",
+        println!("  {:<36} {:>8.2}μs/tick",
             "Wall clock (2× ticks, profiling)", wall_elapsed.as_secs_f64() / n * 1e6);
         println!();
 
         let sim_us = time_simulate_fall / n * 1e6 + time_simulate_rise / n * 1e6;
-        let io_us = time_flash_din / n * 1e6 + time_flash_step / n * 1e6 + time_uart_step / n * 1e6;
+        let io_us = time_flash_din / n * 1e6 + time_flash_step / n * 1e6 + time_io_step / n * 1e6;
         let prep_us = time_state_prep_fall / n * 1e6 + time_state_prep_rise / n * 1e6;
         println!("  Simulation kernels total:     {:>8.2}μs/tick  ({:.1}%)",
             sim_us, 100.0 * (time_simulate_fall + time_simulate_rise) / total_isolated);
         println!("  IO model kernels total:       {:>8.2}μs/tick  ({:.1}%)",
-            io_us, 100.0 * (time_flash_din + time_flash_step + time_uart_step) / total_isolated);
+            io_us, 100.0 * (time_flash_din + time_flash_step + time_io_step) / total_isolated);
         println!("  State prep total:             {:>8.2}μs/tick  ({:.1}%)",
             prep_us, 100.0 * (time_state_prep_fall + time_state_prep_rise) / total_isolated);
         println!();
@@ -891,6 +978,120 @@ fn parse_gpio_index(pin_name: &str, prefix: &str) -> Option<usize> {
     None
 }
 
+/// Resolve an internal signal name to its output state bit position.
+///
+/// Searches DFF Q output pins (which appear as cell output pins driving named nets)
+/// for names containing `pattern`. Returns the state buffer bit position, or 0xFFFFFFFF.
+fn resolve_signal_pos(
+    aig: &AIG,
+    netlistdb: &NetlistDB,
+    script: &FlattenedScriptV1,
+    pattern: &str,
+) -> u32 {
+    // Strategy: scan ALL cell pins looking for names matching pattern.
+    // DFF Q outputs are cell output pins whose names match the net they drive.
+    for cellid in 0..netlistdb.num_cells {
+        for pinid in netlistdb.cell2pin.iter_set(cellid) {
+            let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
+            if !pin_name.contains(pattern) {
+                continue;
+            }
+            // Only care about output pins (Q of DFFs) — check for output_map presence
+            let aigpin_iv = aig.pin2aigpin_iv[pinid];
+            if aigpin_iv == usize::MAX || aigpin_iv <= 1 {
+                continue;
+            }
+            if let Some(&pos) = script.output_map.get(&aigpin_iv) {
+                return pos;
+            }
+            if let Some(&pos) = script.output_map.get(&(aigpin_iv ^ 1)) {
+                return pos;
+            }
+        }
+    }
+    0xFFFFFFFF
+}
+
+/// Resolve a bus signal with bit index, e.g. "ibus__adr" with bit 5 → "ibus__adr[5]".
+fn resolve_bus_signal(
+    aig: &AIG,
+    netlistdb: &NetlistDB,
+    script: &FlattenedScriptV1,
+    base_pattern: &str,
+    bit: usize,
+) -> u32 {
+    let pattern = format!("{}[{}]", base_pattern, bit);
+    resolve_signal_pos(aig, netlistdb, script, &pattern)
+}
+
+/// Build WbTraceParams by resolving all bus signal names to state positions.
+fn build_wb_trace_params(
+    aig: &AIG,
+    netlistdb: &NetlistDB,
+    script: &FlattenedScriptV1,
+) -> WbTraceParams {
+    let mut params = WbTraceParams {
+        ibus_cyc_pos: 0xFFFFFFFF,
+        ibus_stb_pos: 0xFFFFFFFF,
+        ibus_adr_pos: [0xFFFFFFFF; WB_TRACE_MAX_ADR_BITS],
+        ibus_rdata_pos: [0xFFFFFFFF; WB_TRACE_MAX_DAT_BITS],
+        dbus_cyc_pos: 0xFFFFFFFF,
+        dbus_stb_pos: 0xFFFFFFFF,
+        dbus_we_pos: 0xFFFFFFFF,
+        dbus_adr_pos: [0xFFFFFFFF; WB_TRACE_MAX_ADR_BITS],
+        spiflash_ack_pos: 0xFFFFFFFF,
+        sram_ack_pos: 0xFFFFFFFF,
+        csr_ack_pos: 0xFFFFFFFF,
+        has_trace: 0,
+    };
+
+    // ibus (instruction bus)
+    params.ibus_cyc_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.fetch.ibus__cyc");
+    params.ibus_stb_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.fetch.ibus__stb");
+    for i in 0..WB_TRACE_MAX_ADR_BITS {
+        params.ibus_adr_pos[i] = resolve_bus_signal(aig, netlistdb, script, "cpu.fetch.ibus__adr", i);
+    }
+    for i in 0..WB_TRACE_MAX_DAT_BITS {
+        params.ibus_rdata_pos[i] = resolve_bus_signal(aig, netlistdb, script, "cpu.fetch.ibus_rdata", i);
+    }
+
+    // dbus (data bus)
+    params.dbus_cyc_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.loadstore.dbus__cyc");
+    params.dbus_stb_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.loadstore.dbus__stb");
+    params.dbus_we_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.loadstore.dbus__we");
+    for i in 0..WB_TRACE_MAX_ADR_BITS {
+        params.dbus_adr_pos[i] = resolve_bus_signal(aig, netlistdb, script, "cpu.loadstore.dbus__adr", i);
+    }
+
+    // peripheral acks
+    params.spiflash_ack_pos = resolve_signal_pos(aig, netlistdb, script, "spiflash.ctrl.wb_bus__ack");
+    params.sram_ack_pos = resolve_signal_pos(aig, netlistdb, script, "sram.wb_bus__ack");
+    params.csr_ack_pos = resolve_signal_pos(aig, netlistdb, script, "wb_to_csr.wb_bus__ack");
+
+    // Check if we resolved any signals
+    let found = [params.ibus_cyc_pos, params.ibus_stb_pos, params.dbus_cyc_pos].iter()
+        .filter(|&&p| p != 0xFFFFFFFF).count();
+    if found > 0 {
+        params.has_trace = 1;
+        let ibus_adr_count = params.ibus_adr_pos.iter().filter(|&&p| p != 0xFFFFFFFF).count();
+        let ibus_rdata_count = params.ibus_rdata_pos.iter().filter(|&&p| p != 0xFFFFFFFF).count();
+        let dbus_adr_count = params.dbus_adr_pos.iter().filter(|&&p| p != 0xFFFFFFFF).count();
+        clilog::info!("WB trace: ibus_cyc={} ibus_stb={} ibus_adr={}/30 ibus_rdata={}/32",
+            params.ibus_cyc_pos != 0xFFFFFFFF, params.ibus_stb_pos != 0xFFFFFFFF,
+            ibus_adr_count, ibus_rdata_count);
+        clilog::info!("WB trace: dbus_cyc={} dbus_stb={} dbus_we={} dbus_adr={}/30",
+            params.dbus_cyc_pos != 0xFFFFFFFF, params.dbus_stb_pos != 0xFFFFFFFF,
+            params.dbus_we_pos != 0xFFFFFFFF, dbus_adr_count);
+        clilog::info!("WB trace: spiflash_ack={} sram_ack={} csr_ack={}",
+            params.spiflash_ack_pos != 0xFFFFFFFF, params.sram_ack_pos != 0xFFFFFFFF,
+            params.csr_ack_pos != 0xFFFFFFFF);
+    } else {
+        clilog::info!("WB trace: no bus signals found in netlist, tracing disabled");
+    }
+
+    params
+}
+
 /// Write flash data input to GPIO state.
 fn set_flash_din(state: &mut [u32], gpio_map: &GpioMapping, d0_gpio: usize, din: u8) {
     for i in 0..4 {
@@ -999,7 +1200,6 @@ fn create_ops_buffer(device: &metal::Device, ops: &[BitOp]) -> metal::Buffer {
 
 /// CPU prototype partition executor (from metal_test.rs).
 /// Used for --check-with-cpu verification.
-#[allow(dead_code)]
 fn simulate_block_v1(
     script: &[u32],
     input_state: &[u32],
@@ -1327,7 +1527,14 @@ fn main() {
         None
     };
 
-    let clock_hz = 1_000_000_000_000u64 / args.clock_period;
+    // CLI --clock-period overrides config file clock_period_ps; default 1000ps (1GHz) if neither set
+    let clock_period_ps = args.clock_period
+        .or(config.clock_period_ps)
+        .unwrap_or(1000);
+    let clock_hz = 1_000_000_000_000u64 / clock_period_ps;
+    clilog::info!("Clock period: {} ps ({} MHz), UART cycles_per_bit: {}",
+        clock_period_ps, clock_hz / 1_000_000,
+        clock_hz / config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200) as u64);
     let uart_baud = config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200);
     let uart_tx_gpio = config.uart.as_ref().map(|u| u.tx_gpio);
 
@@ -1447,10 +1654,16 @@ fn main() {
     unsafe {
         let fs = &mut *(flash_state_buffer.contents() as *mut FlashState);
         *fs = std::mem::zeroed();
+        fs.data_width = 1;   // SPI single-bit mode (reset by posedge_csn, but first tx has none)
         fs.prev_csn = 1;     // CSN starts high (deselected)
         fs.model_prev_csn = 1; // Model internal edge detection starts high
         fs.d_i = 0x0F;       // Flash output starts high
         fs.in_reset = 1;     // Start in reset
+        // Verify write
+        let verify = std::ptr::read_volatile(&fs.d_i);
+        assert_eq!(verify, 0x0F, "FlashState.d_i not written correctly: got 0x{:02X}", verify);
+        clilog::info!("FlashState init: d_i=0x{:02X}, data_width={}, prev_csn={}, in_reset={}",
+            fs.d_i, fs.data_width, fs.prev_csn, fs.in_reset);
     }
 
     // FlashDinParams (constant)
@@ -1488,6 +1701,14 @@ fn main() {
                 .unwrap_or(0xFFFFFFFF);
         }
         p.flash_data_size = 16 * 1024 * 1024; // 16 MB
+        clilog::info!("FlashModelParams: state_size={}, clk_out_pos={}, csn_out_pos={}, d_out_pos={:?}, flash_data_size={}",
+            p.state_size, p.clk_out_pos, p.csn_out_pos, p.d_out_pos, p.flash_data_size);
+    }
+
+    // Log flash din params too
+    unsafe {
+        let p = &*(flash_din_params_buffer.contents() as *const FlashDinParams);
+        clilog::info!("FlashDinParams: has_flash={}, d_in_pos={:?}", p.has_flash, p.d_in_pos);
     }
 
     // Flash data buffer (16 MB, loaded with firmware)
@@ -1560,6 +1781,33 @@ fn main() {
         // data doesn't need to be zeroed (ring buffer semantics)
     }
 
+    // ── GPU Wishbone Bus Trace buffers ────────────────────────────────
+
+    let wb_trace_params = build_wb_trace_params(&aig, &netlistdb, &script);
+    let wb_trace_params_buffer = simulator.device.new_buffer(
+        std::mem::size_of::<WbTraceParams>() as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    unsafe {
+        let p = &mut *(wb_trace_params_buffer.contents() as *mut WbTraceParams);
+        *p = wb_trace_params;
+    }
+
+    // WbTraceChannel: header (16 bytes) + entries array
+    let wb_channel_byte_size = std::mem::size_of::<WbTraceChannel>()
+        + WB_TRACE_CHANNEL_CAP * std::mem::size_of::<WbTraceEntry>();
+    let wb_trace_channel_buffer = simulator.device.new_buffer(
+        wb_channel_byte_size as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    unsafe {
+        let ch = &mut *(wb_trace_channel_buffer.contents() as *mut WbTraceChannel);
+        ch.write_head = 0;
+        ch.capacity = WB_TRACE_CHANNEL_CAP as u32;
+        ch.current_tick = 0;
+        ch.prev_flags = 0;
+    }
+
     // Pre-write params for all simulation stages (they don't change between ticks)
     for stage_i in 0..num_major_stages {
         simulator.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
@@ -1592,6 +1840,8 @@ fn main() {
             &uart_state_buffer,
             &uart_params_buffer,
             &uart_channel_buffer,
+            &wb_trace_channel_buffer,
+            &wb_trace_params_buffer,
         );
 
         // Clean up event buffer
@@ -1625,9 +1875,18 @@ fn main() {
         }
     };
 
+    // Verify flash state hasn't been corrupted before main loop
+    unsafe {
+        let fs = &*(flash_state_buffer.contents() as *const FlashState);
+        clilog::info!("FlashState before main loop: d_i=0x{:02X}, data_width={}, prev_csn={}, in_reset={}",
+            fs.d_i, fs.data_width, fs.prev_csn, fs.in_reset);
+        assert_eq!(fs.d_i, 0x0F, "FlashState.d_i corrupted before main loop: got 0x{:02X}", fs.d_i);
+    }
+
     // UART event collection (CPU-side, populated from channel drain)
     let mut uart_events: Vec<gem::testbench::UartEvent> = Vec::new();
     let mut uart_read_head: u32 = 0;
+    let mut wb_trace_read_head: u32 = 0;
 
     // Profiling accumulators
     let mut prof_batch_encode: u64 = 0;
@@ -1635,9 +1894,39 @@ fn main() {
     let mut prof_drain: u64 = 0;
     let mut total_batches: u64 = 0;
 
+    // Per-tick tracing: run 1 tick at a time for first N ticks after reset
+    let trace_ticks = if std::env::var("FLASH_TRACE").is_ok() { 200 } else { 0 };
+    let deep_diag = std::env::var("GEM_DIAG").is_ok();
+    let mut diag_prev_flash_addr: u32 = 0;
+    let mut diag_prev_flash_cmd: u8 = 0;
+    let mut diag_prev_csn: u32 = 1;
+    let mut diag_sram_write_count: usize = 0;
+
+    // CPU verification state (--check-with-cpu)
+    let mut cpu_states: Vec<u32> = if args.check_with_cpu {
+        vec![0u32; 2 * state_size]
+    } else {
+        Vec::new()
+    };
+    let mut cpu_sram: Vec<u32> = if args.check_with_cpu {
+        vec![0u32; script.sram_storage_size as usize]
+    } else {
+        Vec::new()
+    };
+    let mut cpu_check_mismatches: usize = 0;
+    let cpu_check_max_ticks = if args.check_with_cpu { 500 } else { 0 };
+
     let mut tick: usize = 0;
     while tick < max_ticks {
-        let batch = BATCH_SIZE.min(max_ticks - tick);
+        let batch = if args.check_with_cpu && tick < cpu_check_max_ticks {
+            1  // single tick for CPU comparison
+        } else if trace_ticks > 0 && tick < reset_cycles + trace_ticks {
+            1  // single tick for tracing
+        } else if deep_diag {
+            1  // single tick for deep diagnostics
+        } else {
+            BATCH_SIZE.min(max_ticks - tick)
+        };
 
         // Don't cross reset boundary within a batch
         let batch = if tick < reset_cycles && tick + batch > reset_cycles {
@@ -1655,6 +1944,47 @@ fn main() {
         unsafe {
             let fs = &mut *(flash_state_buffer.contents() as *mut FlashState);
             fs.in_reset = if in_reset { 1 } else { 0 };
+        }
+
+        // Save pre-tick state for CPU verification
+        let saved_flash_d_i: u8;
+        if args.check_with_cpu && tick < cpu_check_max_ticks && batch == 1 {
+            let gpu_states: &[u32] = unsafe {
+                std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size)
+            };
+            cpu_states.copy_from_slice(gpu_states);
+            let gpu_sram: &[u32] = unsafe {
+                std::slice::from_raw_parts(sram_data_buffer.contents() as *const u32, script.sram_storage_size as usize)
+            };
+            cpu_sram.copy_from_slice(gpu_sram);
+            // Save flash d_i before GPU modifies it (apply_flash_din reads this)
+            saved_flash_d_i = unsafe {
+                let fs = &*(flash_state_buffer.contents() as *const FlashState);
+                if tick == 0 {
+                    // Dump raw bytes at flash state location
+                    let raw = std::slice::from_raw_parts(
+                        flash_state_buffer.contents() as *const u8,
+                        std::mem::size_of::<FlashState>(),
+                    );
+                    eprintln!("  FlashState raw bytes (tick 0): {:02X?}", raw);
+                    eprintln!("  FlashState fields: bit_count={}, byte_count={}, data_width={}, addr=0x{:08X}",
+                        fs.bit_count, fs.byte_count, fs.data_width, fs.addr);
+                    eprintln!("  FlashState fields: curr_byte=0x{:02X}, command=0x{:02X}, out_buffer=0x{:02X}",
+                        fs.curr_byte, fs.command, fs.out_buffer);
+                    eprintln!("  FlashState fields: prev_clk={}, prev_csn={}, d_i=0x{:02X}",
+                        fs.prev_clk, fs.prev_csn, fs.d_i);
+                    eprintln!("  FlashState fields: prev_d_out=0x{:02X}, in_reset={}, last_error_cmd={}, model_prev_csn={}",
+                        fs.prev_d_out, fs.in_reset, fs.last_error_cmd, fs.model_prev_csn);
+                    eprintln!("  FlashState offsetof d_i = {}",
+                        (&fs.d_i as *const u8 as usize) - (fs as *const FlashState as usize));
+                }
+                fs.d_i
+            };
+            if tick == 0 {
+                eprintln!("  saved_flash_d_i = 0x{:02X} (right after assignment)", saved_flash_d_i);
+            }
+        } else {
+            saved_flash_d_i = 0;
         }
 
         // Encode and commit GPU batch
@@ -1680,6 +2010,8 @@ fn main() {
             &uart_state_buffer,
             &uart_params_buffer,
             &uart_channel_buffer,
+            &wb_trace_channel_buffer,
+            &wb_trace_params_buffer,
         );
         prof_batch_encode += t_encode.elapsed().as_nanos() as u64;
 
@@ -1687,6 +2019,185 @@ fn main() {
         let t_wait = std::time::Instant::now();
         simulator.spin_wait(batch_done);
         prof_gpu_wait += t_wait.elapsed().as_nanos() as u64;
+
+        // ── CPU verification: simulate same tick on CPU and compare ──
+        if args.check_with_cpu && tick < cpu_check_max_ticks && batch == 1 {
+            // CPU state_prep(fall): copy output → input, apply fall_ops
+            // Read from the Metal buffer (updated by update_reset_in_ops each tick)
+            cpu_states.copy_within(state_size..2*state_size, 0);
+            let cpu_fall_ops: &[BitOp] = unsafe {
+                std::slice::from_raw_parts(fall_ops_buffer.contents() as *const BitOp, fall_ops_len)
+            };
+            for op in cpu_fall_ops {
+                let word_idx = op.position as usize >> 5;
+                let bit_mask = 1u32 << (op.position & 31);
+                if op.value != 0 {
+                    cpu_states[word_idx] |= bit_mask;
+                } else {
+                    cpu_states[word_idx] &= !bit_mask;
+                }
+            }
+
+            // CPU apply_flash_din
+            {
+                let p = unsafe { &*(flash_din_params_buffer.contents() as *const FlashDinParams) };
+                if tick == 0 {
+                    eprintln!("  CPU flash_din: has_flash={}, d_i=0x{:02X}, d_in_pos={:?}",
+                        p.has_flash, saved_flash_d_i, p.d_in_pos);
+                }
+                if p.has_flash != 0 {
+                    for i in 0..4usize {
+                        let pos = p.d_in_pos[i];
+                        if pos == 0xFFFFFFFF { continue; }
+                        let word_idx = (pos >> 5) as usize;
+                        let bit_mask = 1u32 << (pos & 31);
+                        if (saved_flash_d_i >> i) & 1 != 0 {
+                            cpu_states[word_idx] |= bit_mask;
+                        } else {
+                            cpu_states[word_idx] &= !bit_mask;
+                        }
+                    }
+                }
+                if tick == 0 {
+                    eprintln!("  CPU after flash_din(fall): word[4]=0x{:08X}", cpu_states[4]);
+                }
+            }
+
+            // CPU simulate(fall): run all partitions
+            for stage_i in 0..num_major_stages {
+                for block_i in 0..num_blocks {
+                    let start = script.blocks_start[stage_i * num_blocks + block_i];
+                    let end = script.blocks_start[stage_i * num_blocks + block_i + 1];
+                    if start == end { continue; }
+                    let (input_half, output_half) = cpu_states.split_at_mut(state_size);
+                    simulate_block_v1(
+                        &script.blocks_data[start..end],
+                        input_half,
+                        output_half,
+                        &mut cpu_sram,
+                    );
+                }
+            }
+
+            // CPU state_prep(rise): copy output → input, apply rise_ops
+            // Read from the Metal buffer (updated by update_reset_in_ops each tick)
+            cpu_states.copy_within(state_size..2*state_size, 0);
+            let cpu_rise_ops: &[BitOp] = unsafe {
+                std::slice::from_raw_parts(rise_ops_buffer.contents() as *const BitOp, rise_ops_len)
+            };
+            for op in cpu_rise_ops {
+                let word_idx = op.position as usize >> 5;
+                let bit_mask = 1u32 << (op.position & 31);
+                if op.value != 0 {
+                    cpu_states[word_idx] |= bit_mask;
+                } else {
+                    cpu_states[word_idx] &= !bit_mask;
+                }
+            }
+
+            // CPU apply_flash_din (same d_i for both edges within a tick)
+            unsafe {
+                let p = &*(flash_din_params_buffer.contents() as *const FlashDinParams);
+                if p.has_flash != 0 {
+                    for i in 0..4 {
+                        let pos = p.d_in_pos[i];
+                        if pos == 0xFFFFFFFF { continue; }
+                        let word_idx = (pos >> 5) as usize;
+                        let bit_mask = 1u32 << (pos & 31);
+                        if (saved_flash_d_i >> i) & 1 != 0 {
+                            cpu_states[word_idx] |= bit_mask;
+                        } else {
+                            cpu_states[word_idx] &= !bit_mask;
+                        }
+                    }
+                }
+            }
+
+            // CPU simulate(rise): run all partitions
+            for stage_i in 0..num_major_stages {
+                for block_i in 0..num_blocks {
+                    let start = script.blocks_start[stage_i * num_blocks + block_i];
+                    let end = script.blocks_start[stage_i * num_blocks + block_i + 1];
+                    if start == end { continue; }
+                    let (input_half, output_half) = cpu_states.split_at_mut(state_size);
+                    simulate_block_v1(
+                        &script.blocks_data[start..end],
+                        input_half,
+                        output_half,
+                        &mut cpu_sram,
+                    );
+                }
+            }
+
+            // Compare GPU input with CPU input (should match after state_prep+flash_din)
+            let gpu_states: &[u32] = unsafe {
+                std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size)
+            };
+            let mut input_mismatches = 0;
+            for i in 0..state_size {
+                if gpu_states[i] != cpu_states[i] {
+                    if input_mismatches < 5 {
+                        let diff = gpu_states[i] ^ cpu_states[i];
+                        let mut bits = Vec::new();
+                        for b in 0..32 {
+                            if (diff >> b) & 1 != 0 { bits.push(i as u32 * 32 + b); }
+                        }
+                        eprintln!("  INPUT MISMATCH word[{}]: GPU=0x{:08X} CPU=0x{:08X} bits={:?}",
+                            i, gpu_states[i], cpu_states[i], bits);
+                    }
+                    input_mismatches += 1;
+                }
+            }
+
+            // Compare GPU output with CPU output
+            let gpu_output = &gpu_states[state_size..2*state_size];
+            let cpu_output = &cpu_states[state_size..2*state_size];
+            let mut mismatches = 0;
+            let mut first_mismatch_word = 0;
+            for i in 0..state_size {
+                if gpu_output[i] != cpu_output[i] {
+                    if mismatches < 5 {
+                        let diff = gpu_output[i] ^ cpu_output[i];
+                        let mut bits = Vec::new();
+                        for b in 0..32 {
+                            if (diff >> b) & 1 != 0 { bits.push(i as u32 * 32 + b); }
+                        }
+                        eprintln!("  OUTPUT MISMATCH word[{}]: GPU=0x{:08X} CPU=0x{:08X} bits={:?}",
+                            i, gpu_output[i], cpu_output[i], bits);
+                    }
+                    if mismatches == 0 { first_mismatch_word = i; }
+                    mismatches += 1;
+                }
+            }
+            // Also compare SRAM
+            let gpu_sram: &[u32] = unsafe {
+                std::slice::from_raw_parts(
+                    sram_data_buffer.contents() as *const u32,
+                    script.sram_storage_size as usize,
+                )
+            };
+            let mut sram_mismatches = 0;
+            for i in 0..script.sram_storage_size as usize {
+                if gpu_sram[i] != cpu_sram[i] {
+                    if sram_mismatches < 3 {
+                        eprintln!("  SRAM MISMATCH [{}]: GPU=0x{:08X} CPU=0x{:08X}",
+                            i, gpu_sram[i], cpu_sram[i]);
+                    }
+                    sram_mismatches += 1;
+                }
+            }
+            if input_mismatches > 0 || mismatches > 0 || sram_mismatches > 0 {
+                eprintln!("CHECK-WITH-CPU tick {}: {} input, {} output, {} SRAM mismatches",
+                    tick, input_mismatches, mismatches, sram_mismatches);
+                cpu_check_mismatches += mismatches;
+                if cpu_check_mismatches > 200 {
+                    eprintln!("Too many mismatches, stopping CPU check");
+                }
+            } else if tick <= reset_cycles + 5 || tick % 50 == 0 {
+                eprintln!("CHECK-WITH-CPU tick {}: OK (state_size={}, sram_size={})",
+                    tick, state_size, script.sram_storage_size);
+            }
+        }
 
         // Drain UART channel (CPU reads decoded bytes from GPU ring buffer)
         let t_drain = std::time::Instant::now();
@@ -1705,18 +2216,149 @@ fn main() {
                 uart_read_head += 1;
             }
         }
+        // Drain WB trace channel
+        unsafe {
+            let ch = &*(wb_trace_channel_buffer.contents() as *const WbTraceChannel);
+            let entries_ptr = (wb_trace_channel_buffer.contents() as *const u8).add(16)
+                as *const WbTraceEntry;
+            while wb_trace_read_head < ch.write_head {
+                let idx = (wb_trace_read_head % ch.capacity) as usize;
+                let e = &*entries_ptr.add(idx);
+                let ibus_cyc = e.flags & 1;
+                let ibus_stb = (e.flags >> 1) & 1;
+                let dbus_cyc = (e.flags >> 2) & 1;
+                let dbus_stb = (e.flags >> 3) & 1;
+                let dbus_we  = (e.flags >> 4) & 1;
+                let spi_ack  = (e.flags >> 5) & 1;
+                let sram_ack = (e.flags >> 6) & 1;
+                let _csr_ack = (e.flags >> 7) & 1;
+                if ibus_cyc != 0 && ibus_stb != 0 {
+                    eprintln!("WB T{:>5}: IBUS adr=0x{:08X} rdata=0x{:08X} spi_ack={} sram_ack={}",
+                        e.tick, e.ibus_adr, e.ibus_rdata, spi_ack, sram_ack);
+                }
+                if dbus_cyc != 0 && dbus_stb != 0 {
+                    eprintln!("WB T{:>5}: DBUS adr=0x{:08X} we={} sram_ack={}",
+                        e.tick, e.dbus_adr, dbus_we, sram_ack);
+                }
+                if ibus_cyc == 0 && ibus_stb == 0 && dbus_cyc == 0 && dbus_stb == 0 {
+                    eprintln!("WB T{:>5}: bus idle (flags=0x{:02X})", e.tick, e.flags);
+                }
+                wb_trace_read_head += 1;
+            }
+        }
         prof_drain += t_drain.elapsed().as_nanos() as u64;
 
         total_batches += 1;
         tick += batch;
 
+        // Deep diagnostics: SRAM activity + flash transaction tracking
+        if deep_diag && tick > reset_cycles && batch == 1 {
+            unsafe {
+                let fs = &*(flash_state_buffer.contents() as *const FlashState);
+                let fmp = &*(flash_model_params_buffer.contents() as *const FlashModelParams);
+                let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
+                let read_out_bit = |pos: u32| -> u32 {
+                    let word_idx = state_size + (pos as usize >> 5);
+                    let bit_idx = pos & 31;
+                    (st[word_idx] >> bit_idx) & 1
+                };
+                let csn_val = read_out_bit(fmp.csn_out_pos);
+
+                // Detect CSN transitions (transaction boundaries)
+                if csn_val == 1 && diag_prev_csn == 0 {
+                    // CSN rising edge = transaction complete
+                    eprintln!("DIAG T{}: Flash transaction end: cmd=0x{:02X} addr=0x{:06X} bytes={}",
+                        tick, fs.command, fs.addr, fs.byte_count);
+                }
+                if csn_val == 0 && diag_prev_csn == 1 {
+                    eprintln!("DIAG T{}: Flash transaction start", tick);
+                }
+                diag_prev_csn = csn_val;
+
+                // Track address changes
+                if fs.addr != diag_prev_flash_addr || fs.command != diag_prev_flash_cmd {
+                    if fs.command != 0 {
+                        eprintln!("DIAG T{}: Flash addr changed: cmd=0x{:02X} addr=0x{:06X} bytes={} bitc={}",
+                            tick, fs.command, fs.addr, fs.byte_count, fs.bit_count);
+                    }
+                    diag_prev_flash_addr = fs.addr;
+                    diag_prev_flash_cmd = fs.command;
+                }
+
+                // Check SRAM activity every 100 ticks
+                if tick % 100 == 0 {
+                    let sram = std::slice::from_raw_parts(
+                        sram_data_buffer.contents() as *const u32,
+                        script.sram_storage_size as usize,
+                    );
+                    let nonzero = sram.iter().filter(|&&w| w != 0).count();
+                    if nonzero != diag_sram_write_count {
+                        eprintln!("DIAG T{}: SRAM non-zero words: {} (was {})",
+                            tick, nonzero, diag_sram_write_count);
+                        diag_sram_write_count = nonzero;
+                    }
+                }
+            }
+        }
+
+        // Diagnostic: dump flash-related signals
+        if trace_ticks > 0 && tick <= reset_cycles + trace_ticks && tick > reset_cycles {
+            unsafe {
+                let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
+                let read_out_bit = |pos: u32| -> u32 {
+                    let word_idx = state_size + (pos as usize >> 5);
+                    let bit_idx = pos & 31;
+                    (st[word_idx] >> bit_idx) & 1
+                };
+                let read_in_bit = |pos: u32| -> u32 {
+                    let word_idx = (pos as usize) >> 5;
+                    let bit_idx = pos & 31;
+                    (st[word_idx] >> bit_idx) & 1
+                };
+                let fmp = &*(flash_model_params_buffer.contents() as *const FlashModelParams);
+                let fdp = &*(flash_din_params_buffer.contents() as *const FlashDinParams);
+                let fs = &*(flash_state_buffer.contents() as *const FlashState);
+                let clk_val = read_out_bit(fmp.clk_out_pos);
+                let csn_val = read_out_bit(fmp.csn_out_pos);
+                let mut d_out_vals = [0u32; 4];
+                for i in 0..4 {
+                    if fmp.d_out_pos[i] != 0xFFFFFFFF {
+                        d_out_vals[i] = read_out_bit(fmp.d_out_pos[i]);
+                    }
+                }
+                let mut d_in_vals = [0u32; 4];
+                for i in 0..4 {
+                    if fdp.d_in_pos[i] != 0xFFFFFFFF {
+                        d_in_vals[i] = read_in_bit(fdp.d_in_pos[i]);
+                    }
+                }
+                eprintln!("T{:>4}: clk={} csn={} d_o={}{}{}{} d_i={}{}{}{} | fs: d_i=0x{:X} cmd=0x{:02X} bc={} bitc={} dw={} addr=0x{:06X} pclk={} pcsn={} mcsn={} inr={}",
+                    tick, clk_val, csn_val,
+                    d_out_vals[3], d_out_vals[2], d_out_vals[1], d_out_vals[0],
+                    d_in_vals[3], d_in_vals[2], d_in_vals[1], d_in_vals[0],
+                    fs.d_i, fs.command, fs.byte_count, fs.bit_count, fs.data_width, fs.addr,
+                    fs.prev_clk, fs.prev_csn, fs.model_prev_csn, fs.in_reset);
+            }
+        }
+
         // Progress logging
         if tick > 0 && tick % 100000 < BATCH_SIZE {
             let elapsed = sim_start.elapsed();
             let us_per_tick = elapsed.as_micros() as f64 / tick as f64;
+            // Read UART TX bit and decoder state for diagnostics
+            let (uart_tx_val, uart_dec_state, uart_dec_cycle) = unsafe {
+                let up = &*(uart_params_buffer.contents() as *const UartParams);
+                let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
+                let tx_word = state_size + (up.tx_out_pos as usize >> 5);
+                let tx_bit = up.tx_out_pos & 31;
+                let tx_val = (st[tx_word] >> tx_bit) & 1;
+                let us = &*(uart_state_buffer.contents() as *const UartDecoderState);
+                (tx_val, us.state, us.current_cycle)
+            };
             clilog::info!(
-                "Tick {} / {} ({:.1}μs/tick, batches={}, UART bytes={})",
-                tick, max_ticks, us_per_tick, total_batches, uart_events.len()
+                "Tick {} / {} ({:.1}μs/tick, batches={}, UART bytes={}, tx={}, uart_st={}, uart_cyc={})",
+                tick, max_ticks, us_per_tick, total_batches, uart_events.len(),
+                uart_tx_val, uart_dec_state, uart_dec_cycle
             );
         }
         if tick >= reset_cycles && tick - batch < reset_cycles {
@@ -1815,7 +2457,12 @@ fn main() {
     // ── Optional CPU verification ────────────────────────────────────────
 
     if args.check_with_cpu {
-        clilog::info!("CPU verification not yet implemented for GPU IO mode");
+        if cpu_check_mismatches == 0 {
+            clilog::info!("CPU verification: PASSED ({} ticks checked)", cpu_check_max_ticks.min(max_ticks));
+        } else {
+            clilog::warn!("CPU verification: {} total mismatches in {} ticks",
+                cpu_check_mismatches, cpu_check_max_ticks.min(max_ticks));
+        }
     }
 
     // Keep flash alive (for --check-with-cpu in future)
