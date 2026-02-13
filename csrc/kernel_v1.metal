@@ -386,3 +386,143 @@ kernel void simulate_v1_stage(
     //       write_sim_control_event(event_buffer, EVENT_TYPE_STOP, (u32)cycle_i);
     //   }
 }
+
+// ── State Prep Kernel ────────────────────────────────────────────────────
+//
+// Copies output state → input state and applies bit operations (set clock,
+// posedge/negedge flags, flash D_IN, etc.) entirely on GPU.
+//
+// Used to batch many ticks in a single command buffer during idle periods
+// (no CPU intervention needed between dispatches).
+//
+// Dispatched with a single threadgroup of 256 threads.
+
+struct BitOp {
+    u32 position;  // bit position in state buffer
+    u32 value;     // 0 = clear, 1 = set
+};
+
+struct StatePrepParams {
+    u32 state_size;    // number of u32 words per state slot
+    u32 num_ops;       // number of bit set/clear operations
+    u32 num_monitors;  // number of peripheral monitors to check (0 = skip)
+    u32 tick_number;   // current tick number (written to control block on callback)
+};
+
+// Peripheral monitor descriptor — describes a GPIO output bit to watch for edges.
+struct MonitorConfig {
+    u32 position;   // bit position in state buffer to monitor
+    u32 edge_type;  // 0 = any edge, 1 = rising, 2 = falling
+};
+
+// GPU↔CPU peripheral callback control block (shared memory).
+// GPU sets needs_callback=1 when a monitored edge fires.
+// CPU reads snapshot, steps peripheral model, writes response, clears flag.
+struct PeripheralControl {
+    // GPU → CPU: callback request
+    u32 needs_callback;  // 1 = monitor fired, CPU must respond
+    u32 monitor_id;      // which monitor triggered
+    u32 tick_number;     // which tick triggered
+    u32 _pad;
+    // GPU → CPU: output snapshot (populated when needs_callback=1)
+    u32 flash_clk;
+    u32 flash_csn;
+    u32 flash_d_out;     // 4-bit nibble in low bits
+    // CPU → GPU: peripheral response
+    u32 flash_d_in;      // 4-bit nibble, CPU writes before signaling back
+};
+
+// ── state_prep: basic variant (no monitors) ──────────────────────────────
+// Kept for backward compatibility — same signature as original.
+
+kernel void state_prep(
+    device u32* states [[buffer(0)]],
+    constant StatePrepParams& params [[buffer(1)]],
+    constant BitOp* ops [[buffer(2)]],
+    uint tid [[thread_position_in_threadgroup]]
+) {
+    u32 state_size = params.state_size;
+
+    // Step 1: Copy output state → input state
+    // output is at states[state_size..2*state_size], input at states[0..state_size]
+    for (uint i = tid; i < state_size; i += 256) {
+        states[i] = states[state_size + i];
+    }
+
+    // Ensure copy is complete before modifying bits
+    threadgroup_barrier(mem_flags::mem_device);
+
+    // Step 2: Apply bit operations to input state (only thread 0)
+    if (tid == 0) {
+        for (uint i = 0; i < params.num_ops; i++) {
+            u32 pos = ops[i].position;
+            u32 word_idx = pos >> 5;
+            u32 bit_mask = 1u << (pos & 31u);
+            if (ops[i].value != 0) {
+                states[word_idx] |= bit_mask;
+            } else {
+                states[word_idx] &= ~bit_mask;
+            }
+        }
+    }
+}
+
+// ── state_prep_monitored: lightweight peripheral edge detection ───────────
+//
+// Does NOT copy state or apply bit ops. Only checks for edges in monitored
+// signals by comparing input state (old = previous tick's output) vs output
+// state (new = current tick's output).
+//
+// The actual copy+ops for the next tick happens in the regular state_prep
+// kernel at the start of the next tick. This avoids double-copy and ensures
+// CPU patches (flash_din updates) are not overwritten.
+//
+// Runs as a single threadgroup dispatch; only thread 0 does work.
+
+kernel void state_prep_monitored(
+    device u32* states [[buffer(0)]],
+    constant StatePrepParams& params [[buffer(1)]],
+    device PeripheralControl* control [[buffer(2)]],
+    constant MonitorConfig* monitors [[buffer(3)]],
+    uint tid [[thread_position_in_threadgroup]]
+) {
+    if (tid != 0) return;
+
+    u32 state_size = params.state_size;
+    u32 num_monitors = params.num_monitors;
+
+    // Compare input state (old output from previous state_prep copy) vs
+    // output state (current tick's simulation result).
+    for (uint m = 0; m < num_monitors && m < 16; m++) {
+        u32 pos = monitors[m].position;
+        u32 word_idx = pos >> 5;
+        u32 bit = (pos & 31u);
+
+        // Old value: from input state (states[0..state_size])
+        // This is the value from the last state_prep copy (rising edge input).
+        u32 old_val = (states[word_idx] >> bit) & 1u;
+
+        // New value: from output state (states[state_size..])
+        // This is the latest simulation result.
+        u32 new_val = (states[state_size + word_idx] >> bit) & 1u;
+
+        if (old_val == new_val) continue;
+
+        u32 edge = monitors[m].edge_type;
+        bool triggered = false;
+        if (edge == 0) {
+            triggered = true;  // any edge
+        } else if (edge == 1 && old_val == 0 && new_val == 1) {
+            triggered = true;  // rising edge
+        } else if (edge == 2 && old_val == 1 && new_val == 0) {
+            triggered = true;  // falling edge
+        }
+
+        if (triggered) {
+            control->needs_callback = 1;
+            control->monitor_id = m;
+            control->tick_number = params.tick_number;
+            break;
+        }
+    }
+}

@@ -127,6 +127,59 @@ impl Drop for CppSpiFlash {
 // Make CppSpiFlash safe to send between threads (the C++ model has no global state)
 unsafe impl Send for CppSpiFlash {}
 
+// ── Peripheral Monitor Types (GPU↔CPU callback interface) ────────────────────
+
+/// Describes a GPIO output to watch for edges on the GPU side.
+/// Used to build the MonitorConfig array passed to the `state_prep_monitored` kernel.
+pub struct PeripheralMonitor {
+    pub name: String,
+    /// State bit positions to watch for edges.
+    pub watch_positions: Vec<u32>,
+    /// Edge type per position: 0 = any, 1 = rising, 2 = falling.
+    pub edge_type: u32,
+}
+
+/// GPU-side monitor descriptor (must match Metal `MonitorConfig` struct).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct MonitorConfig {
+    pub position: u32,   // bit position in state buffer to monitor
+    pub edge_type: u32,  // 0 = any edge, 1 = rising, 2 = falling
+}
+
+/// GPU↔CPU peripheral callback control block (must match Metal `PeripheralControl` struct).
+/// Lives in shared memory; GPU writes callback request, CPU reads and responds.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PeripheralControl {
+    // GPU → CPU
+    pub needs_callback: u32,
+    pub monitor_id: u32,
+    pub tick_number: u32,
+    pub _pad: u32,
+    // GPU → CPU: output snapshot
+    pub flash_clk: u32,
+    pub flash_csn: u32,
+    pub flash_d_out: u32,
+    // CPU → GPU: response
+    pub flash_d_in: u32,
+}
+
+impl Default for PeripheralControl {
+    fn default() -> Self {
+        Self {
+            needs_callback: 0,
+            monitor_id: 0,
+            tick_number: 0,
+            _pad: 0,
+            flash_clk: 0,
+            flash_csn: 0,
+            flash_d_out: 0,
+            flash_d_in: 0,
+        }
+    }
+}
+
 // ── Testbench configuration (loaded from JSON) ──────────────────────────────
 
 /// Testbench configuration loaded from JSON.

@@ -17,7 +17,7 @@ use gem::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
 use gem::flatten::FlattenedScriptV1;
 use gem::staging::build_staged_aigs;
 use gem::pe::Partition;
-use gem::testbench::{CppSpiFlash, TestbenchConfig, UartMonitor};
+use gem::testbench::{CppSpiFlash, MonitorConfig, PeripheralControl, TestbenchConfig, UartMonitor};
 use netlistdb::{GeneralPinName, NetlistDB};
 use std::collections::HashMap;
 use std::fs::File;
@@ -84,12 +84,33 @@ struct SimParams {
     current_stage: u64,
 }
 
+/// Bit set/clear operation (must match Metal shader BitOp struct).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct BitOp {
+    position: u32, // bit position in state buffer
+    value: u32,    // 0 = clear, 1 = set
+}
+
+/// Parameters for the state_prep kernel (must match Metal shader StatePrepParams struct).
+#[repr(C)]
+struct StatePrepParams {
+    state_size: u32,    // number of u32 words per state slot
+    num_ops: u32,       // number of bit set/clear operations
+    num_monitors: u32,  // number of peripheral monitors to check (0 = skip)
+    tick_number: u32,   // current tick number
+}
+
 // ── Metal Simulator ──────────────────────────────────────────────────────────
 
 struct MetalSimulator {
     device: metal::Device,
     command_queue: CommandQueue,
     pipeline_state: ComputePipelineState,
+    /// Pipeline state for the state_prep kernel (no monitors).
+    state_prep_pipeline: ComputePipelineState,
+    /// Pipeline state for the state_prep_monitored kernel (with edge detection).
+    state_prep_monitored_pipeline: ComputePipelineState,
     /// Pre-allocated params buffers for each stage (shared memory, rewritten each dispatch).
     /// We need one per stage since multi-stage designs encode all stages before commit.
     params_buffers: Vec<metal::Buffer>,
@@ -118,6 +139,20 @@ impl MetalSimulator {
             .new_compute_pipeline_state_with_function(&kernel_function)
             .expect("Failed to create pipeline state");
 
+        let state_prep_fn = library
+            .get_function("state_prep", None)
+            .expect("Failed to get state_prep function");
+        let state_prep_pipeline = device
+            .new_compute_pipeline_state_with_function(&state_prep_fn)
+            .expect("Failed to create state_prep pipeline");
+
+        let state_prep_monitored_fn = library
+            .get_function("state_prep_monitored", None)
+            .expect("Failed to get state_prep_monitored function");
+        let state_prep_monitored_pipeline = device
+            .new_compute_pipeline_state_with_function(&state_prep_monitored_fn)
+            .expect("Failed to create state_prep_monitored pipeline");
+
         let command_queue = device.new_command_queue();
 
         // Pre-allocate one params buffer per stage
@@ -136,6 +171,8 @@ impl MetalSimulator {
             device,
             command_queue,
             pipeline_state,
+            state_prep_pipeline,
+            state_prep_monitored_pipeline,
             params_buffers,
             shared_event,
             event_counter: std::cell::Cell::new(0),
@@ -239,6 +276,141 @@ impl MetalSimulator {
     fn cpu_signal(&self, value: u64) {
         self.shared_event.set_signaled_value(value);
     }
+
+    /// Encode a state_prep dispatch (no monitors) into an existing command buffer.
+    #[inline]
+    fn encode_state_prep(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        states_buffer: &metal::Buffer,
+        prep_params_buffer: &metal::Buffer,
+        ops_buffer: &metal::Buffer,
+    ) {
+        let encoder = command_buffer.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(&self.state_prep_pipeline);
+        encoder.set_buffer(0, Some(states_buffer), 0);
+        encoder.set_buffer(1, Some(prep_params_buffer), 0);
+        encoder.set_buffer(2, Some(ops_buffer), 0);
+        let tpg = MTLSize::new(256, 1, 1);
+        encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), tpg);
+        encoder.end_encoding();
+    }
+
+    /// Encode a state_prep_monitored dispatch (lightweight edge detection only).
+    /// Does NOT copy state or apply bit ops — just checks monitors.
+    #[inline]
+    fn encode_state_prep_monitored(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        states_buffer: &metal::Buffer,
+        prep_params_buffer: &metal::Buffer,
+        control_buffer: &metal::Buffer,
+        monitors_buffer: &metal::Buffer,
+    ) {
+        let encoder = command_buffer.new_compute_command_encoder();
+        encoder.set_compute_pipeline_state(&self.state_prep_monitored_pipeline);
+        encoder.set_buffer(0, Some(states_buffer), 0);
+        encoder.set_buffer(1, Some(prep_params_buffer), 0);
+        encoder.set_buffer(2, Some(control_buffer), 0);
+        encoder.set_buffer(3, Some(monitors_buffer), 0);
+        let tpg = MTLSize::new(256, 1, 1);
+        encoder.dispatch_thread_groups(MTLSize::new(1, 1, 1), tpg);
+        encoder.end_encoding();
+    }
+
+    /// Encode and commit a batch of N ticks as individual command buffers.
+    ///
+    /// Each tick encodes:
+    ///   1. state_prep (falling edge ops — copy output→input, set clock=0, negedge flags)
+    ///   2. simulate_v1_stage × num_stages (falling edge evaluation)
+    ///   3. state_prep (rising edge ops — copy output→input, set clock=1, posedge flags)
+    ///   4. simulate_v1_stage × num_stages (rising edge evaluation)
+    ///   5. state_prep_monitored (next tick falling edge prep + MONITOR CHECK)
+    ///   6. signal(tick_done) / wait(cpu_done)
+    ///
+    /// Returns base_event_value.
+    /// The CPU event loop uses events: base + tick*2 + 1 = tick_done, base + tick*2 + 2 = cpu_done.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_and_commit_tick_batch(
+        &self,
+        batch_size: usize,
+        start_tick: usize,
+        num_blocks: usize,
+        num_major_stages: usize,
+        state_size: usize,
+        blocks_start_buffer: &metal::Buffer,
+        blocks_data_buffer: &metal::Buffer,
+        sram_data_buffer: &metal::Buffer,
+        states_buffer: &metal::Buffer,
+        event_buffer_metal: &metal::Buffer,
+        fall_prep_params_buffer: &metal::Buffer,
+        fall_ops_buffer: &metal::Buffer,
+        rise_prep_params_buffer: &metal::Buffer,
+        rise_ops_buffer: &metal::Buffer,
+        monitor_prep_params_buffer: &metal::Buffer,
+        control_buffer: &metal::Buffer,
+        monitors_buffer: &metal::Buffer,
+    ) -> u64 {
+        let base_event = self.event_counter.get();
+
+        for tick_offset in 0..batch_size {
+            let tick = start_tick + tick_offset;
+            let tick_done = base_event + (tick_offset as u64) * 2 + 1;
+            let cpu_done = base_event + (tick_offset as u64) * 2 + 2;
+
+            // Update tick_number in the monitored prep params
+            unsafe {
+                let params = &mut *(monitor_prep_params_buffer.contents() as *mut StatePrepParams);
+                params.tick_number = tick as u32;
+            }
+
+            let cb = self.command_queue.new_command_buffer();
+
+            // ── Falling edge: state_prep + simulate ──
+            self.encode_state_prep(
+                cb, states_buffer,
+                fall_prep_params_buffer, fall_ops_buffer,
+            );
+            for stage_i in 0..num_major_stages {
+                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
+                self.encode_dispatch(
+                    cb, num_blocks, stage_i,
+                    blocks_start_buffer, blocks_data_buffer,
+                    sram_data_buffer, states_buffer, event_buffer_metal,
+                );
+            }
+
+            // ── Rising edge: state_prep + simulate ──
+            self.encode_state_prep(
+                cb, states_buffer,
+                rise_prep_params_buffer, rise_ops_buffer,
+            );
+            for stage_i in 0..num_major_stages {
+                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
+                self.encode_dispatch(
+                    cb, num_blocks, stage_i,
+                    blocks_start_buffer, blocks_data_buffer,
+                    sram_data_buffer, states_buffer, event_buffer_metal,
+                );
+            }
+
+            // ── Monitor check + signal/wait ──
+            // Lightweight: only checks for edges, no copy or bit ops.
+            self.encode_state_prep_monitored(
+                cb, states_buffer,
+                monitor_prep_params_buffer,
+                control_buffer, monitors_buffer,
+            );
+
+            cb.encode_signal_event(&self.shared_event, tick_done);
+            cb.encode_wait_for_event(&self.shared_event, cpu_done);
+
+            cb.commit();
+        }
+
+        self.event_counter.set(base_event + (batch_size as u64) * 2 + 1);
+        base_event
+    }
 }
 
 // ── GPIO ↔ State Buffer Mapping ──────────────────────────────────────────────
@@ -274,6 +446,7 @@ fn set_bit(state: &mut [u32], pos: u32, val: u8) {
 }
 
 /// Clear a single bit in a packed u32 state buffer.
+#[allow(dead_code)]
 #[inline]
 fn clear_bit(state: &mut [u32], pos: u32) {
     state[(pos >> 5) as usize] &= !(1u32 << (pos & 31));
@@ -394,6 +567,183 @@ fn set_flash_din(state: &mut [u32], gpio_map: &GpioMapping, d0_gpio: usize, din:
     for i in 0..4 {
         if let Some(&pos) = gpio_map.input_bits.get(&(d0_gpio + i)) {
             set_bit(state, pos, (din >> i) & 1);
+        }
+    }
+}
+
+// ── BitOp Builder ────────────────────────────────────────────────────────────
+
+/// Build the BitOp array for a falling edge state_prep.
+/// Sets: clock=0, negedge_flag=1, clears: posedge_flag, plus reset and flash_din ops.
+fn build_falling_edge_ops(
+    gpio_map: &GpioMapping,
+    clock_gpio: usize,
+    reset_gpio: usize,
+    reset_val: u8,
+    flash_din: u8,
+    flash_d0_gpio: Option<usize>,
+) -> Vec<BitOp> {
+    let mut ops = Vec::new();
+    // Clock = 0
+    ops.push(BitOp { position: gpio_map.input_bits[&clock_gpio], value: 0 });
+    // Reset
+    ops.push(BitOp { position: gpio_map.input_bits[&reset_gpio], value: reset_val as u32 });
+    // Negedge flag = 1
+    for &pos in &gpio_map.negedge_flag_bits {
+        ops.push(BitOp { position: pos, value: 1 });
+    }
+    // Posedge flag = 0
+    for &pos in &gpio_map.posedge_flag_bits {
+        ops.push(BitOp { position: pos, value: 0 });
+    }
+    // Flash D_IN
+    if let Some(d0) = flash_d0_gpio {
+        for i in 0..4 {
+            if let Some(&pos) = gpio_map.input_bits.get(&(d0 + i)) {
+                ops.push(BitOp { position: pos, value: ((flash_din >> i) & 1) as u32 });
+            }
+        }
+    }
+    ops
+}
+
+/// Build the BitOp array for a rising edge state_prep.
+/// Sets: clock=1, posedge_flag=1, clears: negedge_flag, plus reset and flash_din ops.
+fn build_rising_edge_ops(
+    gpio_map: &GpioMapping,
+    clock_gpio: usize,
+    reset_gpio: usize,
+    reset_val: u8,
+    flash_din: u8,
+    flash_d0_gpio: Option<usize>,
+) -> Vec<BitOp> {
+    let mut ops = Vec::new();
+    // Clock = 1
+    ops.push(BitOp { position: gpio_map.input_bits[&clock_gpio], value: 1 });
+    // Reset
+    ops.push(BitOp { position: gpio_map.input_bits[&reset_gpio], value: reset_val as u32 });
+    // Posedge flag = 1
+    for &pos in &gpio_map.posedge_flag_bits {
+        ops.push(BitOp { position: pos, value: 1 });
+    }
+    // Negedge flag = 0
+    for &pos in &gpio_map.negedge_flag_bits {
+        ops.push(BitOp { position: pos, value: 0 });
+    }
+    // Flash D_IN
+    if let Some(d0) = flash_d0_gpio {
+        for i in 0..4 {
+            if let Some(&pos) = gpio_map.input_bits.get(&(d0 + i)) {
+                ops.push(BitOp { position: pos, value: ((flash_din >> i) & 1) as u32 });
+            }
+        }
+    }
+    ops
+}
+
+/// Build the MonitorConfig array for flash peripheral monitoring.
+/// Returns monitors for flash_clk (any edge) and flash_csn (falling edge).
+fn build_flash_monitors(gpio_map: &GpioMapping, flash_cfg: &gem::testbench::FlashConfig) -> Vec<MonitorConfig> {
+    let mut monitors = Vec::new();
+    // Monitor flash_clk for any edge
+    if let Some(&pos) = gpio_map.output_bits.get(&flash_cfg.clk_gpio) {
+        monitors.push(MonitorConfig { position: pos, edge_type: 0 });
+    }
+    // Monitor flash_csn for falling edge (flash becoming active)
+    if let Some(&pos) = gpio_map.output_bits.get(&flash_cfg.csn_gpio) {
+        monitors.push(MonitorConfig { position: pos, edge_type: 2 });
+    }
+    monitors
+}
+
+/// Create a Metal buffer containing a StatePrepParams struct.
+fn create_prep_params_buffer(
+    device: &metal::Device,
+    state_size: u32,
+    num_ops: u32,
+    num_monitors: u32,
+    tick_number: u32,
+) -> metal::Buffer {
+    let buf = device.new_buffer(
+        std::mem::size_of::<StatePrepParams>() as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    unsafe {
+        std::ptr::write(buf.contents() as *mut StatePrepParams, StatePrepParams {
+            state_size,
+            num_ops,
+            num_monitors,
+            tick_number,
+        });
+    }
+    buf
+}
+
+/// Create a Metal buffer containing a BitOp array.
+fn create_ops_buffer(device: &metal::Device, ops: &[BitOp]) -> metal::Buffer {
+    let size = if ops.is_empty() {
+        std::mem::size_of::<BitOp>() as u64  // minimum 1 element
+    } else {
+        (ops.len() * std::mem::size_of::<BitOp>()) as u64
+    };
+    let buf = device.new_buffer(size, MTLResourceOptions::StorageModeShared);
+    if !ops.is_empty() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                ops.as_ptr(),
+                buf.contents() as *mut BitOp,
+                ops.len(),
+            );
+        }
+    }
+    buf
+}
+
+/// Create a Metal buffer containing a MonitorConfig array.
+fn create_monitors_buffer(device: &metal::Device, monitors: &[MonitorConfig]) -> metal::Buffer {
+    let size = if monitors.is_empty() {
+        std::mem::size_of::<MonitorConfig>() as u64
+    } else {
+        (monitors.len() * std::mem::size_of::<MonitorConfig>()) as u64
+    };
+    let buf = device.new_buffer(size, MTLResourceOptions::StorageModeShared);
+    if !monitors.is_empty() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                monitors.as_ptr(),
+                buf.contents() as *mut MonitorConfig,
+                monitors.len(),
+            );
+        }
+    }
+    buf
+}
+
+/// Create a Metal buffer containing a PeripheralControl struct (zeroed).
+fn create_control_buffer(device: &metal::Device) -> metal::Buffer {
+    let buf = device.new_buffer(
+        std::mem::size_of::<PeripheralControl>() as u64,
+        MTLResourceOptions::StorageModeShared,
+    );
+    unsafe {
+        std::ptr::write(buf.contents() as *mut PeripheralControl, PeripheralControl::default());
+    }
+    buf
+}
+
+/// Update flash_din bits in a BitOp buffer (for rising/falling edge ops that include flash).
+/// Finds the flash D_IN positions in the ops array and updates their values.
+fn update_flash_din_in_ops(ops_buffer: &metal::Buffer, ops_len: usize, gpio_map: &GpioMapping, flash_d0_gpio: usize, din: u8) {
+    let ops: &mut [BitOp] = unsafe {
+        std::slice::from_raw_parts_mut(ops_buffer.contents() as *mut BitOp, ops_len)
+    };
+    for op in ops.iter_mut() {
+        for i in 0..4 {
+            if let Some(&pos) = gpio_map.input_bits.get(&(flash_d0_gpio + i)) {
+                if op.position == pos {
+                    op.value = ((din >> i) & 1) as u32;
+                }
+            }
         }
     }
 }
@@ -820,34 +1170,96 @@ fn main() {
 
     clilog::finish!(timer_init);
 
-    // ── Simulation loop ──────────────────────────────────────────────────
+    // ── Build GPU-side state_prep buffers ─────────────────────────────────
     //
-    // Each tick = 1 system clock cycle = 2 GPU evaluations (fall + rise).
-    //
-    // Tick order (matching CXXRTL):
-    //   1. Read gpio_out from previous tick's output
-    //   2. Step peripheral models (flash, UART)
-    //   3. Copy output → input, set falling edge inputs
-    //   4. GPU dispatch all stages (falling edge)
-    //   5. Copy output → input, set rising edge inputs + posedge flag
-    //   6. GPU dispatch all stages (rising edge, DFFs latch)
-    //   7. Clear posedge flags in output
+    // Pre-build the BitOp arrays and Metal buffers for falling/rising edge
+    // state_prep dispatches. These are updated dynamically when flash_din
+    // or reset state changes.
 
-    let timer_sim = clilog::stimer!("simulation");
-    let sim_start = std::time::Instant::now();
+    let timer_prep = clilog::stimer!("build_state_prep_buffers");
     let reset_cycles = config.reset_cycles;
     let num_major_stages = script.num_major_stages;
     let num_blocks = script.num_blocks;
+    let flash_d0_gpio = config.flash.as_ref().map(|f| f.d0_gpio);
 
-    // Track previous flash data for setup timing delay (same as timing_sim_cpu).
-    // The CPU sim's step_flash reads clk CURRENT, but csn/d_out PREVIOUS,
-    // to match real hardware setup timing where data is stable before clock edge.
+    // Initial reset value
+    let reset_val_active = if config.reset_active_high { 1u8 } else { 0u8 };
+    let reset_val_inactive = if config.reset_active_high { 0u8 } else { 1u8 };
+
+    // Build initial falling/rising edge BitOp arrays (with reset active, flash_din=0x0F)
+    let fall_ops = build_falling_edge_ops(
+        &gpio_map, clock_gpio, reset_gpio, reset_val_active, 0x0F, flash_d0_gpio,
+    );
+    let rise_ops = build_rising_edge_ops(
+        &gpio_map, clock_gpio, reset_gpio, reset_val_active, 0x0F, flash_d0_gpio,
+    );
+    let fall_ops_len = fall_ops.len();
+    let rise_ops_len = rise_ops.len();
+
+    let fall_ops_buffer = create_ops_buffer(&simulator.device, &fall_ops);
+    let rise_ops_buffer = create_ops_buffer(&simulator.device, &rise_ops);
+
+    // Build monitor configs for flash peripheral
+    let monitors = if let Some(ref flash_cfg) = config.flash {
+        build_flash_monitors(&gpio_map, flash_cfg)
+    } else {
+        Vec::new()
+    };
+    let num_monitors = monitors.len() as u32;
+    clilog::info!("Peripheral monitors: {} (flash clk/csn edges)", num_monitors);
+
+    let monitors_buffer = create_monitors_buffer(&simulator.device, &monitors);
+    let control_buffer = create_control_buffer(&simulator.device);
+
+    // Create StatePrepParams buffers
+    let fall_prep_params_buffer = create_prep_params_buffer(
+        &simulator.device, state_size as u32, fall_ops.len() as u32, 0, 0,
+    );
+    let rise_prep_params_buffer = create_prep_params_buffer(
+        &simulator.device, state_size as u32, rise_ops.len() as u32, 0, 0,
+    );
+    // Monitor params: no ops (monitor kernel doesn't copy or apply ops), just edge detection
+    let monitor_prep_params_buffer = create_prep_params_buffer(
+        &simulator.device, state_size as u32, 0, num_monitors, 0,
+    );
+
+    // Pre-write params for all simulation stages (they don't change between ticks)
+    for stage_i in 0..num_major_stages {
+        simulator.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
+    }
+
+    clilog::finish!(timer_prep);
+
+    // ── Event-driven simulation loop ─────────────────────────────────────
+    //
+    // Architecture:
+    //   GPU runs autonomously through batches of ticks. Each tick:
+    //     1. state_prep (falling edge) — GPU copies output→input, sets clock=0
+    //     2. simulate_v1_stage × N — GPU evaluates falling edge logic
+    //     3. state_prep (rising edge) — GPU copies output→input, sets clock=1
+    //     4. simulate_v1_stage × N — GPU evaluates rising edge logic
+    //     5. state_prep_monitored (next fall prep + edge check) — GPU checks monitors
+    //     6. signal(tick_done) → wait(cpu_done) — CPU callback point
+    //
+    //   CPU event loop per tick:
+    //     - spin-wait for tick_done
+    //     - read PeripheralControl.needs_callback from shared memory
+    //     - if callback: step flash model, write response, update ops buffers
+    //     - always: step UART from output state
+    //     - signal cpu_done → GPU continues
+    //
+    // Fast path (idle): ~0.5-1μs (SharedEvent round-trip + 1 shared mem read)
+    // Slow path (flash active): ~3-5μs (+ flash model step + state patch)
+
+    let timer_sim = clilog::stimer!("simulation");
+    let sim_start = std::time::Instant::now();
+
+    // Track previous flash data for setup timing delay
     let mut prev_flash_d_out: u8 = 0;
     let mut prev_flash_csn: bool = true;
-    // Flash din from the previous tick's rising-edge step (used for falling edge input)
-    let mut flash_din: u8 = 0;
+    let mut flash_din: u8 = 0x0F;  // default high = no data
 
-    // Helper: read flash signals from output state
+    // Helper: read flash signals from output state (same as before)
     let read_flash_out = |states: &[u32], state_size: usize| -> (bool, bool, u8) {
         let out = &states[state_size..2 * state_size];
         let clk = config.flash.as_ref().map(|f| {
@@ -864,145 +1276,243 @@ fn main() {
         (clk, csn, d_out)
     };
 
-    // Pre-write params for all stages (they don't change between ticks)
-    for stage_i in 0..num_major_stages {
-        simulator.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
+    // Helper: update reset value in both ops buffers
+    let update_reset_in_ops = |reset_val: u8| {
+        let reset_pos = gpio_map.input_bits[&reset_gpio];
+        for (buf, len) in [
+            (&fall_ops_buffer, fall_ops_len),
+            (&rise_ops_buffer, rise_ops_len),
+        ] {
+            let ops: &mut [BitOp] = unsafe {
+                std::slice::from_raw_parts_mut(buf.contents() as *mut BitOp, len)
+            };
+            for op in ops.iter_mut() {
+                if op.position == reset_pos {
+                    op.value = reset_val as u32;
+                }
+            }
+        }
+    };
+
+    // Helper: update flash_din in both ops buffers
+    let update_flash_din_all = |din: u8| {
+        if let Some(d0) = flash_d0_gpio {
+            update_flash_din_in_ops(&fall_ops_buffer, fall_ops_len, &gpio_map, d0, din);
+            update_flash_din_in_ops(&rise_ops_buffer, rise_ops_len, &gpio_map, d0, din);
+        }
+    };
+
+    // Profiling accumulators
+    let mut prof_batch_encode: u64 = 0;
+    let mut prof_gpu_wait: u64 = 0;
+    let mut prof_cpu_callback: u64 = 0;
+    let mut prof_cpu_uart: u64 = 0;
+    let mut callbacks_fired: u64 = 0;
+    let mut callbacks_skipped: u64 = 0;
+
+    // Dynamic batch sizing
+    let mut batch_size: usize = 10;
+    let mut consecutive_idle_batches: usize = 0;
+    let max_batch_size: usize = 1000;
+    let min_batch_size: usize = 1;
+
+    let mut tick: usize = 0;
+    while tick < max_ticks {
+        // Compute actual batch size (don't exceed max_ticks)
+        let actual_batch = batch_size.min(max_ticks - tick);
+
+        // Check if reset state changes within this batch
+        let batch_crosses_reset = tick < reset_cycles && tick + actual_batch > reset_cycles;
+        let actual_batch = if batch_crosses_reset {
+            // Only batch up to the reset boundary
+            reset_cycles - tick
+        } else {
+            actual_batch
+        };
+
+        // Update reset value for this batch
+        let in_reset = tick < reset_cycles;
+        let current_reset_val = if in_reset { reset_val_active } else { reset_val_inactive };
+        update_reset_in_ops(current_reset_val);
+
+        // Update flash_din in ops buffers
+        update_flash_din_all(flash_din);
+
+        // ── Encode batch ────────────────────────────────────────────────
+        let t_encode = std::time::Instant::now();
+
+        // Clear control block
+        unsafe {
+            let ctrl = &mut *(control_buffer.contents() as *mut PeripheralControl);
+            ctrl.needs_callback = 0;
+        }
+
+        let base_event = simulator.encode_and_commit_tick_batch(
+            actual_batch,
+            tick,
+            num_blocks,
+            num_major_stages,
+            state_size,
+            &blocks_start_buffer,
+            &blocks_data_buffer,
+            &sram_data_buffer,
+            &states_buffer,
+            &event_buffer_metal,
+            &fall_prep_params_buffer,
+            &fall_ops_buffer,
+            &rise_prep_params_buffer,
+            &rise_ops_buffer,
+            &monitor_prep_params_buffer,
+            &control_buffer,
+            &monitors_buffer,
+        );
+        prof_batch_encode += t_encode.elapsed().as_nanos() as u64;
+
+        // ── CPU event loop for this batch ──────────────────────────────
+        let mut batch_had_callback = false;
+
+        for tick_offset in 0..actual_batch {
+            let current_tick = tick + tick_offset;
+            let tick_done = base_event + (tick_offset as u64) * 2 + 1;
+            let cpu_done = base_event + (tick_offset as u64) * 2 + 2;
+
+            // Wait for GPU to complete this tick
+            let t_wait = std::time::Instant::now();
+            simulator.spin_wait(tick_done);
+            prof_gpu_wait += t_wait.elapsed().as_nanos() as u64;
+
+            // Check control block for peripheral callback
+            let t_cb = std::time::Instant::now();
+            let needs_callback = unsafe {
+                let ctrl = &*(control_buffer.contents() as *const PeripheralControl);
+                ctrl.needs_callback
+            };
+
+            if needs_callback != 0 {
+                callbacks_fired += 1;
+                batch_had_callback = true;
+
+                // Step flash model with current output state
+                if let Some(ref mut fl) = flash {
+                    let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
+                    let effective_csn = if in_reset { true } else { prev_flash_csn };
+
+                    // Step flash twice (falling + rising edge within this tick)
+                    // The GPU ran both edges; we need to catch up the flash model.
+                    let _din_fall = fl.step(clk, effective_csn, prev_flash_d_out);
+                    let din_rise = fl.step(clk, effective_csn, current_d_out);
+
+                    prev_flash_d_out = current_d_out;
+                    prev_flash_csn = current_csn;
+
+                    flash_din = if in_reset { 0x0F } else { din_rise };
+
+                    if current_tick <= 5 || current_tick == reset_cycles
+                        || current_tick == reset_cycles + 1
+                    {
+                        clilog::info!(
+                            "tick {}: callback flash clk={}, csn={}, d_out={:04b}, din={:04b}",
+                            current_tick, clk, current_csn, current_d_out, flash_din
+                        );
+                    }
+
+                    // Update flash_din bits in the input state for next tick.
+                    // The state_prep_monitored already copied output→input and set
+                    // falling edge bits. We just patch the flash_din bits.
+                    if let Some(d0) = flash_d0_gpio {
+                        set_flash_din(&mut states[..state_size], &gpio_map, d0, flash_din);
+                    }
+
+                    // Update ops buffers for subsequent ticks in this batch
+                    update_flash_din_all(flash_din);
+                }
+
+                // Clear callback flag
+                unsafe {
+                    let ctrl = &mut *(control_buffer.contents() as *mut PeripheralControl);
+                    ctrl.needs_callback = 0;
+                }
+            } else {
+                callbacks_skipped += 1;
+
+                // Even without callback, step flash model to keep it in sync
+                // (it tracks internal state machine timing)
+                if let Some(ref mut fl) = flash {
+                    let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
+                    let effective_csn = if in_reset { true } else { prev_flash_csn };
+                    let _din_fall = fl.step(clk, effective_csn, prev_flash_d_out);
+                    let din_rise = fl.step(clk, effective_csn, current_d_out);
+                    prev_flash_d_out = current_d_out;
+                    prev_flash_csn = current_csn;
+                    flash_din = if in_reset { 0x0F } else { din_rise };
+                }
+            }
+            prof_cpu_callback += t_cb.elapsed().as_nanos() as u64;
+
+            // UART: always read TX from output state
+            let t_uart = std::time::Instant::now();
+            if let Some(tx_gpio) = uart_tx_gpio {
+                if let Some(&pos) = gpio_map.output_bits.get(&tx_gpio) {
+                    let tx = read_bit(&states[state_size..2 * state_size], pos);
+                    uart_monitor.step(tx, current_tick);
+                }
+            }
+            prof_cpu_uart += t_uart.elapsed().as_nanos() as u64;
+
+            // Signal GPU to continue with next tick
+            simulator.cpu_signal(cpu_done);
+
+            // Progress logging
+            if current_tick > 0 && current_tick % 100000 == 0 {
+                let elapsed = sim_start.elapsed();
+                let us_per_tick = elapsed.as_micros() as f64 / current_tick as f64;
+                clilog::info!(
+                    "Tick {} / {} ({:.1}μs/tick, batch={}, callbacks={}/{})",
+                    current_tick, max_ticks, us_per_tick, batch_size,
+                    callbacks_fired, callbacks_fired + callbacks_skipped
+                );
+            }
+            if current_tick == reset_cycles {
+                clilog::info!("Reset released at tick {}", current_tick);
+            }
+        }
+
+        tick += actual_batch;
+
+        // Dynamic batch sizing: grow when idle, shrink when active
+        if batch_had_callback {
+            consecutive_idle_batches = 0;
+            batch_size = (batch_size / 2).max(min_batch_size);
+        } else {
+            consecutive_idle_batches += 1;
+            if consecutive_idle_batches >= 3 {
+                batch_size = (batch_size * 2).min(max_batch_size);
+            }
+        }
     }
 
-    for tick in 0..max_ticks {
-        // Reset event buffer
-        unsafe { (*event_buffer_ptr).reset(); }
-
-        let in_reset = tick < reset_cycles;
-        let reset_val = if in_reset {
-            if config.reset_active_high { 1u8 } else { 0u8 }
-        } else {
-            if config.reset_active_high { 0u8 } else { 1u8 }
-        };
-
-        // ── 1. Copy prev output → input, set falling edge ──────────────
-        states.copy_within(state_size..2 * state_size, 0);
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 0);
-        for &pos in &gpio_map.posedge_flag_bits {
-            clear_bit(&mut states[..state_size], pos);
-        }
-        for &pos in &gpio_map.negedge_flag_bits {
-            set_bit(&mut states[..state_size], pos, 1);
-        }
-        // Write flash din from previous tick's rising-edge flash step
-        if let Some(ref flash_cfg) = config.flash {
-            set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, flash_din);
-        }
-
-        // ── 2-5. Dual dispatch with CPU intervention between edges ──────
-        // Encode BOTH half-cycle dispatches into a SINGLE command buffer.
-        // GPU signals event after falling edge, waits for CPU to update state,
-        // then proceeds with rising edge dispatch. This eliminates one
-        // command buffer creation per tick (~50-100μs savings).
-        let base = simulator.event_counter.get();
-        let fall_done = base + 1;   // GPU signals after falling edge
-        let cpu_done = base + 2;    // CPU signals after state update
-        let rise_done = base + 3;   // GPU signals after rising edge
-        simulator.event_counter.set(rise_done);
-
-        let command_buffer = simulator.command_queue.new_command_buffer();
-
-        // Encode falling edge dispatch(es)
-        for stage_i in 0..num_major_stages {
-            simulator.encode_dispatch(
-                &command_buffer, num_blocks, stage_i,
-                &blocks_start_buffer, &blocks_data_buffer,
-                &sram_data_buffer, &states_buffer, &event_buffer_metal,
-            );
-        }
-
-        // GPU signals fall_done, then waits for CPU to signal cpu_done
-        command_buffer.encode_signal_event(&simulator.shared_event, fall_done);
-        command_buffer.encode_wait_for_event(&simulator.shared_event, cpu_done);
-
-        // Encode rising edge dispatch(es)
-        for stage_i in 0..num_major_stages {
-            simulator.encode_dispatch(
-                &command_buffer, num_blocks, stage_i,
-                &blocks_start_buffer, &blocks_data_buffer,
-                &sram_data_buffer, &states_buffer, &event_buffer_metal,
-            );
-        }
-
-        // GPU signals rise_done after rising edge
-        command_buffer.encode_signal_event(&simulator.shared_event, rise_done);
-        command_buffer.commit();
-
-        // ── 3. CPU: wait for falling edge, step flash, update state ─────
-        simulator.spin_wait(fall_done);
-
-        // Step flash after falling edge (matches CPU sim step 2b)
-        let flash_din_fall = if let Some(ref mut fl) = flash {
-            let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
-            let effective_csn = if in_reset { true } else { prev_flash_csn };
-            let din = fl.step(clk, effective_csn, prev_flash_d_out);
-
-            prev_flash_d_out = current_d_out;
-            prev_flash_csn = current_csn;
-
-            if tick <= 5 || tick == reset_cycles || tick == reset_cycles + 1 || tick == reset_cycles + 100 {
-                clilog::info!("tick {}: fall flash clk={}, csn={}, d_out={:04b}, din={:04b}",
-                             tick, clk, current_csn, current_d_out, din);
-            }
-            if in_reset { 0u8 } else { din }
-        } else {
-            0u8
-        };
-
-        // Copy falling output → input, set rising edge
-        states.copy_within(state_size..2 * state_size, 0);
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
-        set_bit(&mut states[..state_size], gpio_map.input_bits[&clock_gpio], 1);
-        for &pos in &gpio_map.posedge_flag_bits {
-            set_bit(&mut states[..state_size], pos, 1);
-        }
-        for &pos in &gpio_map.negedge_flag_bits {
-            clear_bit(&mut states[..state_size], pos);
-        }
-        if let Some(ref flash_cfg) = config.flash {
-            set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, flash_din_fall);
-        }
-
-        // Signal GPU to proceed with rising edge
-        simulator.cpu_signal(cpu_done);
-
-        // ── 6. Wait for rising edge, step flash + UART ──────────────────
-        simulator.spin_wait(rise_done);
-
-        // Step flash after rising edge (matches CPU sim step 6b)
-        flash_din = if let Some(ref mut fl) = flash {
-            let (clk, current_csn, current_d_out) = read_flash_out(states, state_size);
-            let effective_csn = if in_reset { true } else { prev_flash_csn };
-            let din = fl.step(clk, effective_csn, prev_flash_d_out);
-
-            prev_flash_d_out = current_d_out;
-            prev_flash_csn = current_csn;
-            if in_reset { 0u8 } else { din }
-        } else {
-            0u8
-        };
-
-        // UART: read TX from rising-edge output
-        if let Some(tx_gpio) = uart_tx_gpio {
-            if let Some(&pos) = gpio_map.output_bits.get(&tx_gpio) {
-                let tx = read_bit(&states[state_size..2 * state_size], pos);
-                uart_monitor.step(tx, tick);
-            }
-        }
-
-        // Progress logging
-        if tick > 0 && tick % 100000 == 0 {
-            clilog::info!("Tick {} / {}", tick, max_ticks);
-        }
-        if tick == reset_cycles {
-            clilog::info!("Reset released at tick {}", tick);
-        }
+    // Print profiling results
+    let total_ns = prof_batch_encode + prof_gpu_wait + prof_cpu_callback + prof_cpu_uart;
+    let print_prof = |name: &str, ns: u64| {
+        let us = ns as f64 / 1000.0 / max_ticks as f64;
+        let pct = if total_ns > 0 { 100.0 * ns as f64 / total_ns as f64 } else { 0.0 };
+        println!("  {:<28} {:>8.1}μs/tick  {:>5.1}%", name, us, pct);
+    };
+    println!();
+    println!("=== Profiling Breakdown (Event-Driven) ===");
+    print_prof("Batch encode + commit", prof_batch_encode);
+    print_prof("GPU wait (spin)", prof_gpu_wait);
+    print_prof("CPU callback (flash)", prof_cpu_callback);
+    print_prof("CPU UART monitor", prof_cpu_uart);
+    println!("  {:<28} {:>8.1}μs/tick  100.0%",
+             "TOTAL (instrumented)",
+             total_ns as f64 / 1000.0 / max_ticks as f64);
+    println!();
+    println!("  Callbacks fired:   {}", callbacks_fired);
+    println!("  Callbacks skipped: {}", callbacks_skipped);
+    if callbacks_fired + callbacks_skipped > 0 {
+        println!("  Callback rate:     {:.1}%",
+                 100.0 * callbacks_fired as f64 / (callbacks_fired + callbacks_skipped) as f64);
     }
 
     let sim_elapsed = sim_start.elapsed();
@@ -1070,8 +1580,6 @@ fn main() {
 
     if args.check_with_cpu {
         clilog::info!("CPU verification not yet implemented for hybrid mode");
-        // TODO: Run the same tick sequence through simulate_block_v1 and compare
-        // This would need to save/replay all GPIO state changes
     }
 
     // Clean up event buffer
