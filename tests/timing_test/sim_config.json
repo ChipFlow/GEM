@@ -18,5 +18,7 @@
         "tx_gpio": 6,
         "rx_gpio": 7,
         "baud_rate": 115200
-    }
+    },
+    "output_events": "tests/timing_test/gpu_events.json",
+    "events_reference": "tests/timing_test/events_reference.json"
 }

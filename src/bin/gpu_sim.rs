@@ -2444,7 +2444,7 @@ fn main() {
             events: Vec<gem::testbench::UartEvent>,
         }
         let output = EventsOutput {
-            events: uart_events,
+            events: uart_events.clone(),
         };
         let json = serde_json::to_string_pretty(&output).expect("Failed to serialize events");
         let mut file = File::create(output_path).expect("Failed to create events file");
@@ -2452,6 +2452,63 @@ fn main() {
         file.write_all(json.as_bytes())
             .expect("Failed to write events");
         clilog::info!("Wrote events to {}", output_path);
+    }
+
+    // ── Event reference comparison ───────────────────────────────────────
+
+    let mut events_passed = true;
+    if let Some(ref ref_path) = config.events_reference {
+        #[derive(serde::Deserialize)]
+        struct EventsFile {
+            events: Vec<gem::testbench::UartEvent>,
+        }
+        let ref_file = std::fs::read_to_string(ref_path)
+            .unwrap_or_else(|e| panic!("Failed to read events reference {}: {}", ref_path, e));
+        let reference: EventsFile = serde_json::from_str(&ref_file)
+            .unwrap_or_else(|e| panic!("Failed to parse events reference {}: {}", ref_path, e));
+
+        let ref_events = &reference.events;
+        let ref_payloads: Vec<u8> = ref_events.iter().map(|e| e.payload).collect();
+        let actual_payloads: Vec<u8> = uart_events.iter().map(|e| e.payload).collect();
+
+        println!();
+        println!("=== Event Reference Check ===");
+        println!("Reference: {} events from {}", ref_events.len(), ref_path);
+        println!("Actual:    {} events", uart_events.len());
+
+        if ref_payloads.len() > actual_payloads.len() {
+            println!("FAIL: missing {} events (got {}, expected {})",
+                ref_payloads.len() - actual_payloads.len(),
+                actual_payloads.len(), ref_payloads.len());
+            println!("  Hint: increase --max-cycles (last reference event at timestamp {})",
+                ref_events.last().map(|e| e.timestamp).unwrap_or(0));
+            events_passed = false;
+        } else {
+            let mut mismatches = 0;
+            for (i, (expected, actual)) in ref_payloads.iter().zip(actual_payloads.iter()).enumerate() {
+                if expected != actual {
+                    if mismatches < 10 {
+                        let ref_ts = ref_events[i].timestamp;
+                        let act_ts = uart_events[i].timestamp;
+                        println!("  MISMATCH event {}: expected 0x{:02X} (ref ts={}), got 0x{:02X} (tick={})",
+                            i, expected, ref_ts, actual, act_ts);
+                    }
+                    mismatches += 1;
+                }
+            }
+
+            if mismatches > 0 {
+                println!("FAIL: {} payload mismatches out of {} events", mismatches, ref_payloads.len());
+                events_passed = false;
+            } else {
+                // Decode the matched message for display
+                let decoded: String = actual_payloads.iter().map(|&b| {
+                    if b >= 32 && b < 127 { b as char } else { '.' }
+                }).collect();
+                println!("PASS: all {} event payloads match", ref_payloads.len());
+                println!("  Decoded: \"{}\"", decoded);
+            }
+        }
     }
 
     // ── Optional CPU verification ────────────────────────────────────────
@@ -2474,5 +2531,10 @@ fn main() {
     }
 
     println!();
-    println!("SIMULATION: PASSED");
+    if events_passed {
+        println!("SIMULATION: PASSED");
+    } else {
+        println!("SIMULATION: FAILED (event mismatch)");
+        std::process::exit(1);
+    }
 }

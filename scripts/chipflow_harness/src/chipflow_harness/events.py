@@ -31,11 +31,14 @@ def parse_events_json(path: Path) -> list[Event]:
 
     events = []
     for item in data.get("events", []):
+        # Support both field name conventions:
+        #   "timestamp"/"event" (Rust UartEvent, chipflow-examples reference)
+        #   "time_ps"/"type" (legacy)
         events.append(
             Event(
-                time_ps=item.get("time_ps", 0),
+                time_ps=item.get("timestamp", item.get("time_ps", 0)),
                 peripheral=item.get("peripheral", ""),
-                event_type=item.get("type", ""),
+                event_type=item.get("event", item.get("type", "")),
                 payload=item.get("payload"),
             )
         )

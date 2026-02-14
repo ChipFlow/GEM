@@ -208,6 +208,7 @@ pub struct TestbenchConfig {
     pub gpios: Vec<GpioConfig>,
     pub sram_init: Option<SramInitConfig>,
     pub output_events: Option<String>,
+    pub events_reference: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -249,7 +250,7 @@ pub enum UartState {
 }
 
 /// Decoded UART event.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UartEvent {
     pub timestamp: usize,
     pub peripheral: String,
