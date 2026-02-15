@@ -1928,6 +1928,138 @@ impl AIG {
     }
 }
 
+/// A reusable topological traverser with dense visited buffer.
+///
+/// Uses a generation counter pattern to avoid clearing the visited buffer
+/// between traversals. This is significantly faster than `IndexSet<usize>`
+/// for repeated traversals on the same AIG.
+pub struct TopoTraverser {
+    visited: Vec<u32>,
+    generation: u32,
+}
+
+impl TopoTraverser {
+    /// Create a new traverser for an AIG with the given number of pins.
+    pub fn new(num_aigpins: usize) -> Self {
+        Self {
+            visited: vec![0; num_aigpins + 1],
+            generation: 1,
+        }
+    }
+
+    /// Reset the generation counter, preparing for a new traversal.
+    fn new_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            // Overflow: clear the buffer and reset
+            self.visited.fill(0);
+            self.generation = 1;
+        }
+    }
+
+    #[inline(always)]
+    fn is_visited(&self, u: usize) -> bool {
+        self.visited[u] == self.generation
+    }
+
+    #[inline(always)]
+    fn mark_visited(&mut self, u: usize) {
+        self.visited[u] = self.generation;
+    }
+
+    /// Perform a topological traversal, equivalent to `AIG::topo_traverse_generic`.
+    ///
+    /// Uses an iterative stack-based DFS with a dense visited buffer for speed.
+    pub fn topo_traverse(
+        &mut self,
+        aig: &AIG,
+        endpoints: Option<&Vec<usize>>,
+        is_primary_input: Option<&IndexSet<usize>>,
+    ) -> Vec<usize> {
+        self.new_generation();
+        let mut ret = Vec::new();
+        // Two-phase iterative DFS: Visit checks + pushes deps, Process emits
+        enum Phase {
+            Visit(usize),
+            Process(usize),
+        }
+        let mut stack = Vec::new();
+
+        if let Some(endpoints) = endpoints {
+            for &endpoint in endpoints {
+                stack.push(Phase::Visit(endpoint));
+            }
+        } else {
+            for i in (1..aig.num_aigpins + 1).rev() {
+                stack.push(Phase::Visit(i));
+            }
+        }
+
+        while let Some(item) = stack.pop() {
+            match item {
+                Phase::Visit(u) => {
+                    if self.is_visited(u) {
+                        continue;
+                    }
+                    self.mark_visited(u);
+                    stack.push(Phase::Process(u));
+                    if let DriverType::AndGate(a, b) = aig.drivers[u] {
+                        if is_primary_input.map(|s| s.contains(&u)) != Some(true) {
+                            // Push b first so a is processed first (stack order)
+                            if (b >> 1) != 0 {
+                                stack.push(Phase::Visit(b >> 1));
+                            }
+                            if (a >> 1) != 0 {
+                                stack.push(Phase::Visit(a >> 1));
+                            }
+                        }
+                    }
+                }
+                Phase::Process(u) => {
+                    ret.push(u);
+                }
+            }
+        }
+        ret
+    }
+
+    /// Perform a topological traversal and also produce a bitset of visited nodes.
+    ///
+    /// Returns `(order, bitset)` where `bitset` has bit `node` set for each visited node.
+    /// The bitset is `Vec<u64>` with `(num_aigpins + 64) / 64` words.
+    pub fn topo_traverse_with_bitset(
+        &mut self,
+        aig: &AIG,
+        endpoints: Option<&Vec<usize>>,
+        is_primary_input: Option<&IndexSet<usize>>,
+    ) -> (Vec<usize>, Vec<u64>) {
+        let order = self.topo_traverse(aig, endpoints, is_primary_input);
+        let num_words = (aig.num_aigpins + 64) / 64;
+        let mut bitset = vec![0u64; num_words];
+        for &node in &order {
+            bitset[node / 64] |= 1u64 << (node % 64);
+        }
+        (order, bitset)
+    }
+}
+
+/// Compute the popcount of the union of two bitsets.
+#[inline]
+pub fn bitset_union_popcount(a: &[u64], b: &[u64]) -> usize {
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x | y).count_ones() as usize)
+        .sum()
+}
+
+/// OR bitset `src` into `dst` in-place.
+#[inline]
+pub fn bitset_or_inplace(dst: &mut [u64], src: &[u64]) {
+    for (d, s) in dst.iter_mut().zip(src.iter()) {
+        *d |= *s;
+    }
+}
+
 /// Summary of timing analysis results.
 #[derive(Debug, Clone, Default)]
 pub struct TimingReport {

@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Partition executor
 
-use crate::aig::{DriverType, EndpointGroup, AIG};
+use crate::aig::{
+    bitset_or_inplace, bitset_union_popcount, DriverType, EndpointGroup, TopoTraverser, AIG,
+};
 use crate::staging::StagedAIG;
 use indexmap::{IndexMap, IndexSet};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The number of boomerang stages.
 ///
@@ -581,11 +584,82 @@ fn build_one_boomerang_stage(
 }
 
 impl Partition {
+    /// Cheap pre-check that rejects merges that would obviously fail `build_one`.
+    ///
+    /// Checks SRAM count and writeout overflow without building the full hierarchy.
+    /// Returns `true` if the merge should be rejected.
+    fn quick_reject(aig: &AIG, staged: &StagedAIG, endpoints: &[usize]) -> bool {
+        let mut num_srams = 0usize;
+        let mut comb_outputs_activations = IndexMap::<usize, IndexSet<usize>>::new();
+        for &endpt_i in endpoints {
+            let edg = staged.get_endpoint_group(aig, endpt_i);
+            match edg {
+                EndpointGroup::DFF(dff) => {
+                    comb_outputs_activations
+                        .entry(dff.d_iv >> 1)
+                        .or_default()
+                        .insert(dff.en_iv << 1 | (dff.d_iv & 1));
+                }
+                EndpointGroup::PrimaryOutput(pin) => {
+                    comb_outputs_activations
+                        .entry(pin >> 1)
+                        .or_default()
+                        .insert(2 | (pin & 1));
+                }
+                EndpointGroup::RAMBlock(_) => {
+                    num_srams += 1;
+                }
+                EndpointGroup::SimControl(ctrl) => {
+                    comb_outputs_activations
+                        .entry(ctrl.condition_iv >> 1)
+                        .or_default()
+                        .insert(2 | (ctrl.condition_iv & 1));
+                }
+                EndpointGroup::Display(disp) => {
+                    comb_outputs_activations
+                        .entry(disp.enable_iv >> 1)
+                        .or_default()
+                        .insert(2 | (disp.enable_iv & 1));
+                    for &arg_iv in &disp.args_iv {
+                        if arg_iv > 1 {
+                            comb_outputs_activations
+                                .entry(arg_iv >> 1)
+                                .or_default()
+                                .insert(2 | (arg_iv & 1));
+                        }
+                    }
+                }
+                EndpointGroup::StagedIOPin(pin) => {
+                    comb_outputs_activations.entry(pin).or_default().insert(2);
+                }
+            }
+        }
+        let num_output_dups: usize = comb_outputs_activations
+            .iter()
+            .map(|(_, ckens)| ckens.len() - 1)
+            .sum();
+        let num_reserved_writeouts = num_srams + (num_output_dups + 31) / 32;
+        num_reserved_writeouts >= BOOMERANG_MAX_WRITEOUTS
+            || num_srams * 4 + num_output_dups > BOOMERANG_MAX_WRITEOUTS
+    }
+
     /// build one partition given a set of endpoints to realize.
     ///
     /// if the resource is overflowed, None will be returned.
     /// see [Partition] for resource constraints.
     pub fn build_one(aig: &AIG, staged: &StagedAIG, endpoints: &Vec<usize>) -> Option<Partition> {
+        Self::build_one_cancellable(aig, staged, endpoints, None)
+    }
+
+    /// Like `build_one`, but checks `cancel` flag between boomerang stages.
+    ///
+    /// Returns `None` if cancelled or if resource constraints are exceeded.
+    fn build_one_cancellable(
+        aig: &AIG,
+        staged: &StagedAIG,
+        endpoints: &Vec<usize>,
+        cancel: Option<&AtomicBool>,
+    ) -> Option<Partition> {
         let mut unrealized_comb_outputs = IndexSet::new();
         let mut realized_inputs = staged.primary_inputs.as_ref().cloned().unwrap_or_default();
         let mut num_srams = 0;
@@ -612,15 +686,12 @@ impl Partition {
                     num_srams += 1;
                 }
                 EndpointGroup::SimControl(ctrl) => {
-                    // SimControl nodes have a condition that needs to be evaluated
-                    // Treat like a primary output - the condition is always active
                     comb_outputs_activations
                         .entry(ctrl.condition_iv >> 1)
                         .or_default()
                         .insert(2 | (ctrl.condition_iv & 1));
                 }
                 EndpointGroup::Display(disp) => {
-                    // Display nodes have an enable condition and args to evaluate
                     comb_outputs_activations
                         .entry(disp.enable_iv >> 1)
                         .or_default()
@@ -653,6 +724,12 @@ impl Partition {
         let mut stages = Vec::<BoomerangStage>::new();
         let mut total_write_outs = 0;
         while !unrealized_comb_outputs.is_empty() {
+            // Check cancel flag between stages
+            if let Some(flag) = cancel {
+                if flag.load(Ordering::Relaxed) {
+                    return None;
+                }
+            }
             let stage = build_one_boomerang_stage(
                 aig,
                 &mut unrealized_comb_outputs,
@@ -669,6 +746,19 @@ impl Partition {
     }
 }
 
+/// Collect combinational output pins for a set of endpoints.
+fn collect_comb_outputs(aig: &AIG, staged: &StagedAIG, endpoints: &[usize]) -> Vec<usize> {
+    let mut comb_outputs = Vec::new();
+    for &endpt_i in endpoints {
+        staged
+            .get_endpoint_group(aig, endpt_i)
+            .for_each_input(|i| {
+                comb_outputs.push(i);
+            });
+    }
+    comb_outputs
+}
+
 /// Given an initial clustering solution of endpoints, generate and map a
 /// refined solution.
 ///
@@ -680,20 +770,21 @@ pub fn process_partitions(
     mut parts: Vec<Vec<usize>>,
     max_stage_degrad: usize,
 ) -> Option<Vec<Partition>> {
-    let cnt_nodes = parts
+    // Phase 1: Compute node counts and bitsets for each partition using
+    // dense visited buffers (TopoTraverser) instead of IndexSet-based DFS.
+    let (cnt_nodes, mut node_bitsets): (Vec<usize>, Vec<Vec<u64>>) = parts
         .par_iter()
         .map(|v| {
-            let mut comb_outputs = Vec::new();
-            for &endpt_i in v {
-                staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
-                    comb_outputs.push(i);
-                });
-            }
-            let order =
-                aig.topo_traverse_generic(Some(&comb_outputs), staged.primary_inputs.as_ref());
-            order.len()
+            let comb_outputs = collect_comb_outputs(aig, staged, v);
+            let mut traverser = TopoTraverser::new(aig.num_aigpins);
+            let (order, bitset) = traverser.topo_traverse_with_bitset(
+                aig,
+                Some(&comb_outputs),
+                staged.primary_inputs.as_ref(),
+            );
+            (order.len(), bitset)
         })
-        .collect::<Vec<_>>();
+        .unzip();
 
     let all_original_parts = parts
         .par_iter()
@@ -721,14 +812,13 @@ pub fn process_partitions(
         }
         let mut merge_blacklist = HashSet::<usize>::new();
         let mut cnt_node_i = cnt_nodes[i];
-        loop {
-            let mut comb_outputs = Vec::new();
-            for &endpt_i in &parts[i] {
-                staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
-                    comb_outputs.push(i);
-                });
-            }
 
+        loop {
+            // Score merge candidates using bitset union + popcount
+            // instead of full DFS per candidate. This is exact because both
+            // traversals share the same primary_inputs boundary, so the merged
+            // traversal's node set equals the union of the two individual sets.
+            let node_bitset_i = &node_bitsets[i];
             let mut merge_choices = parts[i + 1..parts.len()]
                 .par_iter()
                 .enumerate()
@@ -736,31 +826,36 @@ pub fn process_partitions(
                     if v.is_empty() {
                         return None;
                     }
-                    if merge_blacklist.contains(&(i + j + 1)) {
+                    let abs_j = i + j + 1;
+                    if merge_blacklist.contains(&abs_j) {
                         return None;
                     }
-                    let mut comb_outputs = comb_outputs.clone();
-                    for &endpt_i in v {
-                        staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
-                            comb_outputs.push(i);
-                        });
-                    }
-                    let order = aig
-                        .topo_traverse_generic(Some(&comb_outputs), staged.primary_inputs.as_ref());
+                    // O(num_aigpins/64) bitset union instead of O(subgraph) DFS
+                    let merged_count =
+                        bitset_union_popcount(node_bitset_i, &node_bitsets[abs_j]);
                     Some((
-                        order.len() - cnt_nodes[i + j + 1].max(cnt_node_i),
-                        order.len(),
-                        i + j + 1,
+                        merged_count - cnt_nodes[abs_j].max(cnt_node_i),
+                        merged_count,
+                        abs_j,
                     ))
                 })
                 .collect::<Vec<_>>();
             merge_choices.sort();
             let mut merged = false;
 
+            /// Result of a speculative merge trial.
+            #[derive(Clone)]
+            enum TrialResult {
+                /// Trial completed: partition_ij is None if build failed, Some if succeeded.
+                Completed(Option<Partition>),
+                /// Trial was cancelled because another trial succeeded first.
+                /// Do not blacklist -- the merge may still be valid.
+                Cancelled,
+            }
             #[derive(Clone)]
             struct PartsPartitions {
                 parts_ij: Vec<usize>,
-                partition_ij: Option<Partition>,
+                result: TrialResult,
             }
             let mut merge_trials: Vec<Option<PartsPartitions>> = vec![None; merge_choices.len()];
             let mut parallel_trial_stride = 4;
@@ -768,35 +863,80 @@ pub fn process_partitions(
             for (merge_i, &(_cnt_diff, cnt_new, j)) in merge_choices.iter().enumerate() {
                 if merge_trials[merge_i].is_none() {
                     if merge_i > max_trials {
-                        break; // do not try too more
+                        break; // do not try too many
                     }
+                    // Cancel-on-success for speculative parallel trials
+                    let cancel_flag = AtomicBool::new(false);
                     let rhs = merge_trials.len().min(merge_i + parallel_trial_stride);
                     merge_trials[merge_i..rhs]
                         .par_iter_mut()
                         .enumerate()
                         .for_each(|(merge_j, trial)| {
                             let j = merge_choices[merge_i + merge_j].2;
-                            let parts_ij =
+                            let parts_ij: Vec<usize> =
                                 parts[i].iter().chain(parts[j].iter()).copied().collect();
-                            let partition_ij = Partition::build_one(aig, staged, &parts_ij);
-                            *trial = Some(PartsPartitions {
-                                parts_ij,
-                                partition_ij,
-                            });
+
+                            // Cheap pre-check before expensive build_one
+                            if Partition::quick_reject(aig, staged, &parts_ij) {
+                                *trial = Some(PartsPartitions {
+                                    parts_ij,
+                                    result: TrialResult::Completed(None),
+                                });
+                                return;
+                            }
+
+                            // Check cancel before starting expensive work
+                            if cancel_flag.load(Ordering::Relaxed) {
+                                *trial = Some(PartsPartitions {
+                                    parts_ij,
+                                    result: TrialResult::Cancelled,
+                                });
+                                return;
+                            }
+
+                            let partition_ij = Partition::build_one_cancellable(
+                                aig,
+                                staged,
+                                &parts_ij,
+                                Some(&cancel_flag),
+                            );
+                            if partition_ij.is_some() {
+                                cancel_flag.store(true, Ordering::Relaxed);
+                                *trial = Some(PartsPartitions {
+                                    parts_ij,
+                                    result: TrialResult::Completed(partition_ij),
+                                });
+                            } else {
+                                // build_one returned None -- could be genuine failure
+                                // or cancellation mid-build. If cancelled, don't blacklist.
+                                let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+                                *trial = Some(PartsPartitions {
+                                    parts_ij,
+                                    result: if was_cancelled {
+                                        TrialResult::Cancelled
+                                    } else {
+                                        TrialResult::Completed(None)
+                                    },
+                                });
+                            }
                         });
                     parallel_trial_stride *= 2;
                 }
 
                 let PartsPartitions {
                     parts_ij,
-                    partition_ij,
+                    result,
                 } = merge_trials[merge_i].take().unwrap();
 
-                match partition_ij {
-                    None => {
+                match result {
+                    TrialResult::Completed(None) => {
                         merge_blacklist.insert(j);
                     }
-                    Some(partition)
+                    TrialResult::Cancelled => {
+                        // Don't blacklist -- this trial was interrupted, not proven infeasible.
+                        // It will be retried if needed in a future iteration.
+                    }
+                    TrialResult::Completed(Some(partition))
                         if partition.stages.len() > max_original_nstages + max_stage_degrad =>
                     {
                         clilog::debug!(
@@ -809,8 +949,11 @@ pub fn process_partitions(
                         );
                         merge_blacklist.insert(j);
                     }
-                    Some(partition) => {
+                    TrialResult::Completed(Some(partition)) => {
                         clilog::info!("merged partition {} with {}", i, j);
+                        // Update bitset: OR in j's bitset
+                        let j_bitset = std::mem::take(&mut node_bitsets[j]);
+                        bitset_or_inplace(&mut node_bitsets[i], &j_bitset);
                         parts[i] = parts_ij;
                         parts[j] = vec![];
                         partition_self = partition;
