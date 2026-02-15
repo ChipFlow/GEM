@@ -17,3 +17,5 @@ gem_output*.vcd
 !dff_test.vcd
 !dff_test.gemparts
 !dff_test_synth.gv
+!sky130_timing/*.v
+!sky130_timing/*.vcd
