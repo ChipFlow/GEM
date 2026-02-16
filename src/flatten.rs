@@ -2057,6 +2057,54 @@ mod sdf_delay_tests {
     }
 
     #[test]
+    fn test_sdf_dff_constraints_loaded() {
+        let (netlistdb, aig) = load_inv_chain();
+        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("Failed to parse SDF");
+
+        let mut script = make_minimal_script(&aig);
+        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
+
+        // inv_chain has 2 DFFs: dff_in and dff_out
+        assert_eq!(script.dff_constraints.len(), 2,
+            "Expected 2 DFF constraints, got {}", script.dff_constraints.len());
+
+        // Build a map from cell_id to constraint for easier lookup
+        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+        let constraint_by_name: Vec<(&str, &DFFConstraint)> = script.dff_constraints.iter()
+            .map(|c| {
+                let name = cellid_to_sdf_path.get(&(c.cell_id as usize))
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
+                (name, c)
+            })
+            .collect();
+
+        // dff_in: SETUP 0.080ns=80ps, HOLD -0.030ns → clamped to 0
+        let dff_in = constraint_by_name.iter().find(|(name, _)| *name == "dff_in")
+            .expect("dff_in constraint not found");
+        assert_eq!(dff_in.1.setup_ps, 80,
+            "dff_in setup: expected 80ps, got {}ps", dff_in.1.setup_ps);
+        assert_eq!(dff_in.1.hold_ps, 0,
+            "dff_in hold: expected 0ps (negative clamped), got {}ps", dff_in.1.hold_ps);
+
+        // dff_out: SETUP 0.085ns=85ps, HOLD -0.028ns → clamped to 0
+        let dff_out = constraint_by_name.iter().find(|(name, _)| *name == "dff_out")
+            .expect("dff_out constraint not found");
+        assert_eq!(dff_out.1.setup_ps, 85,
+            "dff_out setup: expected 85ps, got {}ps", dff_out.1.setup_ps);
+        assert_eq!(dff_out.1.hold_ps, 0,
+            "dff_out hold: expected 0ps (negative clamped), got {}ps", dff_out.1.hold_ps);
+
+        // data_state_pos should be u32::MAX because make_minimal_script has empty output_map
+        assert_eq!(dff_in.1.data_state_pos, u32::MAX,
+            "dff_in data_state_pos should be u32::MAX with empty output_map");
+        assert_eq!(dff_out.1.data_state_pos, u32::MAX,
+            "dff_out data_state_pos should be u32::MAX with empty output_map");
+    }
+
+    #[test]
     fn test_iopath_no_paths_zero_delay() {
         // Cell with no IOPATHs → zero delay (with liberty fallback = None → default)
         use crate::sdf_parser::*;
@@ -2168,5 +2216,128 @@ mod constraint_buffer_tests {
         let script = make_script_with_constraints(1, u64::MAX, Vec::new());
         let (clock_ps, _buf) = script.build_timing_constraint_buffer();
         assert_eq!(clock_ps, u32::MAX);
+    }
+
+    // === Violation detection logic tests ===
+    // These reproduce the GPU kernel's setup/hold check arithmetic in pure Rust.
+    // The GPU kernel checks:
+    //   Setup: arrival > 0 && arrival + setup > clock_period → violation
+    //   Hold:  arrival < hold → violation
+
+    /// Simulate the GPU kernel's setup violation check.
+    /// Returns Some(slack) if violation, None otherwise.
+    fn check_setup_violation(arrival: u16, setup_ps: u16, clock_period: u32) -> Option<i32> {
+        if arrival > 0 && (arrival as u32 + setup_ps as u32) > clock_period {
+            let slack = clock_period as i32 - arrival as i32 - setup_ps as i32;
+            Some(slack)
+        } else {
+            None
+        }
+    }
+
+    /// Simulate the GPU kernel's hold violation check.
+    /// Returns Some(slack) if violation, None otherwise.
+    fn check_hold_violation(arrival: u16, hold_ps: u16) -> Option<i32> {
+        if (arrival as u32) < (hold_ps as u32) {
+            let slack = arrival as i32 - hold_ps as i32;
+            Some(slack)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn test_setup_violation_detection() {
+        // Clock period too short for arrival + setup
+        // arrival=900, setup=200 → 900+200=1100 > 1000 → violation
+        let result = check_setup_violation(900, 200, 1000);
+        assert!(result.is_some(), "Should detect setup violation");
+        assert_eq!(result.unwrap(), -100, "Slack should be -100ps");
+
+        // Borderline: arrival=800, setup=200 → 800+200=1000, NOT > 1000 → no violation
+        let result = check_setup_violation(800, 200, 1000);
+        assert!(result.is_none(), "No violation when arrival+setup == clock_period");
+    }
+
+    #[test]
+    fn test_setup_violation_with_realistic_inv_chain() {
+        // Use real inv_chain accumulated delay: 1323ps rise, setup=85ps (dff_out)
+        let arrival: u16 = 1323;
+        let setup: u16 = 85;
+
+        // clock_period=1200ps → 1323+85=1408 > 1200 → violation, slack=-208
+        let result = check_setup_violation(arrival, setup, 1200);
+        assert!(result.is_some(), "Should violate at 1200ps clock");
+        assert_eq!(result.unwrap(), -208, "Slack should be -208ps");
+
+        // clock_period=1500ps → 1323+85=1408 ≤ 1500 → no violation
+        let result = check_setup_violation(arrival, setup, 1500);
+        assert!(result.is_none(), "Should not violate at 1500ps clock");
+
+        // clock_period=1400ps → 1323+85=1408 > 1400 → borderline violation, slack=-8
+        let result = check_setup_violation(arrival, setup, 1400);
+        assert!(result.is_some(), "Should violate at 1400ps clock");
+        assert_eq!(result.unwrap(), -8, "Slack should be -8ps");
+    }
+
+    #[test]
+    fn test_hold_violation_detection() {
+        // arrival=10, hold=50 → 10 < 50 → violation, slack=-40
+        let result = check_hold_violation(10, 50);
+        assert!(result.is_some(), "Should detect hold violation");
+        assert_eq!(result.unwrap(), -40, "Slack should be -40ps");
+
+        // arrival=50, hold=50 → 50 is NOT < 50 → no violation
+        let result = check_hold_violation(50, 50);
+        assert!(result.is_none(), "No violation when arrival == hold");
+
+        // arrival=0, hold=50 → 0 < 50 → violation (hold check has no arrival>0 guard)
+        let result = check_hold_violation(0, 50);
+        assert!(result.is_some(), "arrival=0 should still trigger hold violation");
+        assert_eq!(result.unwrap(), -50, "Slack should be -50ps");
+    }
+
+    #[test]
+    fn test_no_violation_with_zero_constraint() {
+        // Constraint word = 0 means no DFF at this word → kernel skips entirely
+        // Simulate: extract setup/hold from packed word
+        let constraint_word: u32 = 0;
+        let setup_ps = (constraint_word >> 16) as u16;
+        let hold_ps = (constraint_word & 0xFFFF) as u16;
+
+        assert_eq!(setup_ps, 0);
+        assert_eq!(hold_ps, 0);
+
+        // With zero constraints, no violation is possible:
+        // Setup: any arrival + 0 > clock_period only if arrival > clock_period (unlikely in u16)
+        // Hold: arrival < 0 is impossible for u16
+        let result = check_hold_violation(0, hold_ps);
+        assert!(result.is_none(), "Zero hold constraint should never trigger");
+
+        let result = check_hold_violation(500, hold_ps);
+        assert!(result.is_none(), "Zero hold constraint should never trigger");
+    }
+
+    #[test]
+    fn test_constraint_buffer_with_tight_clock() {
+        // Build constraints with setup=200ps DFF at word 5 (data_state_pos=160..191)
+        let script = make_script_with_constraints(8, 1000, vec![
+            DFFConstraint { setup_ps: 200, hold_ps: 50, data_state_pos: 160, cell_id: 1 },
+        ]);
+        let (clock_ps, buf) = script.build_timing_constraint_buffer();
+        assert_eq!(clock_ps, 1000);
+
+        // Verify constraint is at word 5 (160/32 = 5)
+        assert_eq!(buf[5], (200u32 << 16) | 50, "Word 5 should have packed constraint");
+        // Other words should be zero
+        for i in [0, 1, 2, 3, 4, 6, 7] {
+            assert_eq!(buf[i], 0, "Word {} should have no constraint", i);
+        }
+
+        // Now simulate arrival=850ps at this word → setup violation
+        let setup_ps = (buf[5] >> 16) as u16;
+        let result = check_setup_violation(850, setup_ps, clock_ps);
+        assert!(result.is_some(), "arrival=850 + setup=200 = 1050 > 1000 → violation");
+        assert_eq!(result.unwrap(), -50, "Slack should be -50ps");
     }
 }

@@ -549,4 +549,90 @@ mod tests {
         assert_eq!(stats.setup_violations, 2);
         assert_eq!(stats.hold_violations, 1);
     }
+
+    /// Helper to add a timing violation event with all 4 data fields populated.
+    fn add_full_timing_event(
+        buf: &mut EventBuffer,
+        event_type: EventType,
+        cycle: u32,
+        word_id: u32,
+        slack: i32,
+        arrival: u32,
+        constraint: u32,
+    ) {
+        let idx = buf.count.fetch_add(1, Ordering::AcqRel) as usize;
+        if idx < MAX_EVENTS {
+            buf.events[idx].event_type = event_type as u32;
+            buf.events[idx].cycle = cycle;
+            buf.events[idx].message_id = 0;
+            buf.events[idx].data[0] = word_id;
+            buf.events[idx].data[1] = slack as u32;
+            buf.events[idx].data[2] = arrival;
+            buf.events[idx].data[3] = constraint;
+        }
+    }
+
+    #[test]
+    fn test_process_setup_violation_with_full_data() {
+        let mut buf = EventBuffer::new();
+        // word=15, slack=-200ps, arrival=4500ps, setup=200ps
+        add_full_timing_event(
+            &mut buf, EventType::SetupViolation, 100,
+            15, -200, 4500, 200,
+        );
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(stats.setup_violations, 1);
+        assert_eq!(stats.hold_violations, 0);
+    }
+
+    #[test]
+    fn test_process_hold_violation_with_full_data() {
+        let mut buf = EventBuffer::new();
+        // word=3, slack=-40ps, arrival=10ps, hold=50ps
+        add_full_timing_event(
+            &mut buf, EventType::HoldViolation, 55,
+            3, -40, 10, 50,
+        );
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(stats.setup_violations, 0);
+        assert_eq!(stats.hold_violations, 1);
+    }
+
+    #[test]
+    fn test_mixed_violations_and_sim_control() {
+        let mut buf = EventBuffer::new();
+        // Setup violation, then hold violation, then $stop
+        add_full_timing_event(
+            &mut buf, EventType::SetupViolation, 10,
+            5, -100, 900, 200,
+        );
+        add_full_timing_event(
+            &mut buf, EventType::HoldViolation, 11,
+            2, -30, 20, 50,
+        );
+        add_event(&mut buf, EventType::Stop, 12);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        // $stop causes Pause, violations are counted
+        assert_eq!(control, SimControl::Pause);
+        assert_eq!(stats.setup_violations, 1);
+        assert_eq!(stats.hold_violations, 1);
+        assert_eq!(stats.stop_count, 1);
+    }
 }
