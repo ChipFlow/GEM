@@ -828,11 +828,29 @@ fn main() {
         }
     }
 
-    let script = FlattenedScriptV1::from(
+    let mut script = FlattenedScriptV1::from(
         &aig, &stageds.iter().map(|(_, _, staged)| staged).collect::<Vec<_>>(),
         &parts_in_stages.iter().map(|ps| ps.as_slice()).collect::<Vec<_>>(),
         args.num_blocks, input_layout
     );
+
+    // Load SDF timing data if provided
+    if let Some(ref sdf_path) = args.sdf {
+        let sdf_corner = match args.sdf_corner.as_str() {
+            "min" => gem::sdf_parser::SdfCorner::Min,
+            "max" => gem::sdf_parser::SdfCorner::Max,
+            _ => gem::sdf_parser::SdfCorner::Typ,
+        };
+        clilog::info!("Loading SDF: {:?} (corner: {})", sdf_path, args.sdf_corner);
+        match gem::sdf_parser::SdfFile::parse_file(sdf_path, sdf_corner) {
+            Ok(sdf) => {
+                clilog::info!("SDF loaded: {}", sdf.summary());
+                script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 25000, None, args.sdf_debug);
+                script.inject_timing_to_script();
+            }
+            Err(e) => clilog::warn!("Failed to load SDF: {}", e),
+        }
+    }
 
     use std::collections::hash_map::DefaultHasher;
     use std::hash::Hasher;

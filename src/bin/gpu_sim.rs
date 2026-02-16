@@ -1476,7 +1476,7 @@ fn main() {
         }
     }
 
-    let script = FlattenedScriptV1::from(
+    let mut script = FlattenedScriptV1::from(
         &aig,
         &stageds.iter().map(|(_, _, staged)| staged).collect::<Vec<_>>(),
         &parts_in_stages.iter().map(|ps| ps.as_slice()).collect::<Vec<_>>(),
@@ -1491,6 +1491,41 @@ fn main() {
         script.num_major_stages
     );
     clilog::finish!(timer_script);
+
+    // ── Load SDF timing data (from CLI or testbench config) ──────────────
+    {
+        let sdf_path = args.sdf.clone().or_else(|| {
+            config.timing.as_ref().map(|t| std::path::PathBuf::from(&t.sdf_file))
+        });
+        let sdf_corner_str = if args.sdf.is_some() {
+            &args.sdf_corner
+        } else if let Some(ref t) = config.timing {
+            &t.sdf_corner
+        } else {
+            "typ"
+        };
+        let sdf_corner = match sdf_corner_str {
+            "min" => gem::sdf_parser::SdfCorner::Min,
+            "max" => gem::sdf_parser::SdfCorner::Max,
+            _ => gem::sdf_parser::SdfCorner::Typ,
+        };
+
+        if let Some(ref sdf_path) = sdf_path {
+            clilog::info!("Loading SDF: {:?} (corner: {})", sdf_path, sdf_corner_str);
+            match gem::sdf_parser::SdfFile::parse_file(sdf_path, sdf_corner) {
+                Ok(sdf) => {
+                    clilog::info!("SDF loaded: {}", sdf.summary());
+                    let clock_ps = config.timing.as_ref()
+                        .map(|t| t.clock_period_ps)
+                        .or(config.clock_period_ps)
+                        .unwrap_or(25000);
+                    script.load_timing_from_sdf(&aig, &netlistdb, &sdf, clock_ps, None, args.sdf_debug);
+                    script.inject_timing_to_script();
+                }
+                Err(e) => clilog::warn!("Failed to load SDF: {}", e),
+            }
+        }
+    }
 
     // ── Build GPIO mapping ───────────────────────────────────────────────
 

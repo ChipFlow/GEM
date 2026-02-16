@@ -243,15 +243,6 @@ jobs:
       - name: Run SKY130 timing simulation
         timeout-minutes: 5
         run: |
-          # Note: Liberty file parsing for the full SKY130 library (~12MB) is slow.
-          # For CI, we use default timing values. The simulation still validates
-          # that the netlist parses correctly and the simulator runs.
-          #
-          # To test with real timing values, run locally with:
-          # cargo run -r --bin timing_sim_cpu -- tests/timing_test/minimal_build/6_final.v \
-          #   tests/timing_test/6_final_test_input.vcd --clock-period 25000 \
-          #   --liberty path/to/sky130_fd_sc_hd__tt_025C_1v80.lib
-
           # Build command arguments (using default timing values)
           ARGS=(
             tests/timing_test/minimal_build/6_final.v
@@ -260,7 +251,16 @@ jobs:
             --max-cycles 10
           )
 
-          echo "Running timing simulation with default timing values"
+          # Add SDF back-annotation if available
+          SDF_FILE="tests/timing_test/minimal_build/6_final.sdf"
+          if [ -f "$SDF_FILE" ]; then
+            echo "Running timing simulation with SDF back-annotation"
+            ARGS+=(--sdf "$SDF_FILE" --sdf-corner typ)
+          else
+            echo "Running timing simulation with default timing values"
+            echo "(SDF file not available — add 6_final.sdf for post-layout accuracy)"
+          fi
+
           # Run timing simulation on the post-P&R netlist
           cargo run --release --bin timing_sim_cpu -- "${ARGS[@]}" 2>&1 | tee sky130_timing.txt
 

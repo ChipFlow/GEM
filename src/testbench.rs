@@ -209,6 +209,26 @@ pub struct TestbenchConfig {
     pub sram_init: Option<SramInitConfig>,
     pub output_events: Option<String>,
     pub events_reference: Option<String>,
+    /// Timing simulation configuration for post-layout SDF back-annotation.
+    pub timing: Option<TimingSimConfig>,
+}
+
+/// Configuration for post-layout timing simulation with SDF back-annotation.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TimingSimConfig {
+    /// Path to SDF file from OpenLane2 (e.g. 6_final.sdf).
+    pub sdf_file: String,
+    /// SDF corner selection: "min", "typ", or "max".
+    #[serde(default = "default_sdf_corner")]
+    pub sdf_corner: String,
+    /// Clock period in picoseconds for timing checks.
+    pub clock_period_ps: u64,
+    /// Maximum number of timing violations before stopping simulation.
+    pub max_violations_before_stop: Option<usize>,
+}
+
+fn default_sdf_corner() -> String {
+    "typ".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
