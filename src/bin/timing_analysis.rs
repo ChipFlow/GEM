@@ -50,6 +50,18 @@ struct Args {
     /// Output format: text, json.
     #[clap(long, default_value = "text")]
     format: String,
+
+    /// Path to SDF file for per-instance back-annotated delays.
+    #[clap(long)]
+    sdf: Option<PathBuf>,
+
+    /// SDF corner selection: min, typ, or max (default: typ).
+    #[clap(long, default_value = "typ")]
+    sdf_corner: String,
+
+    /// Enable SDF debug output (reports unmatched instances).
+    #[clap(long)]
+    sdf_debug: bool,
 }
 
 fn main() {

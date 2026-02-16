@@ -244,6 +244,14 @@ pub struct AIG {
     /// Clock period in picoseconds (for STA calculations).
     /// Default is 1000ps (1ns) if not specified.
     pub clock_period_ps: u64,
+
+    // === SDF Back-Annotation Support ===
+
+    /// Maps AIG pin index → (netlistdb cell_id, cell_type, output_pin_name).
+    /// Only populated for the "output" AIG pin of each decomposed cell.
+    /// Internal AND gates from multi-gate decompositions get None.
+    /// Index 0 is Tie0 (None). Populated during AIG construction from netlistdb.
+    pub aigpin_cell_origin: Vec<Option<(usize, String, String)>>,
 }
 
 impl Default for AIG {
@@ -268,6 +276,7 @@ impl Default for AIG {
             hold_slacks: Vec::new(),
             dff_timing: None,
             clock_period_ps: 1000, // Default 1ns clock period
+            aigpin_cell_origin: Vec::new(),
         }
     }
 }
@@ -276,6 +285,7 @@ impl AIG {
     fn add_aigpin(&mut self, driver: DriverType) -> usize {
         self.num_aigpins += 1;
         self.drivers.push(driver);
+        self.aigpin_cell_origin.push(None);
         self.num_aigpins
     }
 
@@ -618,6 +628,12 @@ impl AIG {
                     if matches!(celltype, "DFF" | "DFFSR") {
                         // Pre-create DFF Q output
                         let q = self.add_aigpin(DriverType::DFF(cellid));
+                        // Record cell origin for DFF Q output (for SDF CLK→Q delay)
+                        self.aigpin_cell_origin[q] = Some((
+                            cellid,
+                            celltype.to_string(),
+                            "Q".to_string(),
+                        ));
                         let dff = self.dffs.entry(cellid).or_default();
                         dff.q = q;
 
@@ -648,6 +664,12 @@ impl AIG {
                         let o = self.add_aigpin(DriverType::SRAM(cellid));
                         self.pin2aigpin_iv[pinid] = o << 1;
                         assert_eq!(netlistdb.pinnames[pinid].1.as_str(), "PORT_R_RD_DATA");
+                        // Record cell origin for SRAM data output
+                        self.aigpin_cell_origin[o] = Some((
+                            cellid,
+                            celltype.to_string(),
+                            "PORT_R_RD_DATA".to_string(),
+                        ));
                         let sram = self.srams.entry(cellid).or_default();
                         sram.port_r_rd_data[netlistdb.pinnames[pinid].2.unwrap() as usize] = o;
                         topo_instack[pinid] = false;
@@ -916,6 +938,12 @@ impl AIG {
             let o = self.add_aigpin(DriverType::SRAM(cellid));
             self.pin2aigpin_iv[pinid] = o << 1;
             assert_eq!(output_pin_name, "DO", "Expected DO output pin for CF_SRAM");
+            // Record cell origin for SRAM data output
+            self.aigpin_cell_origin[o] = Some((
+                cellid,
+                celltype.to_string(),
+                output_pin_name.to_string(),
+            ));
             let sram = self.srams.entry(cellid).or_default();
             let bit_idx = netlistdb.pinnames[pinid].2.expect("DO pin must have bit index") as usize;
             sram.port_r_rd_data[bit_idx] = o;
@@ -925,6 +953,12 @@ impl AIG {
         // Sequential cells: pre-create DFF Q output
         if is_sequential_cell(cell_type) {
             let q = self.add_aigpin(DriverType::DFF(cellid));
+            // Record cell origin for DFF Q output (for SDF CLK→Q delay)
+            self.aigpin_cell_origin[q] = Some((
+                cellid,
+                cell_type.to_string(),
+                "Q".to_string(),
+            ));
             let dff = self.dffs.entry(cellid).or_default();
             dff.q = q;
             return;
@@ -1086,6 +1120,19 @@ impl AIG {
         };
 
         self.pin2aigpin_iv[pinid] = final_iv;
+
+        // Record cell origin for SDF back-annotation.
+        // The full IOPATH delay goes on the output AIG pin only;
+        // internal AND gates from multi-gate decompositions keep None (zero delay).
+        let output_aigpin = final_iv >> 1;
+        if output_aigpin > 0 && output_aigpin < self.aigpin_cell_origin.len() {
+            let output_pin_name = netlistdb.pinnames[pinid].1.as_str();
+            self.aigpin_cell_origin[output_aigpin] = Some((
+                cellid,
+                cell_type.to_string(),
+                output_pin_name.to_string(),
+            ));
+        }
     }
 
     /// Post-process for SKY130 multi-output cells (ha, fa, dfbbp).
@@ -1163,6 +1210,16 @@ impl AIG {
         };
         let final_iv = if decomp.output_inverted { output_iv ^ 1 } else { output_iv };
         self.pin2aigpin_iv[output_pinid] = final_iv;
+
+        // Record cell origin for SDF back-annotation
+        let output_aigpin = final_iv >> 1;
+        if output_aigpin > 0 && output_aigpin < self.aigpin_cell_origin.len() {
+            self.aigpin_cell_origin[output_aigpin] = Some((
+                cellid,
+                cell_type.to_string(),
+                output_pin_name.to_string(),
+            ));
+        }
     }
 
     /// Resolve a decomposition reference to an aigpin_iv value.
@@ -1237,6 +1294,7 @@ impl AIG {
             num_aigpins: 0,
             pin2aigpin_iv: vec![usize::MAX; netlistdb.num_pins],
             drivers: vec![DriverType::Tie0],
+            aigpin_cell_origin: vec![None], // Tie0 has no cell origin
             ..Default::default()
         };
 

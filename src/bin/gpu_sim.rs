@@ -77,6 +77,18 @@ struct Args {
     /// and measure per-kernel GPU execution time.
     #[clap(long)]
     gpu_profile: bool,
+
+    /// Path to SDF file for per-instance back-annotated delays.
+    #[clap(long)]
+    sdf: Option<PathBuf>,
+
+    /// SDF corner selection: min, typ, or max (default: typ).
+    #[clap(long, default_value = "typ")]
+    sdf_corner: String,
+
+    /// Enable SDF debug output (reports unmatched instances).
+    #[clap(long)]
+    sdf_debug: bool,
 }
 
 // ── Simulation Parameters (must match Metal shader) ──────────────────────────

@@ -149,6 +149,20 @@ struct Args {
     /// Defaults to sky130_fd_sc_hd/cells if the submodule is present.
     #[clap(long)]
     pdk_cells: Option<PathBuf>,
+
+    /// Path to SDF file for per-instance back-annotated delays.
+    /// When provided, overrides Liberty-based uniform delays with
+    /// post-layout IOPATH delays from place-and-route.
+    #[clap(long)]
+    sdf: Option<PathBuf>,
+
+    /// SDF corner selection: min, typ, or max (default: typ).
+    #[clap(long, default_value = "typ")]
+    sdf_corner: String,
+
+    /// Enable SDF debug output (reports unmatched instances).
+    #[clap(long)]
+    sdf_debug: bool,
 }
 
 // TestbenchConfig, FlashConfig, UartConfig, GpioConfig, SramInitConfig,
@@ -990,6 +1004,115 @@ impl TimingState {
         let b_arr = if b_idx == 0 { 0 } else { self.arrivals[b_idx] };
         let delay = self.delays[idx].max_delay() as u64;
         self.arrivals[idx] = a_arr.max(b_arr) + delay;
+    }
+
+    /// Initialize delays from SDF per-instance back-annotated data.
+    /// Falls back to Liberty for cells not found in SDF.
+    fn init_delays_from_sdf(
+        &mut self,
+        aig: &AIG,
+        netlistdb: &NetlistDB,
+        sdf: &gem::sdf_parser::SdfFile,
+        lib: &TimingLibrary,
+        debug: bool,
+    ) {
+        // Use the same mapping logic as FlattenedScriptV1::load_timing_from_sdf
+        let and_delay = lib.and_gate_delay("AND2_00_0").unwrap_or((1, 1));
+        let dff_timing = lib.dff_timing();
+        let sram_timing = lib.sram_timing();
+
+        // Build cellid → SDF path mapping
+        let mut cellid_to_path: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        for cellid in 1..netlistdb.num_cells {
+            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+                .map(|s| s.as_str())
+                .collect();
+            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
+            cellid_to_path.insert(cellid, sdf_path);
+        }
+
+        let mut matched = 0usize;
+        let mut unmatched = 0usize;
+
+        for aigpin in 1..=aig.num_aigpins {
+            let delay = if let Some((cellid, _cell_type, output_pin_name)) =
+                &aig.aigpin_cell_origin[aigpin]
+            {
+                if let Some(sdf_path) = cellid_to_path.get(cellid) {
+                    if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
+                        let iopath = sdf_cell.iopaths.iter()
+                            .find(|p| p.output_pin == *output_pin_name)
+                            .or_else(|| sdf_cell.iopaths.first());
+                        if let Some(iopath) = iopath {
+                            matched += 1;
+                            PackedDelay::from_u64(iopath.delay.rise_ps, iopath.delay.fall_ps)
+                        } else {
+                            unmatched += 1;
+                            self.liberty_fallback_delay(&aig.drivers[aigpin], and_delay, &dff_timing, &sram_timing)
+                        }
+                    } else {
+                        unmatched += 1;
+                        if debug {
+                            clilog::debug!("SDF: no match for instance '{}'", sdf_path);
+                        }
+                        self.liberty_fallback_delay(&aig.drivers[aigpin], and_delay, &dff_timing, &sram_timing)
+                    }
+                } else {
+                    PackedDelay::default()
+                }
+            } else {
+                // No cell origin — internal decomposition gate or input
+                match &aig.drivers[aigpin] {
+                    DriverType::AndGate(_, _) => PackedDelay::default(),
+                    DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
+                        PackedDelay::default()
+                    }
+                    _ => self.liberty_fallback_delay(&aig.drivers[aigpin], and_delay, &dff_timing, &sram_timing),
+                }
+            };
+            self.delays[aigpin] = delay;
+        }
+
+        // Update setup/hold from SDF timing checks
+        for (&cell_id, _dff) in &aig.dffs {
+            if let Some(sdf_path) = cellid_to_path.get(&cell_id) {
+                if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
+                    if let Some(setup) = sdf_cell.timing_checks.iter()
+                        .find(|c| c.check_type == gem::sdf_parser::TimingCheckType::Setup)
+                    {
+                        self.setup_time_ps = self.setup_time_ps.max(setup.value_ps.max(0) as u64);
+                    }
+                    if let Some(hold) = sdf_cell.timing_checks.iter()
+                        .find(|c| c.check_type == gem::sdf_parser::TimingCheckType::Hold)
+                    {
+                        self.hold_time_ps = self.hold_time_ps.max(hold.value_ps.max(0) as u64);
+                    }
+                }
+            }
+        }
+
+        clilog::info!("SDF timing: {} matched, {} unmatched (Liberty fallback)", matched, unmatched);
+    }
+
+    fn liberty_fallback_delay(
+        &self,
+        driver: &DriverType,
+        and_delay: (u64, u64),
+        dff_timing: &Option<gem::liberty_parser::DFFTiming>,
+        sram_timing: &Option<gem::liberty_parser::SRAMTiming>,
+    ) -> PackedDelay {
+        match driver {
+            DriverType::AndGate(_, _) => PackedDelay::from_u64(and_delay.0, and_delay.1),
+            DriverType::DFF(_) => dff_timing
+                .as_ref()
+                .map(|t| PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
+                .unwrap_or_default(),
+            DriverType::SRAM(_) => sram_timing
+                .as_ref()
+                .map(|t| PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps))
+                .unwrap_or(PackedDelay::new(1, 1)),
+            _ => PackedDelay::default(),
+        }
     }
 
     /// Reset arrival times to zero (for new cycle).
@@ -2170,7 +2293,19 @@ fn main() {
 
     // Initialize timing state
     let mut state = TimingState::new(aig.num_aigpins, &lib);
-    state.init_delays(&aig, &lib);
+
+    // Load timing: SDF (per-instance) or Liberty (uniform)
+    if let Some(ref sdf_path) = args.sdf {
+        let corner: gem::sdf_parser::SdfCorner = args.sdf_corner.parse()
+            .unwrap_or_else(|e| panic!("Invalid SDF corner: {}", e));
+        clilog::info!("Loading SDF: {} (corner: {})", sdf_path.display(), corner);
+        let sdf = gem::sdf_parser::SdfFile::parse_file(sdf_path, corner)
+            .unwrap_or_else(|e| panic!("Failed to parse SDF: {}", e));
+        clilog::info!("{}", sdf.summary());
+        state.init_delays_from_sdf(&aig, &netlistdb, &sdf, &lib, args.sdf_debug);
+    } else {
+        state.init_delays(&aig, &lib);
+    };
 
     // Identify clock ports for posedge detection
     let mut posedge_monitor = std::collections::HashSet::new();

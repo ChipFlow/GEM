@@ -91,6 +91,18 @@ struct SimulatorArgs {
     /// If not specified, uses default AIGPDK library.
     #[clap(long)]
     liberty: Option<PathBuf>,
+
+    /// Path to SDF file for per-instance back-annotated delays.
+    #[clap(long)]
+    sdf: Option<PathBuf>,
+
+    /// SDF corner selection: min, typ, or max (default: typ).
+    #[clap(long, default_value = "typ")]
+    sdf_corner: String,
+
+    /// Enable SDF debug output (reports unmatched instances).
+    #[clap(long)]
+    sdf_debug: bool,
 }
 
 /// Hierarchical name representation in VCD.

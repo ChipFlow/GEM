@@ -6,10 +6,12 @@ use crate::aig::{DriverType, EndpointGroup, AIG};
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
 use crate::liberty_parser::TimingLibrary;
 use crate::pe::{Partition, BOOMERANG_NUM_STAGES};
+use crate::sdf_parser::SdfFile;
 use crate::staging::StagedAIG;
 use indexmap::IndexMap;
+use netlistdb::NetlistDB;
 use rayon::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use ulib::UVec;
 
 pub const NUM_THREADS_V1: usize = 1 << (BOOMERANG_NUM_STAGES - 5);
@@ -1315,5 +1317,221 @@ impl FlattenedScriptV1 {
     /// Check if timing data is available.
     pub fn has_timing(&self) -> bool {
         self.timing_enabled
+    }
+
+    /// Load timing from an SDF file with per-instance back-annotated delays.
+    ///
+    /// This replaces the uniform Liberty-based delays with per-instance IOPATH
+    /// delays from post-layout SDF. Uses `aigpin_cell_origin` to map SDF instances
+    /// to AIG pins.
+    ///
+    /// For decomposed cells (e.g., SKY130 nand2 → 1 AND gate), the full IOPATH
+    /// delay is applied to the output AIG pin. Internal AND gates get zero delay.
+    ///
+    /// Optionally falls back to Liberty for cells not found in SDF.
+    pub fn load_timing_from_sdf(
+        &mut self,
+        aig: &AIG,
+        netlistdb: &NetlistDB,
+        sdf: &SdfFile,
+        clock_period_ps: u64,
+        liberty_fallback: Option<&TimingLibrary>,
+        debug: bool,
+    ) {
+        // Build cell_id → SDF hierarchical instance path mapping.
+        // SDF uses dot-separated paths: "u_cpu.alu.and_gate"
+        // NetlistDB HierName iterates leaf-first, so we reverse and join with dots.
+        let mut cellid_to_sdf_path: HashMap<usize, String> = HashMap::new();
+        for cellid in 1..netlistdb.num_cells {
+            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>();
+            // parts is leaf-first, reverse to get root-first, then join with '.'
+            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
+            cellid_to_sdf_path.insert(cellid, sdf_path);
+        }
+
+        // Initialize gate delays
+        self.gate_delays = vec![PackedDelay::default(); aig.num_aigpins + 1];
+
+        let mut matched = 0usize;
+        let mut unmatched = 0usize;
+        let mut fallback_count = 0usize;
+        let mut unmatched_instances: Vec<String> = Vec::new();
+
+        // Get Liberty fallback delays
+        let lib_and_delay = liberty_fallback
+            .and_then(|lib| lib.and_gate_delay("AND2_00_0"))
+            .unwrap_or((0, 0));
+        let lib_dff_timing = liberty_fallback.and_then(|lib| lib.dff_timing());
+        let lib_sram_timing = liberty_fallback.and_then(|lib| lib.sram_timing());
+
+        for aigpin in 1..=aig.num_aigpins {
+            let delay = if let Some((cellid, _cell_type, output_pin_name)) =
+                &aig.aigpin_cell_origin[aigpin]
+            {
+                // This AIG pin has a cell origin — look up SDF delay
+                if let Some(sdf_path) = cellid_to_sdf_path.get(cellid) {
+                    if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
+                        // Find matching IOPATH for this output pin
+                        let iopath = sdf_cell.iopaths.iter().find(|p| p.output_pin == *output_pin_name);
+                        if let Some(iopath) = iopath {
+                            matched += 1;
+                            PackedDelay::from_u64(iopath.delay.rise_ps, iopath.delay.fall_ps)
+                        } else if !sdf_cell.iopaths.is_empty() {
+                            // Cell found but no matching output pin — use first IOPATH
+                            matched += 1;
+                            let first = &sdf_cell.iopaths[0];
+                            PackedDelay::from_u64(first.delay.rise_ps, first.delay.fall_ps)
+                        } else {
+                            // Cell found but no IOPATHs (shouldn't happen)
+                            unmatched += 1;
+                            if debug && unmatched_instances.len() < 20 {
+                                unmatched_instances.push(format!("{} (no IOPATH)", sdf_path));
+                            }
+                            self.get_liberty_fallback_delay(
+                                &aig.drivers[aigpin],
+                                lib_and_delay,
+                                &lib_dff_timing,
+                                &lib_sram_timing,
+                                &mut fallback_count,
+                            )
+                        }
+                    } else {
+                        // SDF cell not found for this instance
+                        unmatched += 1;
+                        if debug && unmatched_instances.len() < 20 {
+                            unmatched_instances.push(sdf_path.clone());
+                        }
+                        self.get_liberty_fallback_delay(
+                            &aig.drivers[aigpin],
+                            lib_and_delay,
+                            &lib_dff_timing,
+                            &lib_sram_timing,
+                            &mut fallback_count,
+                        )
+                    }
+                } else {
+                    // No SDF path for cellid (shouldn't happen)
+                    PackedDelay::default()
+                }
+            } else {
+                // No cell origin — internal decomposition gate or input/tie
+                match &aig.drivers[aigpin] {
+                    DriverType::AndGate(_, _) => {
+                        // Internal AND gate from cell decomposition — zero delay.
+                        // The full IOPATH delay was placed on the output AIG pin.
+                        PackedDelay::default()
+                    }
+                    DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
+                        PackedDelay::default()
+                    }
+                    DriverType::DFF(_) => {
+                        // DFF without cell origin (shouldn't normally happen with SKY130)
+                        self.get_liberty_fallback_delay(
+                            &aig.drivers[aigpin],
+                            lib_and_delay,
+                            &lib_dff_timing,
+                            &lib_sram_timing,
+                            &mut fallback_count,
+                        )
+                    }
+                    DriverType::SRAM(_) => {
+                        self.get_liberty_fallback_delay(
+                            &aig.drivers[aigpin],
+                            lib_and_delay,
+                            &lib_dff_timing,
+                            &lib_sram_timing,
+                            &mut fallback_count,
+                        )
+                    }
+                }
+            };
+            self.gate_delays[aigpin] = delay;
+        }
+
+        // Build DFF constraints from SDF timing checks
+        self.dff_constraints = Vec::with_capacity(aig.dffs.len());
+        let lib_setup = lib_dff_timing.as_ref().map(|t| t.max_setup()).unwrap_or(0) as u16;
+        let lib_hold = lib_dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0) as u16;
+
+        for (&cell_id, dff) in &aig.dffs {
+            let data_state_pos = self
+                .output_map
+                .get(&dff.d_iv)
+                .copied()
+                .unwrap_or(u32::MAX);
+
+            // Try to get setup/hold from SDF timing checks
+            let (setup_ps, hold_ps) = if let Some(sdf_path) = cellid_to_sdf_path.get(&cell_id) {
+                if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
+                    let setup = sdf_cell.timing_checks.iter()
+                        .find(|c| c.check_type == crate::sdf_parser::TimingCheckType::Setup)
+                        .map(|c| c.value_ps.max(0) as u16)
+                        .unwrap_or(lib_setup);
+                    let hold = sdf_cell.timing_checks.iter()
+                        .find(|c| c.check_type == crate::sdf_parser::TimingCheckType::Hold)
+                        .map(|c| c.value_ps.max(0) as u16)
+                        .unwrap_or(lib_hold);
+                    (setup, hold)
+                } else {
+                    (lib_setup, lib_hold)
+                }
+            } else {
+                (lib_setup, lib_hold)
+            };
+
+            self.dff_constraints.push(DFFConstraint {
+                setup_ps,
+                hold_ps,
+                data_state_pos,
+                cell_id: cell_id as u32,
+            });
+        }
+
+        self.clock_period_ps = clock_period_ps;
+        self.timing_enabled = true;
+
+        clilog::info!(
+            "Loaded SDF timing: {} matched, {} unmatched ({} Liberty fallback), {} DFF constraints, clock={}ps",
+            matched, unmatched, fallback_count, self.dff_constraints.len(), clock_period_ps
+        );
+
+        if debug && !unmatched_instances.is_empty() {
+            clilog::warn!("SDF unmatched instances (first {}):", unmatched_instances.len());
+            for inst in &unmatched_instances {
+                clilog::warn!("  {}", inst);
+            }
+        }
+    }
+
+    /// Get a fallback delay from Liberty for a given driver type.
+    fn get_liberty_fallback_delay(
+        &self,
+        driver: &DriverType,
+        and_delay: (u64, u64),
+        dff_timing: &Option<crate::liberty_parser::DFFTiming>,
+        sram_timing: &Option<crate::liberty_parser::SRAMTiming>,
+        fallback_count: &mut usize,
+    ) -> PackedDelay {
+        *fallback_count += 1;
+        match driver {
+            DriverType::AndGate(_, _) => {
+                PackedDelay::from_u64(and_delay.0, and_delay.1)
+            }
+            DriverType::DFF(_) => {
+                dff_timing
+                    .as_ref()
+                    .map(|t| PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
+                    .unwrap_or_default()
+            }
+            DriverType::SRAM(_) => {
+                sram_timing
+                    .as_ref()
+                    .map(|t| PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps))
+                    .unwrap_or(PackedDelay::new(1, 1))
+            }
+            _ => PackedDelay::default(),
+        }
     }
 }

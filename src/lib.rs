@@ -23,3 +23,5 @@ pub mod event_buffer;
 pub mod display;
 
 pub mod testbench;
+
+pub mod sdf_parser;
