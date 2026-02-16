@@ -220,6 +220,11 @@ pub struct TestbenchConfig {
     /// These are driven every tick on both clock edges.
     #[serde(default)]
     pub constant_inputs: HashMap<String, u8>,
+    /// Constant port values: port name → value (0 or 1).
+    /// For non-GPIO input ports (e.g. resetb_h, por_l) that need
+    /// to be driven to a fixed value every tick.
+    #[serde(default)]
+    pub constant_ports: HashMap<String, u8>,
 }
 
 /// Configuration for post-layout timing simulation with SDF back-annotation.

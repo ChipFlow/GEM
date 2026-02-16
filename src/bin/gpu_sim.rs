@@ -885,6 +885,8 @@ struct GpioMapping {
     posedge_flag_bits: Vec<u32>,
     /// Negedge clock flag bit positions
     negedge_flag_bits: Vec<u32>,
+    /// Named input port → state bit position (for non-GPIO ports like por_l, resetb_h)
+    named_input_bits: HashMap<String, u32>,
 }
 
 /// Set a single bit in a packed u32 state buffer.
@@ -921,6 +923,7 @@ fn build_gpio_mapping(
     let mut output_bits: HashMap<usize, u32> = HashMap::new();
     let mut posedge_flag_bits: Vec<u32> = Vec::new();
     let mut negedge_flag_bits: Vec<u32> = Vec::new();
+    let mut named_input_bits: HashMap<String, u32> = HashMap::new();
 
     // Build reverse lookup: port_name → gpio_index for port_mapping mode
     let input_name_to_gpio: HashMap<String, usize> = port_mapping
@@ -947,6 +950,10 @@ fn build_gpio_mapping(
                         input_bits.insert(gpio_idx, pos);
                         clilog::debug!("input[{}] = pin '{}' → state pos {}", gpio_idx, pin_name, pos);
                     }
+                }
+                // Also store by name for constant_ports
+                if let Some(&pos) = script.input_map.get(&aigpin_idx) {
+                    named_input_bits.insert(pin_name.clone(), pos);
                 }
             }
             DriverType::InputClockFlag(pinid, is_negedge) => {
@@ -999,11 +1006,14 @@ fn build_gpio_mapping(
                   input_bits.len(), output_bits.len(),
                   posedge_flag_bits.len(), negedge_flag_bits.len());
 
+    clilog::info!("Named input ports: {} mapped", named_input_bits.len());
+
     GpioMapping {
         input_bits,
         output_bits,
         posedge_flag_bits,
         negedge_flag_bits,
+        named_input_bits,
     }
 }
 
@@ -1159,6 +1169,7 @@ fn build_falling_edge_ops(
     reset_gpio: usize,
     reset_val: u8,
     constant_inputs: &HashMap<String, u8>,
+    constant_ports: &HashMap<String, u8>,
 ) -> Vec<BitOp> {
     let mut ops = Vec::new();
     // Clock = 0
@@ -1181,6 +1192,15 @@ fn build_falling_edge_ops(
             }
         }
     }
+    // Named constant ports (e.g. por_l, resetb_h)
+    for (port_name, val) in constant_ports {
+        if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
+            ops.push(BitOp { position: pos, value: *val as u32 });
+            clilog::debug!("constant_port '{}' → pos {} = {}", port_name, pos, val);
+        } else {
+            clilog::warn!("constant_port '{}' not found in named_input_bits", port_name);
+        }
+    }
     ops
 }
 
@@ -1193,6 +1213,7 @@ fn build_rising_edge_ops(
     reset_gpio: usize,
     reset_val: u8,
     constant_inputs: &HashMap<String, u8>,
+    constant_ports: &HashMap<String, u8>,
 ) -> Vec<BitOp> {
     let mut ops = Vec::new();
     // Clock = 1
@@ -1213,6 +1234,12 @@ fn build_rising_edge_ops(
             if let Some(&pos) = gpio_map.input_bits.get(&gpio_idx) {
                 ops.push(BitOp { position: pos, value: *val as u32 });
             }
+        }
+    }
+    // Named constant ports
+    for (port_name, val) in constant_ports {
+        if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
+            ops.push(BitOp { position: pos, value: *val as u32 });
         }
     }
     ops
@@ -1923,6 +1950,16 @@ fn main() {
     set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
     clilog::info!("Initial state: reset GPIO {} = {} (active)", reset_gpio, reset_val);
 
+    // Initialize constant ports (e.g. por_l=1, resetb_h=1 for Caravel wrapper)
+    for (port_name, val) in &config.constant_ports {
+        if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
+            set_bit(&mut states[..state_size], pos, *val);
+            clilog::info!("Initial state: port '{}' = {} (pos {})", port_name, val, pos);
+        } else {
+            clilog::warn!("constant_port '{}' not found in named inputs", port_name);
+        }
+    }
+
     // Set flash D_IN defaults (high = no data) — initial state before GPU flash takes over
     if let Some(ref flash_cfg) = config.flash {
         set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, 0x0F);
@@ -1995,10 +2032,10 @@ fn main() {
 
     // Build initial falling/rising edge BitOp arrays (no flash_din — handled by GPU)
     let fall_ops = build_falling_edge_ops(
-        &gpio_map, clock_gpio, reset_gpio, reset_val_active, &config.constant_inputs,
+        &gpio_map, clock_gpio, reset_gpio, reset_val_active, &config.constant_inputs, &config.constant_ports,
     );
     let rise_ops = build_rising_edge_ops(
-        &gpio_map, clock_gpio, reset_gpio, reset_val_active, &config.constant_inputs,
+        &gpio_map, clock_gpio, reset_gpio, reset_val_active, &config.constant_inputs, &config.constant_ports,
     );
     let fall_ops_len = fall_ops.len();
     let rise_ops_len = rise_ops.len();
@@ -2393,6 +2430,24 @@ fn main() {
         let t_wait = std::time::Instant::now();
         simulator.spin_wait(batch_done);
         prof_gpu_wait += t_wait.elapsed().as_nanos() as u64;
+
+        // Per-tick flash signal diagnostic
+        if trace_ticks > 0 && tick + batch <= reset_cycles + trace_ticks as usize {
+            let output_state: &[u32] = unsafe {
+                std::slice::from_raw_parts(
+                    (states_buffer.contents() as *const u32).add(state_size),
+                    state_size,
+                )
+            };
+            let fmp = unsafe { &*(flash_model_params_buffer.contents() as *const FlashModelParams) };
+            let flash_clk_pos = fmp.clk_out_pos;
+            let flash_csn_pos = fmp.csn_out_pos;
+            let flash_clk = (output_state[(flash_clk_pos >> 5) as usize] >> (flash_clk_pos & 31)) & 1;
+            let flash_csn = (output_state[(flash_csn_pos >> 5) as usize] >> (flash_csn_pos & 31)) & 1;
+            let fs = unsafe { &*(flash_state_buffer.contents() as *const FlashState) };
+            clilog::debug!("FLASH_TRACE tick {}: clk={} csn={} d_i=0x{:02X} cmd=0x{:02X} addr=0x{:06X} in_reset={}",
+                tick + batch, flash_clk, flash_csn, fs.d_i, fs.command, fs.addr, fs.in_reset);
+        }
 
         // ── CPU verification: simulate same tick on CPU and compare ──
         if args.check_with_cpu && tick < cpu_check_max_ticks && batch == 1 {
