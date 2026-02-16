@@ -950,14 +950,34 @@ impl TimingState {
     }
 
     /// Initialize delays from AIG driver types.
+    ///
+    /// For SKY130 designs with cell decomposition, AND gates that are internal
+    /// to a multi-gate decomposition (no `aigpin_cell_origin`) get zero delay.
+    /// Only the output AND gate of a real cell gets the Liberty delay.
+    /// This prevents false hold violations from artificially low uniform delays.
     fn init_delays(&mut self, aig: &AIG, lib: &TimingLibrary) {
         let and_delay = lib.and_gate_delay("AND2_00_0").unwrap_or((1, 1));
         let dff_timing = lib.dff_timing();
         let sram_timing = lib.sram_timing();
 
+        let has_cell_origin = !aig.aigpin_cell_origin.is_empty();
+
         for i in 1..=aig.num_aigpins {
             let delay = match &aig.drivers[i] {
-                DriverType::AndGate(_, _) => PackedDelay::from_u64(and_delay.0, and_delay.1),
+                DriverType::AndGate(_, _) => {
+                    if has_cell_origin {
+                        // With cell origin tracking: only real cell outputs get delay,
+                        // internal decomposition AND gates get zero.
+                        if i < aig.aigpin_cell_origin.len() && aig.aigpin_cell_origin[i].is_some() {
+                            PackedDelay::from_u64(and_delay.0, and_delay.1)
+                        } else {
+                            PackedDelay::default() // Internal decomposition gate
+                        }
+                    } else {
+                        // Without cell origin: uniform delay (legacy behavior)
+                        PackedDelay::from_u64(and_delay.0, and_delay.1)
+                    }
+                }
                 DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
                     PackedDelay::default()
                 }
