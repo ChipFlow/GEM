@@ -2159,3 +2159,202 @@ impl std::fmt::Display for TimingReport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod sdf_integration_tests {
+    use super::*;
+    use crate::sky130::SKY130LeafPins;
+    use crate::sdf_parser::{SdfFile, SdfCorner};
+    use std::collections::HashMap;
+
+    /// Helper: load inv_chain.v and build AIG.
+    fn load_inv_chain_aig() -> (NetlistDB, AIG) {
+        let verilog_path = std::path::PathBuf::from("tests/timing_test/sky130_timing/inv_chain.v");
+        assert!(verilog_path.exists(), "inv_chain.v not found");
+
+        let netlistdb = NetlistDB::from_sverilog_file(
+            &verilog_path,
+            None,
+            &SKY130LeafPins,
+        ).expect("Failed to parse inv_chain.v");
+
+        let aig = AIG::from_netlistdb(&netlistdb);
+        (netlistdb, aig)
+    }
+
+    /// Helper: build cellid → SDF path map (same logic as load_timing_from_sdf).
+    fn build_cellid_to_sdf_path(netlistdb: &NetlistDB) -> HashMap<usize, String> {
+        let mut map = HashMap::new();
+        for cellid in 1..netlistdb.num_cells {
+            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>();
+            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
+            map.insert(cellid, sdf_path);
+        }
+        map
+    }
+
+    // === Test 1: Cell origin population ===
+
+    #[test]
+    fn test_cell_origin_length() {
+        let (_netlistdb, aig) = load_inv_chain_aig();
+        assert_eq!(
+            aig.aigpin_cell_origin.len(),
+            aig.num_aigpins + 1,
+            "aigpin_cell_origin should have num_aigpins + 1 entries (index 0 = Tie0)"
+        );
+    }
+
+    #[test]
+    fn test_cell_origin_tie0_is_none() {
+        let (_netlistdb, aig) = load_inv_chain_aig();
+        assert!(
+            aig.aigpin_cell_origin[0].is_none(),
+            "Index 0 (Tie0) must have no cell origin"
+        );
+    }
+
+    #[test]
+    fn test_cell_origin_count_and_overwrite() {
+        let (_netlistdb, aig) = load_inv_chain_aig();
+
+        // In AIG, inverters (NOT gates) don't create new AIG pins — they reuse
+        // the input pin with a flipped invert bit. So the 16-inverter chain
+        // collapses: each inverter's cell_origin overwrites the previous one
+        // at the same AIG pin. Only the LAST writer's cell_origin survives.
+        //
+        // For inv_chain: dff_in.Q → i0 → ... → i15 → dff_out.D
+        // The DFF Q outputs get unique AIG pins. But dff_in.Q's cell_origin
+        // is overwritten by i15 (last inverter sharing that AIG pin).
+        // dff_out.Q is a primary output and nothing overwrites it.
+        let non_none_count = aig.aigpin_cell_origin.iter()
+            .filter(|o| o.is_some())
+            .count();
+
+        // Only 2 surviving cell origins: dff_out (DFF Q) and i15 (last inverter)
+        assert_eq!(
+            non_none_count, 2,
+            "Expected 2 surviving cell origins (dff_out + i15), got {}",
+            non_none_count
+        );
+    }
+
+    #[test]
+    fn test_cell_origin_dff_output_pin() {
+        let (netlistdb, aig) = load_inv_chain_aig();
+
+        // Find DFF cell origins — only dff_out should survive (dff_in is overwritten)
+        let dff_origins: Vec<_> = aig.aigpin_cell_origin.iter()
+            .enumerate()
+            .filter_map(|(i, o)| o.as_ref().map(|(cid, ct, pin)| (i, *cid, ct.clone(), pin.clone())))
+            .filter(|(_, _, ct, _)| ct == "dfxtp")
+            .collect();
+
+        assert_eq!(dff_origins.len(), 1,
+            "Expected 1 surviving DFF cell origin (dff_out; dff_in is overwritten by i15)");
+
+        let (ref _aigpin, ref cellid, ref _cell_type, ref output_pin_name) = dff_origins[0];
+        assert_eq!(output_pin_name, "Q", "DFF output pin must be Q");
+        assert!(
+            netlistdb.celltypes[*cellid].contains("dfxtp"),
+            "Cell {} should be dfxtp type, got {}",
+            cellid, netlistdb.celltypes[*cellid]
+        );
+    }
+
+    #[test]
+    fn test_cell_origin_last_inverter_survives() {
+        let (netlistdb, aig) = load_inv_chain_aig();
+
+        // The last inverter in the chain (i15) should have its cell_origin survive
+        let inv_origins: Vec<_> = aig.aigpin_cell_origin.iter()
+            .enumerate()
+            .filter_map(|(i, o)| o.as_ref().map(|(cid, ct, pin)| (i, *cid, ct.clone(), pin.clone())))
+            .filter(|(_, _, ct, _)| ct == "inv")
+            .collect();
+
+        assert_eq!(inv_origins.len(), 1,
+            "Expected 1 surviving inverter cell origin (i15, the last in the chain)");
+
+        let (ref _aigpin, ref cellid, ref _cell_type, ref output_pin_name) = inv_origins[0];
+        assert_eq!(output_pin_name, "Y", "Inverter output pin must be Y");
+        assert!(
+            netlistdb.celltypes[*cellid].contains("inv"),
+            "Cell {} should be inv type, got {}",
+            cellid, netlistdb.celltypes[*cellid]
+        );
+    }
+
+    #[test]
+    fn test_no_and_gates_for_inverters() {
+        let (_netlistdb, aig) = load_inv_chain_aig();
+
+        // Inverters in AIG are just wire + invert bit, no AND gates needed.
+        // The only AND gates should be none (inv_chain has no multi-input gates).
+        let and_gate_count = (1..=aig.num_aigpins)
+            .filter(|&ap| matches!(aig.drivers[ap], DriverType::AndGate(_, _)))
+            .count();
+
+        assert_eq!(and_gate_count, 0,
+            "Inverter chain should produce 0 AND gates, got {}", and_gate_count);
+    }
+
+    // === Test 2: HierName → SDF path matching ===
+
+    #[test]
+    fn test_sdf_path_matching_all_cells() {
+        let (netlistdb, _aig) = load_inv_chain_aig();
+        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("Failed to parse SDF");
+
+        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+
+        let mut matched = 0;
+        let mut unmatched = Vec::new();
+
+        for cellid in 1..netlistdb.num_cells {
+            let sdf_path = &cellid_to_sdf_path[&cellid];
+            if sdf.get_cell(sdf_path).is_some() {
+                matched += 1;
+            } else {
+                unmatched.push(format!(
+                    "cellid={} type={} path={}",
+                    cellid, netlistdb.celltypes[cellid], sdf_path
+                ));
+            }
+        }
+
+        assert!(
+            unmatched.is_empty(),
+            "All cells should match SDF instances. Unmatched:\n{}",
+            unmatched.join("\n")
+        );
+        // 18 real cells (2 DFFs + 16 inverters)
+        assert_eq!(matched, 18, "Expected 18 matched cells");
+    }
+
+    #[test]
+    fn test_sdf_path_format_flat() {
+        // For a flat design, cellnames should produce single-component paths
+        let (netlistdb, _aig) = load_inv_chain_aig();
+        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+
+        // Verify expected instance names exist
+        let expected_names = [
+            "dff_in", "i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7",
+            "i8", "i9", "i10", "i11", "i12", "i13", "i14", "i15", "dff_out",
+        ];
+
+        let paths: Vec<&str> = cellid_to_sdf_path.values().map(|s| s.as_str()).collect();
+        for name in &expected_names {
+            assert!(
+                paths.contains(name),
+                "Expected SDF path '{}' not found. Paths: {:?}",
+                name, paths
+            );
+        }
+    }
+}

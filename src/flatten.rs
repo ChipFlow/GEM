@@ -1696,3 +1696,368 @@ impl FlattenedScriptV1 {
         }
     }
 }
+
+#[cfg(test)]
+mod sdf_delay_tests {
+    use super::*;
+    use crate::aig::AIG;
+    use crate::sky130::SKY130LeafPins;
+    use crate::sdf_parser::{SdfFile, SdfCorner};
+
+    /// Helper: build a minimal FlattenedScriptV1 suitable for load_timing_from_sdf.
+    fn make_minimal_script(_aig: &AIG) -> FlattenedScriptV1 {
+        FlattenedScriptV1 {
+            num_blocks: 0,
+            num_major_stages: 0,
+            blocks_start: Vec::<usize>::new().into(),
+            blocks_data: Vec::<u32>::new().into(),
+            reg_io_state_size: 0,
+            sram_storage_size: 0,
+            input_layout: Vec::new(),
+            output_map: IndexMap::new(),
+            input_map: IndexMap::new(),
+            stages_blocks_parts: Vec::new(),
+            assertion_positions: Vec::new(),
+            display_positions: Vec::new(),
+            gate_delays: Vec::new(),
+            dff_constraints: Vec::new(),
+            clock_period_ps: 1000,
+            timing_enabled: false,
+            delay_patch_map: Vec::new(),
+            timing_quantum_ps: 10,
+            metadata_timing_slots: Vec::new(),
+        }
+    }
+
+    /// Helper: load inv_chain design + AIG.
+    fn load_inv_chain() -> (netlistdb::NetlistDB, AIG) {
+        let path = std::path::PathBuf::from("tests/timing_test/sky130_timing/inv_chain.v");
+        assert!(path.exists(), "inv_chain.v not found");
+        let netlistdb = netlistdb::NetlistDB::from_sverilog_file(
+            &path, None, &SKY130LeafPins,
+        ).expect("Failed to parse inv_chain.v");
+        let aig = AIG::from_netlistdb(&netlistdb);
+        (netlistdb, aig)
+    }
+
+    /// Helper: build cellid → SDF path map (same logic as load_timing_from_sdf).
+    fn build_cellid_to_sdf_path(netlistdb: &netlistdb::NetlistDB) -> HashMap<usize, String> {
+        let mut map = HashMap::new();
+        for cellid in 1..netlistdb.num_cells {
+            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+                .map(|s| s.as_str()).collect::<Vec<_>>();
+            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
+            map.insert(cellid, sdf_path);
+        }
+        map
+    }
+
+    // === Test 3: SDF delay application ===
+
+    #[test]
+    fn test_sdf_delay_application() {
+        let (netlistdb, aig) = load_inv_chain();
+        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("Failed to parse SDF");
+
+        let mut script = make_minimal_script(&aig);
+        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, true);
+
+        assert_eq!(script.gate_delays.len(), aig.num_aigpins + 1,
+            "gate_delays length should match num_aigpins + 1");
+
+        // In the AIG representation, inverters (NOT gates) don't create new AIG
+        // pins — they reuse the input pin with a flipped invert bit. This means
+        // the 16-inverter chain collapses to very few AIG pins, and cell_origin
+        // entries get overwritten by the last cell sharing that AIG pin.
+        //
+        // For inv_chain.v, the effective AIG structure is:
+        //   - AIG pins for input ports (CLK, D) and clock flag
+        //   - AIG pin for dff_in.Q (DFF cellid=1) — but cell_origin overwritten by i15
+        //   - AIG pin for dff_out.Q (DFF cellid=18) — cell_origin intact
+        //
+        // We verify the cells that DO have surviving cell_origin entries.
+        // This validates the SDF delay path for cells with unique AIG pins.
+
+        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+        let sdf_path_to_cellid: HashMap<&str, usize> = cellid_to_sdf_path.iter()
+            .map(|(&cid, path)| (path.as_str(), cid))
+            .collect();
+
+        // Collect all cell origins that survived (weren't overwritten)
+        let mut origin_to_aigpin: HashMap<usize, usize> = HashMap::new();
+        for aigpin in 1..=aig.num_aigpins {
+            if let Some((cid, _, _)) = &aig.aigpin_cell_origin[aigpin] {
+                origin_to_aigpin.insert(*cid, aigpin);
+            }
+        }
+
+        // dff_out should have intact cell_origin (it's a primary output, no downstream overwrites)
+        let dff_out_cellid = *sdf_path_to_cellid.get("dff_out").unwrap();
+        assert!(origin_to_aigpin.contains_key(&dff_out_cellid),
+            "dff_out should have a surviving cell_origin entry");
+
+        let dff_out_aigpin = origin_to_aigpin[&dff_out_cellid];
+        let dff_out_delay = &script.gate_delays[dff_out_aigpin];
+        // dff_out: IOPATH CLK Q rise=360ps, fall=340ps + wire (i15.Y→dff_out.D) rise=15ps, fall=12ps
+        assert_eq!(dff_out_delay.rise_ps, 375,
+            "dff_out rise: expected 375ps (360+15), got {}ps", dff_out_delay.rise_ps);
+        assert_eq!(dff_out_delay.fall_ps, 352,
+            "dff_out fall: expected 352ps (340+12), got {}ps", dff_out_delay.fall_ps);
+
+        // The last inverter (i15) overwrites dff_in's cell_origin at the shared AIG pin.
+        // Verify that i15's delay is applied to that AIG pin.
+        let i15_cellid = *sdf_path_to_cellid.get("i15").unwrap();
+        assert!(origin_to_aigpin.contains_key(&i15_cellid),
+            "i15 should have a surviving cell_origin entry");
+
+        let i15_aigpin = origin_to_aigpin[&i15_cellid];
+        let i15_delay = &script.gate_delays[i15_aigpin];
+        // i15: IOPATH A Y rise=53ps, fall=43ps + wire (i14.Y→i15.A) rise=8ps, fall=7ps
+        assert_eq!(i15_delay.rise_ps, 61,
+            "i15 rise: expected 61ps (53+8), got {}ps", i15_delay.rise_ps);
+        assert_eq!(i15_delay.fall_ps, 50,
+            "i15 fall: expected 50ps (43+7), got {}ps", i15_delay.fall_ps);
+
+        // Verify timing is enabled after loading
+        assert!(script.timing_enabled, "timing_enabled should be true after load_timing_from_sdf");
+        assert_eq!(script.clock_period_ps, 10000);
+    }
+
+    #[test]
+    fn test_internal_and_gates_zero_delay() {
+        let (netlistdb, aig) = load_inv_chain();
+        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("Failed to parse SDF");
+
+        let mut script = make_minimal_script(&aig);
+        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
+
+        for aigpin in 1..=aig.num_aigpins {
+            if aig.aigpin_cell_origin[aigpin].is_none() {
+                let delay = &script.gate_delays[aigpin];
+                assert_eq!(
+                    delay.rise_ps, 0,
+                    "AND gate aigpin {} without cell_origin should have zero rise delay, got {}",
+                    aigpin, delay.rise_ps
+                );
+                assert_eq!(
+                    delay.fall_ps, 0,
+                    "AND gate aigpin {} without cell_origin should have zero fall delay, got {}",
+                    aigpin, delay.fall_ps
+                );
+            }
+        }
+    }
+
+    // === Test 4: GPU delay injection quantization ===
+
+    /// Helper: build a FlattenedScriptV1 for quantization testing.
+    /// `delays` are per-AIG-pin (index 0 is always default/Tie0).
+    /// `patch_map` maps offsets in blocks_data to AIG pin indices.
+    /// `blocks_data_size` is how many u32 slots to allocate.
+    fn make_quantization_script(
+        delays: Vec<PackedDelay>,
+        patch_map: Vec<(usize, Vec<usize>)>,
+        blocks_data_size: usize,
+        quantum: u32,
+        metadata_slots: Vec<usize>,
+    ) -> FlattenedScriptV1 {
+        FlattenedScriptV1 {
+            num_blocks: 0,
+            num_major_stages: 0,
+            blocks_start: Vec::<usize>::new().into(),
+            blocks_data: vec![0u32; blocks_data_size].into(),
+            reg_io_state_size: 0,
+            sram_storage_size: 0,
+            input_layout: Vec::new(),
+            output_map: IndexMap::new(),
+            input_map: IndexMap::new(),
+            stages_blocks_parts: Vec::new(),
+            assertion_positions: Vec::new(),
+            display_positions: Vec::new(),
+            gate_delays: delays,
+            dff_constraints: Vec::new(),
+            clock_period_ps: 10000,
+            timing_enabled: true,
+            delay_patch_map: patch_map,
+            timing_quantum_ps: quantum,
+            metadata_timing_slots: metadata_slots,
+        }
+    }
+
+    #[test]
+    fn test_basic_quantization() {
+        // delay=100ps, quantum=10 → quantized=10
+        let mut script = make_quantization_script(
+            vec![PackedDelay::default(), PackedDelay::new(100, 100)],
+            vec![(0, vec![1])],
+            1, 10, Vec::new(),
+        );
+        script.inject_timing_to_script();
+        assert_eq!(script.blocks_data[0], 10, "100ps / 10ps quantum = 10");
+    }
+
+    #[test]
+    fn test_max_of_thread_position() {
+        // Two aigpins [350ps, 0ps] → max=350, quantized=ceil(350/10)=35
+        let mut script = make_quantization_script(
+            vec![PackedDelay::default(), PackedDelay::new(350, 350), PackedDelay::new(0, 0)],
+            vec![(0, vec![1, 2])],
+            1, 10, Vec::new(),
+        );
+        script.inject_timing_to_script();
+        assert_eq!(script.blocks_data[0], 35, "max(350,0)=350, 350/10=35");
+    }
+
+    #[test]
+    fn test_metadata_slot_written() {
+        let mut script = make_quantization_script(
+            vec![PackedDelay::default(), PackedDelay::new(100, 100)],
+            vec![(0, vec![1])],
+            2, 10, vec![1],  // metadata at offset 1
+        );
+        script.inject_timing_to_script();
+        assert_eq!(script.blocks_data[1], 10,
+            "Metadata slot should contain the timing quantum (10ps)");
+    }
+
+    #[test]
+    fn test_auto_adjust_quantum() {
+        // delay=3000ps, quantum=10 → exceeds 255*10=2550 → auto-adjust
+        // new quantum = (3000 + 254) / 255 = 12
+        // quantized = ceil(3000/12) = (3000 + 11) / 12 = 250
+        let mut script = make_quantization_script(
+            vec![PackedDelay::default(), PackedDelay::new(3000, 3000)],
+            vec![(0, vec![1])],
+            2, 10, vec![1],
+        );
+        script.inject_timing_to_script();
+
+        let expected_quantum = 12u32;
+        assert_eq!(script.blocks_data[1], expected_quantum,
+            "Metadata should contain auto-adjusted quantum");
+
+        let expected_quantized = ((3000u32 + expected_quantum - 1) / expected_quantum).min(255);
+        assert_eq!(expected_quantized, 250);
+        assert_eq!(script.blocks_data[0], expected_quantized,
+            "Quantized delay should be 250");
+    }
+
+    #[test]
+    fn test_zero_stays_zero() {
+        let mut script = make_quantization_script(
+            vec![PackedDelay::default(), PackedDelay::new(0, 0)],
+            vec![(0, vec![1])],
+            1, 10, Vec::new(),
+        );
+        script.inject_timing_to_script();
+        assert_eq!(script.blocks_data[0], 0, "Zero delay should quantize to zero");
+    }
+
+    #[test]
+    fn test_ordering_preserved() {
+        // delays 5ps and 15ps with quantum=10 → quantized 1 and 2
+        let mut script = make_quantization_script(
+            vec![PackedDelay::default(), PackedDelay::new(5, 5), PackedDelay::new(15, 15)],
+            vec![(0, vec![1]), (1, vec![2])],
+            2, 10, Vec::new(),
+        );
+        script.inject_timing_to_script();
+
+        let q1 = script.blocks_data[0];
+        let q2 = script.blocks_data[1];
+        assert_eq!(q1, 1, "5ps with quantum 10 → ceil(5/10) = 1");
+        assert_eq!(q2, 2, "15ps with quantum 10 → ceil(15/10) = 2");
+        assert!(q1 < q2, "Ordering must be preserved: {} < {}", q1, q2);
+    }
+
+    // === Test 5: IOPATH pin name fallback ===
+
+    #[test]
+    fn test_iopath_exact_match() {
+        // Cell with IOPATH output "Y" matching cell_origin "Y" → exact match
+        use crate::sdf_parser::*;
+
+        let sdf_content = r#"(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "test")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "inv")
+    (INSTANCE u_inv)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH A Y (0.050:0.050:0.050) (0.040:0.040:0.040))
+      )
+    )
+  )
+)"#;
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("parse SDF");
+        let cell = sdf.get_cell("u_inv").expect("u_inv not found");
+        let iopath = cell.iopaths.iter().find(|p| p.output_pin == "Y");
+        assert!(iopath.is_some(), "Should find exact IOPATH match for Y");
+        assert_eq!(iopath.unwrap().delay.rise_ps, 50);
+        assert_eq!(iopath.unwrap().delay.fall_ps, 40);
+    }
+
+    #[test]
+    fn test_iopath_fallback_first() {
+        // Cell with IOPATH output "QN" but cell_origin says "Q" → no match → fallback to first
+        use crate::sdf_parser::*;
+
+        let sdf_content = r#"(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "test")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dff")
+    (INSTANCE u_dff)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH CLK QN (0.200:0.200:0.200) (0.180:0.180:0.180))
+      )
+    )
+  )
+)"#;
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("parse SDF");
+        let cell = sdf.get_cell("u_dff").expect("u_dff not found");
+
+        // Try to match "Q" — won't find it
+        let exact_match = cell.iopaths.iter().find(|p| p.output_pin == "Q");
+        assert!(exact_match.is_none(), "Should NOT find exact match for Q");
+
+        // Fallback: use first IOPATH
+        assert!(!cell.iopaths.is_empty(), "Should have at least one IOPATH");
+        let fallback = &cell.iopaths[0];
+        assert_eq!(fallback.output_pin, "QN");
+        assert_eq!(fallback.delay.rise_ps, 200);
+        assert_eq!(fallback.delay.fall_ps, 180);
+    }
+
+    #[test]
+    fn test_iopath_no_paths_zero_delay() {
+        // Cell with no IOPATHs → zero delay (with liberty fallback = None → default)
+        use crate::sdf_parser::*;
+
+        let sdf_content = r#"(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "test")
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "buf")
+    (INSTANCE u_buf)
+  )
+)"#;
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("parse SDF");
+        let cell = sdf.get_cell("u_buf").expect("u_buf not found");
+        assert!(cell.iopaths.is_empty(), "Should have no IOPATHs");
+        // In load_timing_from_sdf, this case falls through to liberty fallback
+        // With no liberty fallback, it returns PackedDelay::default() = (0, 0)
+    }
+}
