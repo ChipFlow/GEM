@@ -30,7 +30,10 @@ __device__ void simulate_block_v1(
   u32 *__restrict__ shared_metadata,
   u32 *__restrict__ shared_writeouts,
   u32 *__restrict__ shared_state,
-  u8 *__restrict__ shared_arrival  // per-thread-position arrival times
+  // Arrival times in raw picoseconds (u16), max representable 65,535ps.
+  // Gate delays are stored as u16 in the script padding slots.
+  // No quantization needed — 512 bytes of shared memory per block is negligible.
+  u16 *__restrict__ shared_arrival
   )
 {
   int script_pi = 0;
@@ -107,9 +110,6 @@ __device__ void simulate_block_v1(
     shared_arrival[threadIdx.x] = 0;
     __syncthreads();
 
-    // Read timing quantum from metadata slot [8] (ps per u8 unit)
-    u32 timing_quantum = shared_metadata[8];
-
     for(int bs_i = 0; bs_i < num_stages; ++bs_i) {
       u32 hier_input = 0, hier_flag_xora = 0, hier_flag_xorb = 0, hier_flag_orb = 0;
 #define GEMV1_SHUF_INPUT_K(k_outer, k_inner, t_shuffle) {           \
@@ -142,8 +142,8 @@ __device__ void simulate_block_v1(
       hier_flag_xora = t4_5.c1;
       hier_flag_xorb = t4_5.c2;
       hier_flag_orb = t4_5.c3;
-      // Extract per-thread-position gate delay from padding slot (u8 quantized)
-      u8 gate_delay = (u8)(t4_5.c4 & 0xFF);
+      // Extract per-thread-position gate delay from padding slot (u16 raw picoseconds)
+      u16 gate_delay = (u16)(t4_5.c4 & 0xFFFF);
       t4_5.read(((const VectorRead4 *)(script + script_pi + 256 * 4 * 4)) + threadIdx.x);
 
       __syncthreads();
@@ -162,13 +162,13 @@ __device__ void simulate_block_v1(
         u16 arr_a = (u16)shared_arrival[threadIdx.x - 128];
         u16 arr_b = (u16)shared_arrival[threadIdx.x];
         bool is_pass = (hier_flag_orb == 0xFFFFFFFF);
-        u16 new_arr = is_pass ? arr_a : min((u16)(max(arr_a, arr_b) + (u16)gate_delay), (u16)255);
-        shared_arrival[threadIdx.x] = (u8)new_arr;
+        u16 new_arr = is_pass ? arr_a : (u16)(max(arr_a, arr_b) + (u16)gate_delay);
+        shared_arrival[threadIdx.x] = new_arr;
       }
       __syncthreads();
       // hier[1..3]: shared memory reduction + arrival tracking
       u32 tmp_cur_hi;
-      u8 tmp_cur_arr = 0;
+      u16 tmp_cur_arr = 0;
       for(int hi = 1; hi <= 3; ++hi) {
         int hier_width = 1 << (7 - hi);
         if(threadIdx.x >= hier_width && threadIdx.x < hier_width * 2) {
@@ -182,8 +182,8 @@ __device__ void simulate_block_v1(
           u16 arr_a = (u16)shared_arrival[threadIdx.x + hier_width];
           u16 arr_b = (u16)shared_arrival[threadIdx.x + hier_width * 2];
           bool is_pass = (hier_flag_orb == 0xFFFFFFFF);
-          u16 new_arr = is_pass ? arr_a : min((u16)(max(arr_a, arr_b) + (u16)gate_delay), (u16)255);
-          tmp_cur_arr = (u8)new_arr;
+          u16 new_arr = is_pass ? arr_a : (u16)(max(arr_a, arr_b) + (u16)gate_delay);
+          tmp_cur_arr = new_arr;
           shared_arrival[threadIdx.x] = tmp_cur_arr;
         }
         __syncthreads();
@@ -202,8 +202,8 @@ __device__ void simulate_block_v1(
             tmp_cur_hi = (hier_input_a ^ hier_flag_xora) & ((hier_input_b ^ hier_flag_xorb) | hier_flag_orb);
             // Arrival tracking
             bool is_pass = (hier_flag_orb == 0xFFFFFFFF);
-            u16 new_arr = is_pass ? (u16)arr_a_u32 : min((u16)(max((u16)arr_a_u32, (u16)arr_b_u32) + (u16)gate_delay), (u16)255);
-            tmp_cur_arr_u32 = (u32)(u8)new_arr;
+            u16 new_arr = is_pass ? (u16)arr_a_u32 : (u16)(max((u16)arr_a_u32, (u16)arr_b_u32) + (u16)gate_delay);
+            tmp_cur_arr_u32 = (u32)new_arr;
           }
         }
         u32 v1 = __shfl_down_sync(0xffffffff, tmp_cur_hi, 1);
@@ -219,7 +219,7 @@ __device__ void simulate_block_v1(
           // Arrival from hier[7] thread 1 carries forward through bit-level ops
         }
         shared_state[threadIdx.x] = tmp_cur_hi;
-        shared_arrival[threadIdx.x] = (u8)tmp_cur_arr_u32;
+        shared_arrival[threadIdx.x] = (u16)tmp_cur_arr_u32;
       }
       __syncthreads();
 
@@ -363,7 +363,7 @@ __global__ void simulate_v1_noninteractive_simple_scan(
   __shared__ u32 shared_metadata[256];
   __shared__ u32 shared_writeouts[256];
   __shared__ u32 shared_state[256];
-  __shared__ u8 shared_arrival[256];  // Per-thread-position arrival times for timing
+  __shared__ u16 shared_arrival[256];  // Per-thread-position arrival times (raw picoseconds)
   __shared__ u32 script_starts[32], script_sizes[32];
   assert(num_major_stages <= 32);
   if(threadIdx.x < num_major_stages) {

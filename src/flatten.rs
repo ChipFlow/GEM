@@ -213,14 +213,6 @@ pub struct FlattenedScriptV1 {
     /// with per-thread-position max gate delays.
     pub delay_patch_map: Vec<(usize, Vec<usize>)>,
 
-    /// Timing quantum in picoseconds for GPU delay quantization.
-    /// Each u8 delay unit = timing_quantum_ps picoseconds.
-    /// Default: 10ps/unit, giving range 0-2550ps.
-    pub timing_quantum_ps: u32,
-
-    /// Offsets of metadata slot [8] in blocks_data for each partition.
-    /// Used to write the timing quantum into the GPU script metadata.
-    pub metadata_timing_slots: Vec<usize>,
 }
 
 fn map_global_read_to_rounds(inputs_taken: &BTreeMap<u32, u32>) -> Vec<Vec<(u32, u32)>> {
@@ -1013,7 +1005,6 @@ fn build_flattened_script_v1(
     let mut output_map = IndexMap::new();
     let mut staged_io_map = IndexMap::new();
     let mut delay_patch_map: Vec<(usize, Vec<usize>)> = Vec::new();
-    let mut metadata_timing_slots: Vec<usize> = Vec::new();
     for (i, &input) in input_layout.iter().enumerate() {
         if input == usize::MAX {
             continue;
@@ -1151,8 +1142,6 @@ fn build_flattened_script_v1(
                     let base_offset = blocks_data.len();
                     let (ref script_data, ref patches) = parts_results[part_id];
                     blocks_data.extend(script_data.iter().copied());
-                    // Record metadata slot [8] offset for timing quantum
-                    metadata_timing_slots.push(base_offset + 8);
                     // Adjust patch offsets from local to global blocks_data position
                     for (local_off, aigpins) in patches {
                         delay_patch_map.push((base_offset + local_off, aigpins.clone()));
@@ -1261,8 +1250,6 @@ fn build_flattened_script_v1(
         clock_period_ps: 1000, // Default 1ns
         timing_enabled: false,
         delay_patch_map,
-        timing_quantum_ps: 10, // Default 10ps per unit, range 0-2550ps
-        metadata_timing_slots,
     }
 }
 
@@ -1377,40 +1364,12 @@ impl FlattenedScriptV1 {
 
     /// Inject timing delay data into the GPU script's padding slots.
     /// Must be called after load_timing() or load_timing_from_sdf().
-    /// Each padding u32 gets the quantized max gate delay across all AIG pins
-    /// mapped to that thread position. Delays are quantized to u8 using
-    /// `timing_quantum_ps` (default 10ps/unit, range 0-2550ps).
-    ///
-    /// Also writes the timing quantum to metadata slot [8] of each partition
-    /// so the GPU kernel can dequantize arrival times.
+    /// Each padding u32 gets the raw max gate delay (in picoseconds, clamped
+    /// to u16 range 0-65535) across all AIG pins mapped to that thread position.
     pub fn inject_timing_to_script(&mut self) {
         if self.gate_delays.is_empty() || self.delay_patch_map.is_empty() {
             return;
         }
-
-        let quantum = self.timing_quantum_ps.max(1);
-
-        // Auto-adjust quantum if max delay exceeds u8 range
-        let max_raw_delay = self.delay_patch_map.iter()
-            .map(|(_, aigpins)| {
-                aigpins.iter()
-                    .filter_map(|&ap| self.gate_delays.get(ap))
-                    .map(|d| d.max_delay() as u32)
-                    .max()
-                    .unwrap_or(0)
-            })
-            .max()
-            .unwrap_or(0);
-
-        let effective_quantum = if max_raw_delay > 255 * quantum {
-            // Need larger quantum to fit in u8
-            let q = (max_raw_delay + 254) / 255;
-            clilog::warn!("Timing quantum auto-adjusted from {}ps to {}ps (max delay {}ps)",
-                         quantum, q, max_raw_delay);
-            q
-        } else {
-            quantum
-        };
 
         let mut patched = 0usize;
         for (offset, aigpins) in &self.delay_patch_map {
@@ -1420,36 +1379,29 @@ impl FlattenedScriptV1 {
                     max_delay = max_delay.max(self.gate_delays[aigpin].max_delay() as u32);
                 }
             }
-            // Quantize to u8
-            let quantized = ((max_delay + effective_quantum - 1) / effective_quantum).min(255) as u8;
+            // Store raw picoseconds, clamped to u16 range
+            let delay_ps = max_delay.min(65535);
             if *offset < self.blocks_data.len() {
-                self.blocks_data[*offset] = quantized as u32;
-                if quantized > 0 {
+                self.blocks_data[*offset] = delay_ps;
+                if delay_ps > 0 {
                     patched += 1;
                 }
             }
         }
 
-        // Write timing quantum to metadata slot [8] of each partition
-        for &slot_offset in &self.metadata_timing_slots {
-            if slot_offset < self.blocks_data.len() {
-                self.blocks_data[slot_offset] = effective_quantum;
-            }
-        }
-
         clilog::info!(
-            "Injected timing to GPU script: {} padding slots patched ({} total), quantum={}ps",
+            "Injected timing to GPU script: {} padding slots patched ({} total)",
             patched,
-            self.delay_patch_map.len(),
-            effective_quantum
+            self.delay_patch_map.len()
         );
     }
 
     /// Load timing from an SDF file with per-instance back-annotated delays.
     ///
     /// This replaces the uniform Liberty-based delays with per-instance IOPATH
-    /// delays from post-layout SDF. Uses `aigpin_cell_origin` to map SDF instances
-    /// to AIG pins.
+    /// delays from post-layout SDF. Uses `aigpin_cell_origins` to map SDF instances
+    /// to AIG pins. For pins with multiple origins (e.g., an inverter chain sharing
+    /// an AIG pin via invert-bit reuse), delays are summed since they form a serial chain.
     ///
     /// For decomposed cells (e.g., SKY130 nand2 → 1 AND gate), the full IOPATH
     /// delay is applied to the output AIG pin. Internal AND gates get zero delay.
@@ -1521,74 +1473,67 @@ impl FlattenedScriptV1 {
         let lib_sram_timing = liberty_fallback.and_then(|lib| lib.sram_timing());
 
         for aigpin in 1..=aig.num_aigpins {
-            let delay = if let Some((cellid, _cell_type, output_pin_name)) =
-                &aig.aigpin_cell_origin[aigpin]
-            {
-                // This AIG pin has a cell origin — look up SDF delay
-                if let Some(sdf_path) = cellid_to_sdf_path.get(cellid) {
-                    if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                        // Find matching IOPATH for this output pin
-                        let iopath = sdf_cell.iopaths.iter().find(|p| p.output_pin == *output_pin_name);
-                        if let Some(iopath) = iopath {
-                            matched += 1;
-                            // Add wire delay (max across input wires) to cell delay
-                            let wire = wire_delays_per_cell.get(cellid);
-                            let rise = iopath.delay.rise_ps + wire.map_or(0, |w| w.rise_ps);
-                            let fall = iopath.delay.fall_ps + wire.map_or(0, |w| w.fall_ps);
-                            PackedDelay::from_u64(rise, fall)
-                        } else if !sdf_cell.iopaths.is_empty() {
-                            // Cell found but no matching output pin — use first IOPATH
-                            matched += 1;
-                            let first = &sdf_cell.iopaths[0];
-                            let wire = wire_delays_per_cell.get(cellid);
-                            let rise = first.delay.rise_ps + wire.map_or(0, |w| w.rise_ps);
-                            let fall = first.delay.fall_ps + wire.map_or(0, |w| w.fall_ps);
-                            PackedDelay::from_u64(rise, fall)
-                        } else {
-                            // Cell found but no IOPATHs (shouldn't happen)
-                            unmatched += 1;
-                            if debug && unmatched_instances.len() < 20 {
-                                unmatched_instances.push(format!("{} (no IOPATH)", sdf_path));
+            let origins = &aig.aigpin_cell_origins[aigpin];
+            let delay = if !origins.is_empty() {
+                // This AIG pin has one or more cell origins — sum delays from all.
+                // Multiple origins arise when inverters share an AIG pin (invert-bit reuse).
+                // They form a serial chain, so delays are additive.
+                let mut total_rise: u64 = 0;
+                let mut total_fall: u64 = 0;
+                let mut any_matched = false;
+                let mut any_unmatched = false;
+
+                for (cellid, _cell_type, output_pin_name) in origins {
+                    if let Some(sdf_path) = cellid_to_sdf_path.get(cellid) {
+                        if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
+                            let iopath = sdf_cell.iopaths.iter()
+                                .find(|p| p.output_pin == *output_pin_name)
+                                .or_else(|| sdf_cell.iopaths.first());
+                            if let Some(iopath) = iopath {
+                                any_matched = true;
+                                let wire = wire_delays_per_cell.get(cellid);
+                                total_rise += iopath.delay.rise_ps + wire.map_or(0, |w| w.rise_ps);
+                                total_fall += iopath.delay.fall_ps + wire.map_or(0, |w| w.fall_ps);
+                            } else {
+                                any_unmatched = true;
+                                if debug && unmatched_instances.len() < 20 {
+                                    unmatched_instances.push(format!("{} (no IOPATH)", sdf_path));
+                                }
                             }
-                            self.get_liberty_fallback_delay(
-                                &aig.drivers[aigpin],
-                                lib_and_delay,
-                                &lib_dff_timing,
-                                &lib_sram_timing,
-                                &mut fallback_count,
-                            )
+                        } else {
+                            any_unmatched = true;
+                            if debug && unmatched_instances.len() < 20 {
+                                unmatched_instances.push(sdf_path.clone());
+                            }
                         }
-                    } else {
-                        // SDF cell not found for this instance
-                        unmatched += 1;
-                        if debug && unmatched_instances.len() < 20 {
-                            unmatched_instances.push(sdf_path.clone());
-                        }
-                        self.get_liberty_fallback_delay(
-                            &aig.drivers[aigpin],
-                            lib_and_delay,
-                            &lib_dff_timing,
-                            &lib_sram_timing,
-                            &mut fallback_count,
-                        )
                     }
+                }
+
+                if any_matched {
+                    matched += 1;
+                    if any_unmatched { unmatched += 1; }
+                    PackedDelay::from_u64(total_rise, total_fall)
                 } else {
-                    // No SDF path for cellid (shouldn't happen)
-                    PackedDelay::default()
+                    unmatched += 1;
+                    self.get_liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        lib_and_delay,
+                        &lib_dff_timing,
+                        &lib_sram_timing,
+                        &mut fallback_count,
+                    )
                 }
             } else {
-                // No cell origin — internal decomposition gate or input/tie
+                // No cell origins — internal decomposition gate or input/tie
                 match &aig.drivers[aigpin] {
                     DriverType::AndGate(_, _) => {
                         // Internal AND gate from cell decomposition — zero delay.
-                        // The full IOPATH delay was placed on the output AIG pin.
                         PackedDelay::default()
                     }
                     DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
                         PackedDelay::default()
                     }
                     DriverType::DFF(_) => {
-                        // DFF without cell origin (shouldn't normally happen with SKY130)
                         self.get_liberty_fallback_delay(
                             &aig.drivers[aigpin],
                             lib_and_delay,
@@ -1724,8 +1669,6 @@ mod sdf_delay_tests {
             clock_period_ps: 1000,
             timing_enabled: false,
             delay_patch_map: Vec::new(),
-            timing_quantum_ps: 10,
-            metadata_timing_slots: Vec::new(),
         }
     }
 
@@ -1767,38 +1710,22 @@ mod sdf_delay_tests {
         assert_eq!(script.gate_delays.len(), aig.num_aigpins + 1,
             "gate_delays length should match num_aigpins + 1");
 
-        // In the AIG representation, inverters (NOT gates) don't create new AIG
-        // pins — they reuse the input pin with a flipped invert bit. This means
-        // the 16-inverter chain collapses to very few AIG pins, and cell_origin
-        // entries get overwritten by the last cell sharing that AIG pin.
-        //
-        // For inv_chain.v, the effective AIG structure is:
-        //   - AIG pins for input ports (CLK, D) and clock flag
-        //   - AIG pin for dff_in.Q (DFF cellid=1) — but cell_origin overwritten by i15
-        //   - AIG pin for dff_out.Q (DFF cellid=18) — cell_origin intact
-        //
-        // We verify the cells that DO have surviving cell_origin entries.
-        // This validates the SDF delay path for cells with unique AIG pins.
+        // With accumulated origins, delays from all cells sharing an AIG pin are summed.
+        // For inv_chain.v:
+        //   - Shared chain pin (dff_in.Q): 1 DFF + 16 inverters → summed delays
+        //   - dff_out.Q: standalone DFF with its own AIG pin
 
         let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
         let sdf_path_to_cellid: HashMap<&str, usize> = cellid_to_sdf_path.iter()
             .map(|(&cid, path)| (path.as_str(), cid))
             .collect();
 
-        // Collect all cell origins that survived (weren't overwritten)
-        let mut origin_to_aigpin: HashMap<usize, usize> = HashMap::new();
-        for aigpin in 1..=aig.num_aigpins {
-            if let Some((cid, _, _)) = &aig.aigpin_cell_origin[aigpin] {
-                origin_to_aigpin.insert(*cid, aigpin);
-            }
-        }
-
-        // dff_out should have intact cell_origin (it's a primary output, no downstream overwrites)
+        // Find the AIG pin that has the dff_out origin
         let dff_out_cellid = *sdf_path_to_cellid.get("dff_out").unwrap();
-        assert!(origin_to_aigpin.contains_key(&dff_out_cellid),
-            "dff_out should have a surviving cell_origin entry");
+        let dff_out_aigpin = (1..=aig.num_aigpins)
+            .find(|&ap| aig.aigpin_cell_origins[ap].iter().any(|(cid, _, _)| *cid == dff_out_cellid))
+            .expect("dff_out should have a cell origin entry");
 
-        let dff_out_aigpin = origin_to_aigpin[&dff_out_cellid];
         let dff_out_delay = &script.gate_delays[dff_out_aigpin];
         // dff_out: IOPATH CLK Q rise=360ps, fall=340ps + wire (i15.Y→dff_out.D) rise=15ps, fall=12ps
         assert_eq!(dff_out_delay.rise_ps, 375,
@@ -1806,19 +1733,19 @@ mod sdf_delay_tests {
         assert_eq!(dff_out_delay.fall_ps, 352,
             "dff_out fall: expected 352ps (340+12), got {}ps", dff_out_delay.fall_ps);
 
-        // The last inverter (i15) overwrites dff_in's cell_origin at the shared AIG pin.
-        // Verify that i15's delay is applied to that AIG pin.
-        let i15_cellid = *sdf_path_to_cellid.get("i15").unwrap();
-        assert!(origin_to_aigpin.contains_key(&i15_cellid),
-            "i15 should have a surviving cell_origin entry");
+        // The shared chain pin now accumulates all 17 origins (1 DFF + 16 inverters).
+        // Total delay = sum of all IOPATH + wire delays in the chain.
+        let chain_aigpin = (1..=aig.num_aigpins)
+            .find(|&ap| aig.aigpin_cell_origins[ap].len() > 1)
+            .expect("Should have a pin with multiple origins (the inverter chain)");
+        let chain_delay = &script.gate_delays[chain_aigpin];
 
-        let i15_aigpin = origin_to_aigpin[&i15_cellid];
-        let i15_delay = &script.gate_delays[i15_aigpin];
-        // i15: IOPATH A Y rise=53ps, fall=43ps + wire (i14.Y→i15.A) rise=8ps, fall=7ps
-        assert_eq!(i15_delay.rise_ps, 61,
-            "i15 rise: expected 61ps (53+8), got {}ps", i15_delay.rise_ps);
-        assert_eq!(i15_delay.fall_ps, 50,
-            "i15 fall: expected 50ps (43+7), got {}ps", i15_delay.fall_ps);
+        // Accumulated: dff_in CLK→Q + 16 inverters + their wire delays
+        // Expected: rise=1323ps, fall=1125ps (see test_accumulated_delay_analytical)
+        assert_eq!(chain_delay.rise_ps, 1323,
+            "chain pin rise: expected 1323ps (accumulated), got {}ps", chain_delay.rise_ps);
+        assert_eq!(chain_delay.fall_ps, 1125,
+            "chain pin fall: expected 1125ps (accumulated), got {}ps", chain_delay.fall_ps);
 
         // Verify timing is enabled after loading
         assert!(script.timing_enabled, "timing_enabled should be true after load_timing_from_sdf");
@@ -1836,34 +1763,119 @@ mod sdf_delay_tests {
         script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
 
         for aigpin in 1..=aig.num_aigpins {
-            if aig.aigpin_cell_origin[aigpin].is_none() {
+            if aig.aigpin_cell_origins[aigpin].is_empty() {
                 let delay = &script.gate_delays[aigpin];
                 assert_eq!(
                     delay.rise_ps, 0,
-                    "AND gate aigpin {} without cell_origin should have zero rise delay, got {}",
+                    "AND gate aigpin {} without cell_origins should have zero rise delay, got {}",
                     aigpin, delay.rise_ps
                 );
                 assert_eq!(
                     delay.fall_ps, 0,
-                    "AND gate aigpin {} without cell_origin should have zero fall delay, got {}",
+                    "AND gate aigpin {} without cell_origins should have zero fall delay, got {}",
                     aigpin, delay.fall_ps
                 );
             }
         }
     }
 
+    // === Test 3b: Analytical validation of accumulated delay ===
+
+    #[test]
+    fn test_accumulated_delay_analytical() {
+        // Verify accumulated delay matches hand-computed SDF sum.
+        // SDF typ corner values (middle of min:typ:max triples):
+        //
+        // Chain pin (dff_in.Q shared with inverters via invert-bit reuse):
+        //   dff_in CLK→Q:  IOPATH (350, 330) + wire (0, 0)     = (350, 330)
+        //   i0  A→Y:       IOPATH (50, 40)   + wire (15, 12)   = (65, 52)
+        //   i1  A→Y:       IOPATH (52, 42)   + wire (8, 7)     = (60, 49)
+        //   i2  A→Y:       IOPATH (51, 41)   + wire (9, 8)     = (60, 49)
+        //   i3  A→Y:       IOPATH (53, 43)   + wire (8, 7)     = (61, 50)
+        //   i4  A→Y:       IOPATH (50, 40)   + wire (10, 9)    = (60, 49)
+        //   i5  A→Y:       IOPATH (54, 44)   + wire (8, 7)     = (62, 51)
+        //   i6  A→Y:       IOPATH (51, 41)   + wire (9, 8)     = (60, 49)
+        //   i7  A→Y:       IOPATH (52, 42)   + wire (8, 7)     = (60, 49)
+        //   i8  A→Y:       IOPATH (50, 40)   + wire (11, 10)   = (61, 50)
+        //   i9  A→Y:       IOPATH (53, 43)   + wire (8, 7)     = (61, 50)
+        //   i10 A→Y:       IOPATH (51, 41)   + wire (9, 8)     = (60, 49)
+        //   i11 A→Y:       IOPATH (54, 44)   + wire (8, 7)     = (62, 51)
+        //   i12 A→Y:       IOPATH (52, 42)   + wire (10, 9)    = (62, 51)
+        //   i13 A→Y:       IOPATH (51, 41)   + wire (8, 7)     = (59, 48)
+        //   i14 A→Y:       IOPATH (50, 40)   + wire (9, 8)     = (59, 48)
+        //   i15 A→Y:       IOPATH (53, 43)   + wire (8, 7)     = (61, 50)
+        //   ─────────────────────────────────────────────────────────────
+        //   Sum:                                                  (1323, 1125)
+        //
+        // dff_out (separate AIG pin):
+        //   dff_out CLK→Q: IOPATH (360, 340) + wire (15, 12)   = (375, 352)
+        //
+        // This test validates that the SDF-to-delay pipeline produces exactly
+        // these values, confirming the accumulation fix works correctly.
+
+        let (netlistdb, aig) = load_inv_chain();
+        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
+            .expect("Failed to parse SDF");
+
+        let mut script = make_minimal_script(&aig);
+        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
+
+        // Find the chain pin (has 17 origins: 1 DFF + 16 inverters)
+        let chain_aigpin = (1..=aig.num_aigpins)
+            .find(|&ap| aig.aigpin_cell_origins[ap].len() == 17)
+            .expect("Should have a pin with 17 origins (1 DFF + 16 inverters)");
+
+        let chain_delay = &script.gate_delays[chain_aigpin];
+        assert_eq!(chain_delay.rise_ps, 1323,
+            "Analytical chain rise: 350 + sum(16 inverter+wire) = 1323ps, got {}ps",
+            chain_delay.rise_ps);
+        assert_eq!(chain_delay.fall_ps, 1125,
+            "Analytical chain fall: 330 + sum(16 inverter+wire) = 1125ps, got {}ps",
+            chain_delay.fall_ps);
+
+        // Verify each inverter's individual contribution by checking origins
+        let origins = &aig.aigpin_cell_origins[chain_aigpin];
+        assert_eq!(origins.len(), 17);
+
+        // First origin should be the DFF
+        let (_, ref ct, _) = origins[0];
+        assert_eq!(ct, "dfxtp", "First origin should be the DFF");
+
+        // Remaining 16 should be inverters
+        for i in 1..=16 {
+            let (_, ref ct, ref pin) = origins[i];
+            assert_eq!(ct, "inv", "Origin {} should be an inverter", i);
+            assert_eq!(pin, "Y", "Inverter output pin should be Y");
+        }
+
+        // dff_out verification
+        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+        let dff_out_cellid = cellid_to_sdf_path.iter()
+            .find(|(_, path)| path.as_str() == "dff_out")
+            .map(|(&cid, _)| cid)
+            .expect("dff_out should exist");
+        let dff_out_aigpin = (1..=aig.num_aigpins)
+            .find(|&ap| aig.aigpin_cell_origins[ap].iter().any(|(cid, _, _)| *cid == dff_out_cellid))
+            .expect("dff_out should have a cell origin");
+
+        let dff_out_delay = &script.gate_delays[dff_out_aigpin];
+        assert_eq!(dff_out_delay.rise_ps, 375,
+            "Analytical dff_out rise: 360 + 15 = 375ps, got {}ps", dff_out_delay.rise_ps);
+        assert_eq!(dff_out_delay.fall_ps, 352,
+            "Analytical dff_out fall: 340 + 12 = 352ps, got {}ps", dff_out_delay.fall_ps);
+    }
+
     // === Test 4: GPU delay injection quantization ===
 
-    /// Helper: build a FlattenedScriptV1 for quantization testing.
+    /// Helper: build a FlattenedScriptV1 for delay injection testing.
     /// `delays` are per-AIG-pin (index 0 is always default/Tie0).
     /// `patch_map` maps offsets in blocks_data to AIG pin indices.
     /// `blocks_data_size` is how many u32 slots to allocate.
-    fn make_quantization_script(
+    fn make_delay_injection_script(
         delays: Vec<PackedDelay>,
         patch_map: Vec<(usize, Vec<usize>)>,
         blocks_data_size: usize,
-        quantum: u32,
-        metadata_slots: Vec<usize>,
     ) -> FlattenedScriptV1 {
         FlattenedScriptV1 {
             num_blocks: 0,
@@ -1883,95 +1895,59 @@ mod sdf_delay_tests {
             clock_period_ps: 10000,
             timing_enabled: true,
             delay_patch_map: patch_map,
-            timing_quantum_ps: quantum,
-            metadata_timing_slots: metadata_slots,
         }
     }
 
     #[test]
-    fn test_basic_quantization() {
-        // delay=100ps, quantum=10 → quantized=10
-        let mut script = make_quantization_script(
+    fn test_basic_delay_injection() {
+        // delay=100ps → stored as raw 100
+        let mut script = make_delay_injection_script(
             vec![PackedDelay::default(), PackedDelay::new(100, 100)],
             vec![(0, vec![1])],
-            1, 10, Vec::new(),
+            1,
         );
         script.inject_timing_to_script();
-        assert_eq!(script.blocks_data[0], 10, "100ps / 10ps quantum = 10");
+        assert_eq!(script.blocks_data[0], 100, "100ps stored as raw picoseconds");
     }
 
     #[test]
     fn test_max_of_thread_position() {
-        // Two aigpins [350ps, 0ps] → max=350, quantized=ceil(350/10)=35
-        let mut script = make_quantization_script(
+        // Two aigpins [350ps, 0ps] → max=350, stored as raw 350
+        let mut script = make_delay_injection_script(
             vec![PackedDelay::default(), PackedDelay::new(350, 350), PackedDelay::new(0, 0)],
             vec![(0, vec![1, 2])],
-            1, 10, Vec::new(),
+            1,
         );
         script.inject_timing_to_script();
-        assert_eq!(script.blocks_data[0], 35, "max(350,0)=350, 350/10=35");
-    }
-
-    #[test]
-    fn test_metadata_slot_written() {
-        let mut script = make_quantization_script(
-            vec![PackedDelay::default(), PackedDelay::new(100, 100)],
-            vec![(0, vec![1])],
-            2, 10, vec![1],  // metadata at offset 1
-        );
-        script.inject_timing_to_script();
-        assert_eq!(script.blocks_data[1], 10,
-            "Metadata slot should contain the timing quantum (10ps)");
-    }
-
-    #[test]
-    fn test_auto_adjust_quantum() {
-        // delay=3000ps, quantum=10 → exceeds 255*10=2550 → auto-adjust
-        // new quantum = (3000 + 254) / 255 = 12
-        // quantized = ceil(3000/12) = (3000 + 11) / 12 = 250
-        let mut script = make_quantization_script(
-            vec![PackedDelay::default(), PackedDelay::new(3000, 3000)],
-            vec![(0, vec![1])],
-            2, 10, vec![1],
-        );
-        script.inject_timing_to_script();
-
-        let expected_quantum = 12u32;
-        assert_eq!(script.blocks_data[1], expected_quantum,
-            "Metadata should contain auto-adjusted quantum");
-
-        let expected_quantized = ((3000u32 + expected_quantum - 1) / expected_quantum).min(255);
-        assert_eq!(expected_quantized, 250);
-        assert_eq!(script.blocks_data[0], expected_quantized,
-            "Quantized delay should be 250");
+        assert_eq!(script.blocks_data[0], 350, "max(350,0)=350 raw ps");
     }
 
     #[test]
     fn test_zero_stays_zero() {
-        let mut script = make_quantization_script(
+        let mut script = make_delay_injection_script(
             vec![PackedDelay::default(), PackedDelay::new(0, 0)],
             vec![(0, vec![1])],
-            1, 10, Vec::new(),
+            1,
         );
         script.inject_timing_to_script();
-        assert_eq!(script.blocks_data[0], 0, "Zero delay should quantize to zero");
+        assert_eq!(script.blocks_data[0], 0, "Zero delay stays zero");
     }
 
     #[test]
     fn test_ordering_preserved() {
-        // delays 5ps and 15ps with quantum=10 → quantized 1 and 2
-        let mut script = make_quantization_script(
+        // delays 5ps and 15ps → stored as raw 5 and 15
+        let mut script = make_delay_injection_script(
             vec![PackedDelay::default(), PackedDelay::new(5, 5), PackedDelay::new(15, 15)],
             vec![(0, vec![1]), (1, vec![2])],
-            2, 10, Vec::new(),
+            2,
         );
         script.inject_timing_to_script();
 
-        let q1 = script.blocks_data[0];
-        let q2 = script.blocks_data[1];
-        assert_eq!(q1, 1, "5ps with quantum 10 → ceil(5/10) = 1");
-        assert_eq!(q2, 2, "15ps with quantum 10 → ceil(15/10) = 2");
-        assert!(q1 < q2, "Ordering must be preserved: {} < {}", q1, q2);
+        let d1 = script.blocks_data[0];
+        let d2 = script.blocks_data[1];
+        assert_eq!(d1, 5, "5ps stored as raw picoseconds");
+        assert_eq!(d2, 15, "15ps stored as raw picoseconds");
+        assert!(d1 < d2, "Ordering must be preserved: {} < {}", d1, d2);
     }
 
     // === Test 5: IOPATH pin name fallback ===
