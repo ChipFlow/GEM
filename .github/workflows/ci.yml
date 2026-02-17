@@ -62,7 +62,7 @@ jobs:
           # Use Homebrew LLVM toolchain consistently (compiler, linker, libc++)
           echo "LIBRARY_PATH=${LLVM_PREFIX}/lib/c++:${LLVM_PREFIX}/lib" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib/c++:${LLVM_PREFIX}/lib" >> $GITHUB_ENV
-          echo "LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -L${LLVM_PREFIX}/lib -fuse-ld=${LLVM_PREFIX}/bin/ld64.lld" >> $GITHUB_ENV
+          echo "LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -L${LLVM_PREFIX}/lib -Wl,-rpath,${LLVM_PREFIX}/lib/c++" >> $GITHUB_ENV
           LLVM_VER=$(${LLVM_PREFIX}/bin/clang --version | head -1 | grep -o '[0-9]*\.[0-9]*\.[0-9]*')
           echo "LLVM_VERSION=$LLVM_VER" >> $GITHUB_ENV
 
@@ -136,6 +136,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: '12.6.3'
+          method: network
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -381,7 +387,7 @@ jobs:
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
           echo "LIBRARY_PATH=${LLVM_PREFIX}/lib/c++:${LLVM_PREFIX}/lib" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib/c++:${LLVM_PREFIX}/lib" >> $GITHUB_ENV
-          echo "LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -L${LLVM_PREFIX}/lib -fuse-ld=${LLVM_PREFIX}/bin/ld64.lld" >> $GITHUB_ENV
+          echo "LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -L${LLVM_PREFIX}/lib -Wl,-rpath,${LLVM_PREFIX}/lib/c++" >> $GITHUB_ENV
           LLVM_VER=$(${LLVM_PREFIX}/bin/clang --version | head -1 | grep -o '[0-9]*\.[0-9]*\.[0-9]*')
           echo "LLVM_VERSION=$LLVM_VER" >> $GITHUB_ENV
 
