@@ -12,9 +12,22 @@
     "RUN_LINTER": false,
     "SYNTH_ELABORATE_ONLY": true,
     "SYNTH_READ_BLACKBOX_LIB": true,
-    "EXTRA_LEFS": ["/sram/CF_SRAM_1024x32.lef"],
-    "EXTRA_LIBS": ["/sram/CF_SRAM_1024x32_tt_180V_25C.lib"],
-    "EXTRA_VERILOG_MODELS": ["/sram/CF_SRAM_1024x32_stub.v"],
+    "MACROS": {
+        "CF_SRAM_1024x32": {
+            "instances": {
+                "soc.sram.mem.0.0": {
+                    "location": [100, 100],
+                    "orientation": "N"
+                }
+            },
+            "gds": [],
+            "lef": ["/sram/CF_SRAM_1024x32.lef"],
+            "lib": {
+                "nom_*": ["/sram/CF_SRAM_1024x32_tt_180V_25C.lib"]
+            },
+            "nl": ["/sram/CF_SRAM_1024x32_stub.v"]
+        }
+    },
     "meta": {
         "version": 2
     }
