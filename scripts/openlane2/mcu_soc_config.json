@@ -23,7 +23,9 @@
             "gds": ["/sram_ip/gds/CF_SRAM_1024x32.gds"],
             "lef": ["/sram_ip/lef/CF_SRAM_1024x32.lef"],
             "lib": {
-                "nom_*": ["/sram_ip/lib/CF_SRAM_1024x32_tt_180V_25C.lib"]
+                "min_*": ["/sram_ip/lib/CF_SRAM_1024x32_ff_195V_n40C.lib"],
+                "nom_*": ["/sram_ip/lib/CF_SRAM_1024x32_tt_180V_25C.lib"],
+                "max_*": ["/sram_ip/lib/CF_SRAM_1024x32_ss_160V_100C.lib"]
             },
             "nl": ["/sram_ip/hdl/CF_SRAM_1024x32.v"]
         }
