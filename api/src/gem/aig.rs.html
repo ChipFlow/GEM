@@ -1291,7 +1291,7 @@
 <a href=#1291 id=1291 data-nosnippet>1291</a>    <span class="doccomment">/// Build an AIG from a netlistdb.
 <a href=#1292 id=1292 data-nosnippet>1292</a>    ///
 <a href=#1293 id=1293 data-nosnippet>1293</a>    /// For designs with SKY130 cells, automatically loads PDK models from the
-<a href=#1294 id=1294 data-nosnippet>1294</a>    /// `sky130_fd_sc_hd/cells` submodule. Panics with a helpful message if the
+<a href=#1294 id=1294 data-nosnippet>1294</a>    /// `vendor/sky130_fd_sc_hd/cells` submodule. Panics with a helpful message if the
 <a href=#1295 id=1295 data-nosnippet>1295</a>    /// submodule is not initialized.
 <a href=#1296 id=1296 data-nosnippet>1296</a>    </span><span class="kw">pub fn </span>from_netlistdb(netlistdb: <span class="kw-2">&amp;</span>NetlistDB) -&gt; AIG {
 <a href=#1297 id=1297 data-nosnippet>1297</a>        <span class="comment">// Check if the design uses SKY130 cells
@@ -1299,7 +1299,7 @@
 <a href=#1299 id=1299 data-nosnippet>1299</a>            (<span class="number">1</span>..netlistdb.num_cells).any(|cid| is_sky130_cell(netlistdb.celltypes[cid].as_str()));
 <a href=#1300 id=1300 data-nosnippet>1300</a>
 <a href=#1301 id=1301 data-nosnippet>1301</a>        <span class="kw">if </span>has_sky130 {
-<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="kw">let </span>pdk_path = std::path::PathBuf::from(<span class="string">"sky130_fd_sc_hd/cells"</span>);
+<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="kw">let </span>pdk_path = std::path::PathBuf::from(<span class="string">"vendor/sky130_fd_sc_hd/cells"</span>);
 <a href=#1303 id=1303 data-nosnippet>1303</a>            <span class="macro">assert!</span>(
 <a href=#1304 id=1304 data-nosnippet>1304</a>                pdk_path.exists(),
 <a href=#1305 id=1305 data-nosnippet>1305</a>                <span class="string">"Design uses SKY130 cells but sky130_fd_sc_hd submodule not found. \

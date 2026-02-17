@@ -68,7 +68,7 @@ Index 0 is Tie0 (empty). Populated during AIG construction from netlistdb.</p>
 ) -&gt; <a class="struct" href="struct.AIG.html" title="struct gem::aig::AIG">AIG</a></h4></section></summary><div class="docblock"><p>Build an AIG from a netlistdb, using explicit PDK behavioral models for decomposition.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.from_netlistdb" class="method"><a class="src rightside" href="../../src/gem/aig.rs.html#1296-1325">Source</a><h4 class="code-header">pub fn <a href="#method.from_netlistdb" class="fn">from_netlistdb</a>(netlistdb: &amp;NetlistDB) -&gt; <a class="struct" href="struct.AIG.html" title="struct gem::aig::AIG">AIG</a></h4></section></summary><div class="docblock"><p>Build an AIG from a netlistdb.</p>
 <p>For designs with SKY130 cells, automatically loads PDK models from the
-<code>sky130_fd_sc_hd/cells</code> submodule. Panics with a helpful message if the
+<code>vendor/sky130_fd_sc_hd/cells</code> submodule. Panics with a helpful message if the
 submodule is not initialized.</p>
 </div></details><section id="method.topo_traverse_generic" class="method"><a class="src rightside" href="../../src/gem/aig.rs.html#1785-1825">Source</a><h4 class="code-header">pub fn <a href="#method.topo_traverse_generic" class="fn">topo_traverse_generic</a>(
     &amp;self,
