@@ -1407,7 +1407,11 @@ impl FlattenedScriptV1 {
     /// Words with no DFF constraints have value 0 (skipped by the kernel).
     /// This is conservative: the max arrival across the word is compared against the
     /// min constraint, which may over-report violations but never misses real ones.
-    pub fn build_timing_constraint_buffer(&self) -> (u32, Vec<u32>) {
+    /// Build a per-word timing constraint buffer for GPU-side setup/hold checking.
+    ///
+    /// `clock_uncertainty_ps` adds margin to both setup and hold constraints,
+    /// modelling clock jitter. Effectively tightens the timing window by this amount.
+    pub fn build_timing_constraint_buffer(&self, clock_uncertainty_ps: u16) -> (u32, Vec<u32>) {
         let num_words = self.reg_io_state_size as usize;
         let mut constraints = vec![0u32; num_words];
         for c in &self.dff_constraints {
@@ -1421,16 +1425,19 @@ impl FlattenedScriptV1 {
             let existing = constraints[word_idx];
             let old_setup = (existing >> 16) as u16;
             let old_hold = (existing & 0xFFFF) as u16;
+            // Add clock uncertainty to both setup and hold constraints
+            let effective_setup = c.setup_ps.saturating_add(clock_uncertainty_ps);
+            let effective_hold = c.hold_ps.saturating_add(clock_uncertainty_ps);
             // Most restrictive (min) constraint per word, treating 0 as "not yet set"
             let new_setup = if old_setup == 0 {
-                c.setup_ps
+                effective_setup
             } else {
-                old_setup.min(c.setup_ps)
+                old_setup.min(effective_setup)
             };
             let new_hold = if old_hold == 0 {
-                c.hold_ps
+                effective_hold
             } else {
-                old_hold.min(c.hold_ps)
+                old_hold.min(effective_hold)
             };
             constraints[word_idx] = ((new_setup as u32) << 16) | (new_hold as u32);
         }
@@ -2223,7 +2230,7 @@ mod constraint_buffer_tests {
     #[test]
     fn test_empty_constraints() {
         let script = make_script_with_constraints(4, 10000, Vec::new());
-        let (clock_ps, buf) = script.build_timing_constraint_buffer();
+        let (clock_ps, buf) = script.build_timing_constraint_buffer(0);
         assert_eq!(clock_ps, 10000);
         assert_eq!(buf.len(), 4);
         assert!(buf.iter().all(|&v| v == 0));
@@ -2241,7 +2248,7 @@ mod constraint_buffer_tests {
                 cell_id: 1,
             }],
         );
-        let (clock_ps, buf) = script.build_timing_constraint_buffer();
+        let (clock_ps, buf) = script.build_timing_constraint_buffer(0);
         assert_eq!(clock_ps, 25000);
         // data_state_pos 35 → word_idx 1
         assert_eq!(buf[0], 0);
@@ -2270,7 +2277,7 @@ mod constraint_buffer_tests {
                 },
             ],
         );
-        let (_clock_ps, buf) = script.build_timing_constraint_buffer();
+        let (_clock_ps, buf) = script.build_timing_constraint_buffer(0);
         // Both in word 0 → min(300,150)=150 setup, min(100,200)=100 hold
         assert_eq!(buf[0], (150u32 << 16) | 100);
     }
@@ -2287,7 +2294,7 @@ mod constraint_buffer_tests {
                 cell_id: 1,
             }],
         );
-        let (_clock_ps, buf) = script.build_timing_constraint_buffer();
+        let (_clock_ps, buf) = script.build_timing_constraint_buffer(0);
         assert!(buf.iter().all(|&v| v == 0));
     }
 
@@ -2303,7 +2310,7 @@ mod constraint_buffer_tests {
                 cell_id: 1,
             }],
         );
-        let (_clock_ps, buf) = script.build_timing_constraint_buffer();
+        let (_clock_ps, buf) = script.build_timing_constraint_buffer(0);
         // word_idx = 100/32 = 3, but num_words = 2 → skipped
         assert!(buf.iter().all(|&v| v == 0));
     }
@@ -2311,7 +2318,7 @@ mod constraint_buffer_tests {
     #[test]
     fn test_clock_period_saturation() {
         let script = make_script_with_constraints(1, u64::MAX, Vec::new());
-        let (clock_ps, _buf) = script.build_timing_constraint_buffer();
+        let (clock_ps, _buf) = script.build_timing_constraint_buffer(0);
         assert_eq!(clock_ps, u32::MAX);
     }
 
@@ -2440,7 +2447,7 @@ mod constraint_buffer_tests {
                 cell_id: 1,
             }],
         );
-        let (clock_ps, buf) = script.build_timing_constraint_buffer();
+        let (clock_ps, buf) = script.build_timing_constraint_buffer(0);
         assert_eq!(clock_ps, 1000);
 
         // Verify constraint is at word 5 (160/32 = 5)

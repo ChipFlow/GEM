@@ -6,6 +6,7 @@
 //! (e.g., $stop, $finish, $display, assertion failures) and the CPU processes
 //! them between simulation stages.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Maximum number of events that can be buffered per cycle.
@@ -211,7 +212,7 @@ pub enum AssertAction {
 }
 
 /// Statistics tracked during simulation.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct SimStats {
     /// Number of assertion failures encountered
     pub assertion_failures: u32,
@@ -219,10 +220,40 @@ pub struct SimStats {
     pub stop_count: u32,
     /// Number of events dropped due to overflow
     pub events_dropped: u32,
-    /// Number of setup timing violations (Experiment 4)
+    /// Number of setup timing violations
     pub setup_violations: u32,
-    /// Number of hold timing violations (Experiment 4)
+    /// Number of hold timing violations
     pub hold_violations: u32,
+    /// Worst negative slack for setup (most negative = worst), in picoseconds
+    pub worst_setup_slack_ps: i32,
+    /// Worst negative slack for hold (most negative = worst), in picoseconds
+    pub worst_hold_slack_ps: i32,
+    /// Total negative slack for setup (sum of all negative slacks), in picoseconds
+    pub total_setup_slack_ps: i64,
+    /// Total negative slack for hold (sum of all negative slacks), in picoseconds
+    pub total_hold_slack_ps: i64,
+    /// Unique state word IDs with setup violations
+    pub setup_violating_endpoints: HashSet<u32>,
+    /// Unique state word IDs with hold violations
+    pub hold_violating_endpoints: HashSet<u32>,
+}
+
+impl Default for SimStats {
+    fn default() -> Self {
+        Self {
+            assertion_failures: 0,
+            stop_count: 0,
+            events_dropped: 0,
+            setup_violations: 0,
+            hold_violations: 0,
+            worst_setup_slack_ps: 0,
+            worst_hold_slack_ps: 0,
+            total_setup_slack_ps: 0,
+            total_hold_slack_ps: 0,
+            setup_violating_endpoints: HashSet::new(),
+            hold_violating_endpoints: HashSet::new(),
+        }
+    }
 }
 
 /// Process events from the buffer and determine simulation control.
@@ -313,6 +344,11 @@ where
                     slack
                 );
                 stats.setup_violations += 1;
+                stats.worst_setup_slack_ps = stats.worst_setup_slack_ps.min(slack);
+                if slack < 0 {
+                    stats.total_setup_slack_ps += slack as i64;
+                }
+                stats.setup_violating_endpoints.insert(word_id);
             }
             EventType::HoldViolation => {
                 // data[0] = state word index, data[1] = slack (signed as u32)
@@ -330,6 +366,11 @@ where
                     slack
                 );
                 stats.hold_violations += 1;
+                stats.worst_hold_slack_ps = stats.worst_hold_slack_ps.min(slack);
+                if slack < 0 {
+                    stats.total_hold_slack_ps += slack as i64;
+                }
+                stats.hold_violating_endpoints.insert(word_id);
             }
         }
     }
@@ -657,5 +698,61 @@ mod tests {
         assert_eq!(stats.setup_violations, 1);
         assert_eq!(stats.hold_violations, 1);
         assert_eq!(stats.stop_count, 1);
+    }
+
+    #[test]
+    fn test_wns_tns_accumulation() {
+        let mut buf = EventBuffer::new();
+        // Three setup violations with different slacks and word IDs
+        add_full_timing_event(&mut buf, EventType::SetupViolation, 10, 5, -100, 900, 200);
+        add_full_timing_event(&mut buf, EventType::SetupViolation, 20, 8, -450, 1200, 300);
+        add_full_timing_event(&mut buf, EventType::SetupViolation, 30, 5, -200, 1000, 250);
+        // Two hold violations
+        add_full_timing_event(&mut buf, EventType::HoldViolation, 15, 3, -120, 10, 50);
+        add_full_timing_event(&mut buf, EventType::HoldViolation, 25, 7, -280, 5, 80);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+        process_events(&buf, &config, &mut stats, |_, _, _| {});
+
+        // Setup: WNS = -450 (worst), TNS = -100 + -450 + -200 = -750
+        assert_eq!(stats.setup_violations, 3);
+        assert_eq!(stats.worst_setup_slack_ps, -450);
+        assert_eq!(stats.total_setup_slack_ps, -750);
+        // 2 unique endpoints (word IDs 5 and 8)
+        assert_eq!(stats.setup_violating_endpoints.len(), 2);
+        assert!(stats.setup_violating_endpoints.contains(&5));
+        assert!(stats.setup_violating_endpoints.contains(&8));
+
+        // Hold: WHS = -280 (worst), THS = -120 + -280 = -400
+        assert_eq!(stats.hold_violations, 2);
+        assert_eq!(stats.worst_hold_slack_ps, -280);
+        assert_eq!(stats.total_hold_slack_ps, -400);
+        assert_eq!(stats.hold_violating_endpoints.len(), 2);
+        assert!(stats.hold_violating_endpoints.contains(&3));
+        assert!(stats.hold_violating_endpoints.contains(&7));
+    }
+
+    #[test]
+    fn test_wns_tns_across_multiple_drains() {
+        // Simulate two separate event buffer drains (as happens across GPU batches)
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+
+        // First batch
+        let mut buf1 = EventBuffer::new();
+        add_full_timing_event(&mut buf1, EventType::SetupViolation, 10, 1, -100, 900, 200);
+        process_events(&buf1, &config, &mut stats, |_, _, _| {});
+
+        // Second batch (worse slack on same endpoint)
+        let mut buf2 = EventBuffer::new();
+        add_full_timing_event(&mut buf2, EventType::SetupViolation, 20, 1, -300, 1100, 200);
+        process_events(&buf2, &config, &mut stats, |_, _, _| {});
+
+        assert_eq!(stats.setup_violations, 2);
+        assert_eq!(stats.worst_setup_slack_ps, -300);
+        assert_eq!(stats.total_setup_slack_ps, -400);
+        // Same endpoint (word_id=1) across both drains
+        assert_eq!(stats.setup_violating_endpoints.len(), 1);
     }
 }
