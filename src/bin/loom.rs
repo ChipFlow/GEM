@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use gem::aigpdk::AIGPDKLeafPins;
 use gem::aig::AIG;
+use gem::aigpdk::AIGPDKLeafPins;
 use gem::pe::{process_partitions, Partition};
 use gem::repcut::RCHyperGraph;
 use gem::sim::setup::DesignArgs;
@@ -231,8 +231,7 @@ fn cmd_map(args: MapArgs) {
     clilog::info!("Loom map args:\n{:#?}", args.netlist_verilog);
 
     // Detect cell library
-    let lib =
-        detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
+    let lib = detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
     clilog::info!("Detected cell library: {}", lib);
 
     if lib == CellLibrary::Mixed {
@@ -627,9 +626,8 @@ fn sim_metal(
 
         // Check assertions
         if !script.assertion_positions.is_empty() {
-            let states_slice = unsafe {
-                std::slice::from_raw_parts(states_ptr, input_states_uvec.len())
-            };
+            let states_slice =
+                unsafe { std::slice::from_raw_parts(states_ptr, input_states_uvec.len()) };
             let cycle_output_offset = (cycle_i + 1) * script.reg_io_state_size as usize;
 
             for &(cell_id, pos, message_id, control_type) in &script.assertion_positions {
@@ -672,9 +670,8 @@ fn sim_metal(
 
         // Check display conditions
         if !script.display_positions.is_empty() {
-            let states_slice = unsafe {
-                std::slice::from_raw_parts(states_ptr, input_states_uvec.len())
-            };
+            let states_slice =
+                unsafe { std::slice::from_raw_parts(states_ptr, input_states_uvec.len()) };
             let cycle_output_offset = (cycle_i + 1) * script.reg_io_state_size as usize;
 
             for (cell_id, enable_pos, format, arg_positions, arg_widths) in
@@ -692,14 +689,12 @@ fn sim_metal(
                             let arg_bit_idx = arg_pos & 31;
                             let abs_arg_idx = cycle_output_offset + arg_word_idx;
                             if abs_arg_idx < states_slice.len() {
-                                let val =
-                                    ((states_slice[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
+                                let val = ((states_slice[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
                                 display_args.push(val);
                             }
                         }
 
-                        let message =
-                            format_display_message(format, &display_args, arg_widths);
+                        let message = format_display_message(format, &display_args, arg_widths);
                         print!("{}", message);
 
                         unsafe {
@@ -728,9 +723,14 @@ fn sim_metal(
 
         // Process events
         let control = unsafe {
-            process_events(&*event_buffer_ptr, &assert_config, &mut sim_stats, |msg_id, cycle, _data| {
-                clilog::debug!("[cycle {}] Event processed: message id={}", cycle, msg_id);
-            })
+            process_events(
+                &*event_buffer_ptr,
+                &assert_config,
+                &mut sim_stats,
+                |msg_id, cycle, _data| {
+                    clilog::debug!("[cycle {}] Event processed: message id={}", cycle, msg_id);
+                },
+            )
         };
 
         cycles_completed = cycle_i + 1;
@@ -855,8 +855,7 @@ fn sim_cuda(
             script.display_positions.len()
         );
 
-        let states_slice =
-            &input_states_uvec[(script.reg_io_state_size as usize)..];
+        let states_slice = &input_states_uvec[(script.reg_io_state_size as usize)..];
         for cycle_i in 0..num_cycles {
             let cycle_offset = cycle_i * script.reg_io_state_size as usize;
             for (_cell_id, enable_pos, format, arg_positions, arg_widths) in
@@ -874,8 +873,7 @@ fn sim_cuda(
                             let arg_bit_idx = arg_pos & 31;
                             let abs_arg_idx = cycle_offset + arg_word_idx;
                             if abs_arg_idx < states_slice.len() {
-                                let val =
-                                    ((states_slice[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
+                                let val = ((states_slice[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
                                 args.push(val);
                             }
                         }
@@ -897,8 +895,7 @@ fn sim_cuda(
         let assert_config = AssertConfig::default();
         let mut sim_stats = SimStats::default();
 
-        let states_slice =
-            &input_states_uvec[(script.reg_io_state_size as usize)..];
+        let states_slice = &input_states_uvec[(script.reg_io_state_size as usize)..];
         for cycle_i in 0..num_cycles {
             let cycle_offset = cycle_i * script.reg_io_state_size as usize;
             for &(_cell_id, pos, _message_id, control_type) in &script.assertion_positions {
@@ -924,9 +921,7 @@ fn sim_cuda(
                                 sim_stats.assertion_failures += 1;
                             }
                             (EventType::AssertFail, AssertAction::Terminate) => {
-                                clilog::error!(
-                                    "Assertion failed - terminating simulation"
-                                );
+                                clilog::error!("Assertion failed - terminating simulation");
                                 sim_stats.assertion_failures += 1;
                                 std::process::exit(1);
                             }
@@ -1003,12 +998,7 @@ fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
         for (i, ((_cell_id, dff), (&setup_slack, &hold_slack))) in aig
             .dffs
             .iter()
-            .zip(
-                aig
-                    .setup_slacks
-                    .iter()
-                    .zip(aig.hold_slacks.iter()),
-            )
+            .zip(aig.setup_slacks.iter().zip(aig.hold_slacks.iter()))
             .enumerate()
         {
             if setup_slack < 0 || hold_slack < 0 {
@@ -1076,8 +1066,11 @@ fn cmd_cosim(args: CosimArgs) {
             args.gemparts,
             args.config,
             args.num_blocks,
-            args.max_cycles.map_or(String::new(), |c| format!(" --max-cycles {}", c)),
-            args.sdf.as_ref().map_or(String::new(), |s| format!(" --sdf {:?}", s)),
+            args.max_cycles
+                .map_or(String::new(), |c| format!(" --max-cycles {}", c)),
+            args.sdf
+                .as_ref()
+                .map_or(String::new(), |s| format!(" --sdf {:?}", s)),
         );
         std::process::exit(1);
     }

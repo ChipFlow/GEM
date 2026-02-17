@@ -10,5 +10,5 @@
 //! - [`setup`] — Design loading pipeline (netlist → AIG → script)
 
 pub mod cpu_reference;
-pub mod vcd_io;
 pub mod setup;
+pub mod vcd_io;

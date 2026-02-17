@@ -295,8 +295,7 @@ pub fn sanity_check_cpu(
     gpu_states: &[u32],
     num_cycles: usize,
 ) {
-    let mut sram_storage_sanity =
-        vec![0; script.sram_storage_size as usize * AIGPDK_SRAM_SIZE];
+    let mut sram_storage_sanity = vec![0; script.sram_storage_size as usize * AIGPDK_SRAM_SIZE];
     let mut input_states_sanity = input_states.to_vec();
     clilog::info!("running sanity test");
     for i in 0..num_cycles {
@@ -308,8 +307,7 @@ pub fn sanity_check_cpu(
         for stage_i in 0..script.num_major_stages {
             for blk_i in 0..script.num_blocks {
                 simulate_block_v1(
-                    &script.blocks_data[script.blocks_start
-                        [stage_i * script.num_blocks + blk_i]
+                    &script.blocks_data[script.blocks_start[stage_i * script.num_blocks + blk_i]
                         ..script.blocks_start[stage_i * script.num_blocks + blk_i + 1]],
                     &input_states_sanity[(i * script.reg_io_state_size as usize)
                         ..((i + 1) * script.reg_io_state_size as usize)],

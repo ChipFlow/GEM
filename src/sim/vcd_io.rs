@@ -255,8 +255,7 @@ pub fn resolve_vcd_scope<'i>(
 ) -> &'i Scope {
     if let Some(scope_path) = input_vcd_scope {
         clilog::info!("Using user-specified VCD scope: {}", scope_path);
-        find_top_scope(header_items, scope_path)
-            .expect("Specified top scope not found in VCD.")
+        find_top_scope(header_items, scope_path).expect("Specified top scope not found in VCD.")
     } else {
         let top_module_name = top_module.unwrap_or("top");
         clilog::info!("No VCD scope specified - attempting auto-detection");
@@ -342,7 +341,7 @@ pub fn parse_input_vcd(
     netlistdb: &NetlistDB,
     max_cycles: Option<usize>,
 ) -> ParsedInputVCD {
-    use vcd_ng::{FastFlowToken, FFValueChange};
+    use vcd_ng::{FFValueChange, FastFlowToken};
 
     let mut state = vec![0; script.reg_io_state_size as usize];
     let mut vcd_time_last_active = u64::MAX;
@@ -490,10 +489,7 @@ pub fn setup_output_vcd(
                         aigpin,
                         u32::MAX,
                         writer
-                            .add_wire(
-                                1,
-                                &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()),
-                            )
+                            .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
                             .unwrap(),
                     ));
                 }
@@ -501,10 +497,7 @@ pub fn setup_output_vcd(
                     aigpin,
                     *script.output_map.get(&aigpin).unwrap(),
                     writer
-                        .add_wire(
-                            1,
-                            &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()),
-                        )
+                        .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
                         .unwrap(),
                 ))
             } else {
@@ -544,9 +537,7 @@ pub fn write_output_vcd(
                     assert!(output_aigpin <= 1);
                     output_aigpin as u32
                 }
-                output_pos => {
-                    states[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1
-                }
+                output_pos => states[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1,
             };
             if value_new == last_val[i] {
                 continue;

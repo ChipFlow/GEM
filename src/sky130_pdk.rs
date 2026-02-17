@@ -606,7 +606,7 @@ fn eval_udp_for_inputs(udp: &UdpModel, input_vals: &[bool]) -> bool {
             .iter()
             .zip(input_vals.iter())
             .all(|(pattern, &actual)| match pattern {
-                None => true,           // don't-care matches anything
+                None => true,            // don't-care matches anything
                 Some(v) => *v == actual, // must match exactly
             });
         if matches {
@@ -988,22 +988,13 @@ fn get_cell_input_by_name(inputs: &CellInputs, name: &str) -> usize {
 // DecompResult conversion: GATE_MARKER encoding -> standard negative-index encoding
 // ============================================================================
 
-
 /// Post-process a DecompResult built with GATE_MARKER encoding to use
 /// standard negative-index encoding for the and_gates references.
-fn finalize_decomp_result(
-    and_gates: Vec<(i64, i64)>,
-    output: WireVal,
-) -> DecompResult {
+fn finalize_decomp_result(and_gates: Vec<(i64, i64)>, output: WireVal) -> DecompResult {
     // Convert gate references in and_gates from GATE_MARKER to negative indices
     let converted_gates: Vec<(i64, i64)> = and_gates
         .iter()
-        .map(|(a, b)| {
-            (
-                convert_ref_to_standard(*a),
-                convert_ref_to_standard(*b),
-            )
-        })
+        .map(|(a, b)| (convert_ref_to_standard(*a), convert_ref_to_standard(*b)))
         .collect();
 
     match output {
@@ -1040,7 +1031,11 @@ fn convert_ref_to_standard(ref_val: i64) -> i64 {
         let gate_idx = gate_ref_index(uval);
         let inverted = (uval & 1) != 0;
         let base = -((gate_idx as i64) * 2 + 1);
-        if inverted { base ^ 1 } else { base }
+        if inverted {
+            base ^ 1
+        } else {
+            base
+        }
     } else {
         ref_val
     }
@@ -1099,17 +1094,12 @@ pub fn load_pdk_models(pdk_cells_path: &Path, cell_types: &[String]) -> PdkModel
 
     for cell_type in cell_types {
         // Skip sequential and tie cells - handled elsewhere
-        if is_sequential_cell(cell_type)
-            || is_tie_cell(cell_type)
-        {
+        if is_sequential_cell(cell_type) || is_tie_cell(cell_type) {
             continue;
         }
 
         let cell_dir = pdk_cells_path.join(cell_type);
-        let func_file = cell_dir.join(format!(
-            "sky130_fd_sc_hd__{}.functional.v",
-            cell_type
-        ));
+        let func_file = cell_dir.join(format!("sky130_fd_sc_hd__{}.functional.v", cell_type));
 
         if !func_file.exists() {
             clilog::warn!(
@@ -1120,13 +1110,8 @@ pub fn load_pdk_models(pdk_cells_path: &Path, cell_types: &[String]) -> PdkModel
             continue;
         }
 
-        let src = std::fs::read_to_string(&func_file).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read PDK model {}: {}",
-                func_file.display(),
-                e
-            )
-        });
+        let src = std::fs::read_to_string(&func_file)
+            .unwrap_or_else(|e| panic!("Failed to read PDK model {}: {}", func_file.display(), e));
 
         if let Some(model) = parse_functional_model(&src) {
             // Validate: check that all gate inputs reference known wires
@@ -1197,9 +1182,8 @@ fn load_udp(models_path: &Path, udp_name: &str) -> Option<UdpModel> {
         return None;
     }
 
-    let src = std::fs::read_to_string(&udp_file).unwrap_or_else(|e| {
-        panic!("Failed to read UDP file {}: {}", udp_file.display(), e)
-    });
+    let src = std::fs::read_to_string(&udp_file)
+        .unwrap_or_else(|e| panic!("Failed to read UDP file {}: {}", udp_file.display(), e));
 
     parse_udp(&src)
 }
@@ -1243,9 +1227,10 @@ pub fn decompose_with_pdk(
 
         if gate_type == "buf" {
             assert_eq!(gate.inputs.len(), 1);
-            let input_val = wires.get(&gate.inputs[0]).copied().unwrap_or_else(|| {
-                panic!("Unknown wire '{}' in buf gate", gate.inputs[0])
-            });
+            let input_val = wires
+                .get(&gate.inputs[0])
+                .copied()
+                .unwrap_or_else(|| panic!("Unknown wire '{}' in buf gate", gate.inputs[0]));
             wires.insert(gate.output.clone(), input_val);
             continue;
         }
@@ -1260,9 +1245,10 @@ pub fn decompose_with_pdk(
             .inputs
             .iter()
             .map(|name| {
-                wires.get(name).copied().unwrap_or_else(|| {
-                    panic!("Unknown wire '{}' in {} gate", name, gate_type)
-                })
+                wires
+                    .get(name)
+                    .copied()
+                    .unwrap_or_else(|| panic!("Unknown wire '{}' in {} gate", name, gate_type))
             })
             .collect();
 
@@ -1329,8 +1315,7 @@ pub fn eval_behavioral_model(
 
         if gate_type.starts_with("sky130_fd_sc_hd__udp_") {
             let udp = &udps[gate_type];
-            let input_vals: Vec<bool> =
-                gate.inputs.iter().map(|name| wires[name]).collect();
+            let input_vals: Vec<bool> = gate.inputs.iter().map(|name| wires[name]).collect();
             let result = eval_udp_for_inputs(udp, &input_vals);
             wires.insert(gate.output.clone(), result);
             continue;
@@ -1390,10 +1375,9 @@ mod tests {
 
     #[test]
     fn test_parse_ha() {
-        let src = std::fs::read_to_string(
-            "sky130_fd_sc_hd/cells/ha/sky130_fd_sc_hd__ha.functional.v",
-        )
-        .unwrap();
+        let src =
+            std::fs::read_to_string("sky130_fd_sc_hd/cells/ha/sky130_fd_sc_hd__ha.functional.v")
+                .unwrap();
         let model = parse_functional_model(&src).unwrap();
         assert_eq!(model.module_name, "sky130_fd_sc_hd__ha");
         assert_eq!(model.inputs, vec!["A", "B"]);
@@ -1476,9 +1460,9 @@ mod tests {
             gate_outputs[gate_idx]
         } else {
             let aigpin = decomp.output_idx as usize;
-            *pin_values.get(&aigpin).unwrap_or_else(|| {
-                panic!("Pin {} not found in values map", aigpin)
-            })
+            *pin_values
+                .get(&aigpin)
+                .unwrap_or_else(|| panic!("Pin {} not found in values map", aigpin))
         };
 
         if decomp.output_inverted {
@@ -1498,7 +1482,11 @@ mod tests {
             let gate_idx = ((abs_ref - 1) / 2) as usize;
             let inverted = (abs_ref % 2) == 0;
             let val = gate_outputs[gate_idx];
-            if inverted { !val } else { val }
+            if inverted {
+                !val
+            } else {
+                val
+            }
         } else {
             // ref_val is aigpin_iv: pin = ref_val >> 1, inverted = ref_val & 1
             let aigpin = (ref_val >> 1) as usize;
@@ -1509,7 +1497,11 @@ mod tests {
                     aigpin, ref_val
                 )
             });
-            if inverted { !val } else { val }
+            if inverted {
+                !val
+            } else {
+                val
+            }
         }
     }
 
@@ -1536,15 +1528,14 @@ mod tests {
     /// Check if all input pins of a model are recognized by CellInputs.
     fn all_inputs_supported(model: &BehavioralModel) -> bool {
         let supported = [
-            "A", "A_N", "A0", "A1", "A1_N", "A2", "A2_N", "A3", "A4",
-            "B", "B_N", "B1", "B1_N", "B2",
-            "C", "C_N", "C1", "C2",
-            "D", "D_N", "D1",
-            "S", "S0", "S1", "CIN",
-            "SET_B", "RESET_B",
-            "SLEEP", "SLEEP_B",
+            "A", "A_N", "A0", "A1", "A1_N", "A2", "A2_N", "A3", "A4", "B", "B_N", "B1", "B1_N",
+            "B2", "C", "C_N", "C1", "C2", "D", "D_N", "D1", "S", "S0", "S1", "CIN", "SET_B",
+            "RESET_B", "SLEEP", "SLEEP_B",
         ];
-        model.inputs.iter().all(|name| supported.contains(&name.as_str()))
+        model
+            .inputs
+            .iter()
+            .all(|name| supported.contains(&name.as_str()))
     }
 
     /// Exhaustive truth-table test for all combinational cells with supported pins.
@@ -1583,24 +1574,17 @@ mod tests {
             for output_pin in &model.outputs {
                 for combo in 0..num_combos {
                     // Convert combo to input booleans
-                    let input_bools: Vec<bool> = (0..num_inputs)
-                        .map(|i| ((combo >> i) & 1) != 0)
-                        .collect();
+                    let input_bools: Vec<bool> =
+                        (0..num_inputs).map(|i| ((combo >> i) & 1) != 0).collect();
 
                     // Set up CellInputs
                     let (cell_inputs, bool_map) = setup_test_inputs(model, &input_bools);
 
                     // Evaluate via direct gate interpretation (reference)
-                    let expected =
-                        eval_behavioral_model(model, &bool_map, output_pin, &pdk.udps);
+                    let expected = eval_behavioral_model(model, &bool_map, output_pin, &pdk.udps);
 
                     // Evaluate via AIG decomposition
-                    let decomp = decompose_with_pdk(
-                        cell_type,
-                        &cell_inputs,
-                        output_pin,
-                        &pdk,
-                    );
+                    let decomp = decompose_with_pdk(cell_type, &cell_inputs, output_pin, &pdk);
 
                     // Build pin_values map for decomp evaluator
                     let mut pin_values: HashMap<usize, bool> = HashMap::new();
@@ -1625,6 +1609,10 @@ mod tests {
             "Tested {} cell types exhaustively, skipped {} (unsupported pins), {} (too many inputs)",
             tested, skipped_inputs, skipped_size
         );
-        assert!(tested > 50, "Expected to test at least 50 cell types, but only tested {}", tested);
+        assert!(
+            tested > 50,
+            "Expected to test at least 50 cell types, but only tested {}",
+            tested
+        );
     }
 }

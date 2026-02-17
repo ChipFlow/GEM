@@ -43,8 +43,7 @@ pub struct LoadedDesign {
 /// builds the flattened script, and optionally loads SDF timing data.
 pub fn load_design(args: &DesignArgs) -> LoadedDesign {
     // Detect cell library
-    let lib =
-        detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
+    let lib = detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
     clilog::info!("Detected cell library: {}", lib);
 
     if lib == CellLibrary::Mixed {
@@ -127,7 +126,14 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
 
     // Load SDF timing data if provided
     if let Some(ref sdf_path) = args.sdf {
-        load_sdf(&mut script, &aig, &netlistdb, sdf_path, &args.sdf_corner, args.sdf_debug);
+        load_sdf(
+            &mut script,
+            &aig,
+            &netlistdb,
+            sdf_path,
+            &args.sdf_corner,
+            args.sdf_debug,
+        );
     }
 
     // Print script hash
