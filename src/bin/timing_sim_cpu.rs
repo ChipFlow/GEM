@@ -13,11 +13,13 @@ use gem::aig::{DriverType, AIG};
 use gem::aigpdk::AIGPDKLeafPins;
 use gem::flatten::PackedDelay;
 use gem::liberty_parser::TimingLibrary;
-use gem::sky130::{detect_library_from_file, extract_cell_type, is_sky130_cell, CellLibrary, SKY130LeafPins};
+use gem::sky130::{
+    detect_library_from_file, extract_cell_type, is_sky130_cell, CellLibrary, SKY130LeafPins,
+};
 use gem::sky130_pdk::is_sequential_cell;
 use gem::testbench::{
-    CppSpiFlash, TestbenchConfig, FlashConfig, UartConfig, GpioConfig, SramInitConfig,
-    UartState, UartEvent, WatchlistSignal, Watchlist, WatchlistEntry,
+    CppSpiFlash, FlashConfig, GpioConfig, SramInitConfig, TestbenchConfig, UartConfig, UartEvent,
+    UartState, Watchlist, WatchlistEntry, WatchlistSignal,
 };
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
 use serde::{Deserialize, Serialize};
@@ -226,9 +228,9 @@ impl QspiFlash {
             self.data_width = 1;
             self.command = self.curr_byte;
             match self.command {
-                0xAB => {} // Power up
+                0xAB => {}                                                         // Power up
                 0x03 | 0x9F | 0xFF | 0x35 | 0x31 | 0x50 | 0x05 | 0x01 | 0x06 => {} // Various
-                0xEB => self.data_width = 4, // Quad read
+                0xEB => self.data_width = 4,                                       // Quad read
                 _ => {} // Ignore unknown commands
             }
         } else {
@@ -237,9 +239,13 @@ impl QspiFlash {
                     // Single read: 3 address bytes, then data
                     if self.byte_count <= 3 {
                         let shift = (3 - self.byte_count) * 8;
-                        clilog::debug!("FLASH: Addr byte {}: 0x{:02X} << {} -> addr=0x{:06X}",
-                                      self.byte_count, self.curr_byte, shift,
-                                      self.addr | ((self.curr_byte as u32) << shift));
+                        clilog::debug!(
+                            "FLASH: Addr byte {}: 0x{:02X} << {} -> addr=0x{:06X}",
+                            self.byte_count,
+                            self.curr_byte,
+                            shift,
+                            self.addr | ((self.curr_byte as u32) << shift)
+                        );
                         self.addr |= (self.curr_byte as u32) << shift;
                     }
                     if self.byte_count >= 3 {
@@ -281,21 +287,28 @@ impl QspiFlash {
     fn step(&mut self, clk: bool, csn: bool, d_o: u8) -> u8 {
         static mut STEP_COUNT: u64 = 0;
         static mut LAST_LOG: u64 = 0;
-        unsafe { STEP_COUNT += 1; }
+        unsafe {
+            STEP_COUNT += 1;
+        }
 
         let mut d_i = 0u8;
 
         // Log CSN transitions
         if !csn && self.last_csn {
             // Falling edge of CSN - flash selected
-            clilog::info!("FLASH: CSN low (selected) at step {}", unsafe { STEP_COUNT });
+            clilog::info!("FLASH: CSN low (selected) at step {}", unsafe {
+                STEP_COUNT
+            });
         }
 
         if csn && !self.last_csn {
             // Rising edge of CSN - deselect, reset state
             if self.command != 0 {
-                clilog::info!("FLASH: CSN high (deselected), cmd=0x{:02X}, bytes={}",
-                             self.command, self.byte_count);
+                clilog::info!(
+                    "FLASH: CSN high (deselected), cmd=0x{:02X}, bytes={}",
+                    self.command,
+                    self.byte_count
+                );
             }
             self.bit_count = 0;
             self.byte_count = 0;
@@ -320,16 +333,24 @@ impl QspiFlash {
                 if self.byte_count == 1 {
                     clilog::info!("FLASH: Command 0x{:02X}", self.command);
                 } else if self.byte_count == 4 && (self.command == 0x03 || self.command == 0xEB) {
-                    clilog::info!("FLASH: Read addr=0x{:06X}, first data=0x{:02X}",
-                                 self.addr.wrapping_sub(1) & 0xFFFFFF, self.out_buffer);
-                } else if self.byte_count >= 4 && self.byte_count <= 8
-                          && (self.command == 0x03 || self.command == 0xEB) {
+                    clilog::info!(
+                        "FLASH: Read addr=0x{:06X}, first data=0x{:02X}",
+                        self.addr.wrapping_sub(1) & 0xFFFFFF,
+                        self.out_buffer
+                    );
+                } else if self.byte_count >= 4
+                    && self.byte_count <= 8
+                    && (self.command == 0x03 || self.command == 0xEB)
+                {
                     // Log a few more data bytes
                     unsafe {
                         if STEP_COUNT - LAST_LOG > 100 {
-                            clilog::info!("FLASH: Read byte {} = 0x{:02X} from addr 0x{:06X}",
-                                         self.byte_count, self.out_buffer,
-                                         self.addr.wrapping_sub(1) & 0xFFFFFF);
+                            clilog::info!(
+                                "FLASH: Read byte {} = 0x{:02X} from addr 0x{:06X}",
+                                self.byte_count,
+                                self.out_buffer,
+                                self.addr.wrapping_sub(1) & 0xFFFFFF
+                            );
                             LAST_LOG = STEP_COUNT;
                         }
                     }
@@ -359,7 +380,7 @@ struct SramCell {
     // Control pins
     clk_pin: usize,
     en_pin: usize,
-    r_wb_pin: usize,  // 1=read, 0=write
+    r_wb_pin: usize, // 1=read, 0=write
     // Address pins
     addr_pins: Vec<usize>,
     // Byte enable pins (32 bits)
@@ -385,7 +406,7 @@ impl SramCell {
             ben_pins: Vec::new(),
             di_pins: Vec::new(),
             do_pins: Vec::new(),
-            memory: vec![0; 256],  // 256 words (0x100), matching Amaranth SRAM
+            memory: vec![0; 256], // 256 words (0x100), matching Amaranth SRAM
             last_clk: false,
         }
     }
@@ -504,7 +525,7 @@ impl SramCell {
         let addr = self.read_addr(circ_state);
 
         if addr >= self.memory.len() {
-            return false;  // Invalid address
+            return false; // Invalid address
         }
 
         if r_wb {
@@ -572,7 +593,14 @@ impl WbBus {
     }
 
     fn read_bit(pin: Option<usize>, circ_state: &[u8]) -> u8 {
-        pin.map(|p| if p < circ_state.len() { circ_state[p] } else { 0 }).unwrap_or(0)
+        pin.map(|p| {
+            if p < circ_state.len() {
+                circ_state[p]
+            } else {
+                0
+            }
+        })
+        .unwrap_or(0)
     }
 }
 
@@ -639,9 +667,7 @@ impl WishboneBusMonitor {
 
         // Step 2: Find all wire declarations matching WB signal patterns.
         // Scan all net names for the prefix.
-        let wb_signal_suffixes = [
-            "__cyc", "__stb", "__we", "__ack",
-        ];
+        let wb_signal_suffixes = ["__cyc", "__stb", "__we", "__ack"];
 
         let wb_bus_suffixes = [
             ("__adr", 30),
@@ -650,10 +676,7 @@ impl WishboneBusMonitor {
             ("__sel", 4),
         ];
 
-        let extra_suffixes = [
-            "read_port__en", "read_port__data",
-            "write_port__en",
-        ];
+        let extra_suffixes = ["read_port__en", "read_port__data", "write_port__en"];
 
         // Discover bus names by finding unique hierarchical paths before the WB signal suffix.
         let mut bus_paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -709,8 +732,12 @@ impl WishboneBusMonitor {
             grant_pin = Some(pin);
         }
 
-        eprintln!("WB Monitor: prefix='{}', discovered {} bus paths: {:?}",
-                  prefix, bus_paths.len(), bus_paths);
+        eprintln!(
+            "WB Monitor: prefix='{}', discovered {} bus paths: {:?}",
+            prefix,
+            bus_paths.len(),
+            bus_paths
+        );
         if grant_pin.is_some() {
             eprintln!("WB Monitor: arbiter grant pin found");
         }
@@ -758,11 +785,30 @@ impl WishboneBusMonitor {
                 bus.stb_pin.map(|_| "stb"),
                 bus.we_pin.map(|_| "we"),
                 bus.ack_pin.map(|_| "ack"),
-            ].iter().filter_map(|x| *x).map(|s| s.to_string())
-            .chain(if !bus.adr_pins.is_empty() { vec![format!("adr[{}]", bus.adr_pins.len())] } else { vec![] })
-            .chain(if !bus.dat_w_pins.is_empty() { vec![format!("dat_w[{}]", bus.dat_w_pins.len())] } else { vec![] })
-            .chain(if !bus.dat_r_pins.is_empty() { vec![format!("dat_r[{}]", bus.dat_r_pins.len())] } else { vec![] })
-            .chain(if !bus.sel_pins.is_empty() { vec![format!("sel[{}]", bus.sel_pins.len())] } else { vec![] })
+            ]
+            .iter()
+            .filter_map(|x| *x)
+            .map(|s| s.to_string())
+            .chain(if !bus.adr_pins.is_empty() {
+                vec![format!("adr[{}]", bus.adr_pins.len())]
+            } else {
+                vec![]
+            })
+            .chain(if !bus.dat_w_pins.is_empty() {
+                vec![format!("dat_w[{}]", bus.dat_w_pins.len())]
+            } else {
+                vec![]
+            })
+            .chain(if !bus.dat_r_pins.is_empty() {
+                vec![format!("dat_r[{}]", bus.dat_r_pins.len())]
+            } else {
+                vec![]
+            })
+            .chain(if !bus.sel_pins.is_empty() {
+                vec![format!("sel[{}]", bus.sel_pins.len())]
+            } else {
+                vec![]
+            })
             .collect();
             eprintln!("  WB bus '{}': {}", bus_path, found_signals.join(", "));
 
@@ -806,7 +852,10 @@ impl WishboneBusMonitor {
     fn log_cycle(&mut self, cycle: usize, circ_state: &[u8]) -> bool {
         let mut any_event = false;
 
-        let grant = self.grant_pin.map(|p| WbBus::read_bit(Some(p), circ_state)).unwrap_or(0);
+        let grant = self
+            .grant_pin
+            .map(|p| WbBus::read_bit(Some(p), circ_state))
+            .unwrap_or(0);
 
         for (i, bus) in self.buses.iter().enumerate() {
             let cyc = WbBus::read_bit(bus.cyc_pin, circ_state);
@@ -840,11 +889,15 @@ impl WishboneBusMonitor {
                 let dat_w = WbBus::read_bus_value(&bus.dat_w_pins, circ_state);
                 let sel = WbBus::read_bus_value(&bus.sel_pins, circ_state);
                 if WbBus::read_bit(bus.we_pin, circ_state) == 1 {
-                    eprintln!("WB c{:6}: {} ACK↑ WRITE adr=0x{:08X} dat_w=0x{:08X} sel=0x{:X}",
-                             cycle, bus.label, adr, dat_w, sel);
+                    eprintln!(
+                        "WB c{:6}: {} ACK↑ WRITE adr=0x{:08X} dat_w=0x{:08X} sel=0x{:X}",
+                        cycle, bus.label, adr, dat_w, sel
+                    );
                 } else {
-                    eprintln!("WB c{:6}: {} ACK↑ READ  adr=0x{:08X} dat_r=0x{:08X}",
-                             cycle, bus.label, adr, dat_r);
+                    eprintln!(
+                        "WB c{:6}: {} ACK↑ READ  adr=0x{:08X} dat_r=0x{:08X}",
+                        cycle, bus.label, adr, dat_r
+                    );
                 }
                 any_event = true;
             }
@@ -858,8 +911,10 @@ impl WishboneBusMonitor {
             // Log ongoing transactions with address changes (for multi-cycle)
             if cyc == 1 && stb == 1 && ack == 0 && cycle % 1000 == 0 {
                 let adr = WbBus::read_bus_value(&bus.adr_pins, circ_state);
-                eprintln!("WB c{:6}: {} STALL adr=0x{:08X} we={} grant={}",
-                         cycle, bus.label, adr, we, grant);
+                eprintln!(
+                    "WB c{:6}: {} STALL adr=0x{:08X} we={} grant={}",
+                    cycle, bus.label, adr, we, grant
+                );
                 any_event = true;
             }
 
@@ -869,7 +924,10 @@ impl WishboneBusMonitor {
 
         // Grant changes
         if grant != self.prev_grant {
-            eprintln!("WB c{:6}: arbiter.grant {}→{}", cycle, self.prev_grant, grant);
+            eprintln!(
+                "WB c{:6}: arbiter.grant {}→{}",
+                cycle, self.prev_grant, grant
+            );
             any_event = true;
             self.prev_grant = grant;
         }
@@ -892,8 +950,15 @@ impl WishboneBusMonitor {
                     let we = WbBus::read_bit(bus.we_pin, circ_state);
                     let ack = WbBus::read_bit(bus.ack_pin, circ_state);
                     let adr = WbBus::read_bus_value(&bus.adr_pins, circ_state);
-                    line += &format!(" | {}:c{}s{}w{}a{} @{:08X}",
-                        &bus.label[..bus.label.len().min(12)], cyc, stb, we, ack, adr);
+                    line += &format!(
+                        " | {}:c{}s{}w{}a{} @{:08X}",
+                        &bus.label[..bus.label.len().min(12)],
+                        cyc,
+                        stb,
+                        we,
+                        ack,
+                        adr
+                    );
                 }
                 eprintln!("{}", line);
                 any_event = true;
@@ -905,7 +970,10 @@ impl WishboneBusMonitor {
 
     /// Print a full bus state snapshot (useful at specific cycles).
     fn dump_state(&self, cycle: usize, circ_state: &[u8]) {
-        let grant = self.grant_pin.map(|p| WbBus::read_bit(Some(p), circ_state)).unwrap_or(0);
+        let grant = self
+            .grant_pin
+            .map(|p| WbBus::read_bit(Some(p), circ_state))
+            .unwrap_or(0);
         eprintln!("=== WB SNAPSHOT cycle {} grant={} ===", cycle, grant);
         for bus in &self.buses {
             let cyc = WbBus::read_bit(bus.cyc_pin, circ_state);
@@ -968,7 +1036,9 @@ impl TimingState {
                     if has_cell_origins {
                         // With cell origin tracking: only real cell outputs get delay,
                         // internal decomposition AND gates get zero.
-                        if i < aig.aigpin_cell_origins.len() && !aig.aigpin_cell_origins[i].is_empty() {
+                        if i < aig.aigpin_cell_origins.len()
+                            && !aig.aigpin_cell_origins[i].is_empty()
+                        {
                             PackedDelay::from_u64(and_delay.0, and_delay.1)
                         } else {
                             PackedDelay::default() // Internal decomposition gate
@@ -1042,9 +1112,11 @@ impl TimingState {
         let sram_timing = lib.sram_timing();
 
         // Build cellid → SDF path mapping
-        let mut cellid_to_path: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        let mut cellid_to_path: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
         for cellid in 1..netlistdb.num_cells {
-            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+            let parts: Vec<&str> = netlistdb.cellnames[cellid]
+                .iter()
                 .map(|s| s.as_str())
                 .collect();
             let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
@@ -1052,7 +1124,8 @@ impl TimingState {
         }
 
         // Build wire delay map from INTERCONNECT entries
-        let mut sdf_path_to_cellid: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut sdf_path_to_cellid: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
         for (&cellid, path) in &cellid_to_path {
             sdf_path_to_cellid.insert(path.as_str(), cellid);
         }
@@ -1063,9 +1136,12 @@ impl TimingState {
                 if let Some(dot_pos) = ic.dest.rfind('.') {
                     let dest_inst = &ic.dest[..dot_pos];
                     if let Some(&dest_cellid) = sdf_path_to_cellid.get(dest_inst) {
-                        let entry = wire_delays_per_cell
-                            .entry(dest_cellid)
-                            .or_insert(gem::sdf_parser::SdfDelay { rise_ps: 0, fall_ps: 0 });
+                        let entry = wire_delays_per_cell.entry(dest_cellid).or_insert(
+                            gem::sdf_parser::SdfDelay {
+                                rise_ps: 0,
+                                fall_ps: 0,
+                            },
+                        );
                         entry.rise_ps = entry.rise_ps.max(ic.delay.rise_ps);
                         entry.fall_ps = entry.fall_ps.max(ic.delay.fall_ps);
                     }
@@ -1087,7 +1163,9 @@ impl TimingState {
                 for (cellid, _cell_type, output_pin_name) in origins {
                     if let Some(sdf_path) = cellid_to_path.get(cellid) {
                         if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                            let iopath = sdf_cell.iopaths.iter()
+                            let iopath = sdf_cell
+                                .iopaths
+                                .iter()
                                 .find(|p| p.output_pin == *output_pin_name)
                                 .or_else(|| sdf_cell.iopaths.first());
                             if let Some(iopath) = iopath {
@@ -1107,16 +1185,26 @@ impl TimingState {
                     PackedDelay::from_u64(total_rise, total_fall)
                 } else {
                     unmatched += 1;
-                    self.liberty_fallback_delay(&aig.drivers[aigpin], and_delay, &dff_timing, &sram_timing)
+                    self.liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        and_delay,
+                        &dff_timing,
+                        &sram_timing,
+                    )
                 }
             } else {
                 // No cell origins — internal decomposition gate or input
                 match &aig.drivers[aigpin] {
                     DriverType::AndGate(_, _) => PackedDelay::default(),
-                    DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
-                        PackedDelay::default()
-                    }
-                    _ => self.liberty_fallback_delay(&aig.drivers[aigpin], and_delay, &dff_timing, &sram_timing),
+                    DriverType::InputPort(_)
+                    | DriverType::InputClockFlag(_, _)
+                    | DriverType::Tie0 => PackedDelay::default(),
+                    _ => self.liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        and_delay,
+                        &dff_timing,
+                        &sram_timing,
+                    ),
                 }
             };
             self.delays[aigpin] = delay;
@@ -1126,12 +1214,16 @@ impl TimingState {
         for (&cell_id, _dff) in &aig.dffs {
             if let Some(sdf_path) = cellid_to_path.get(&cell_id) {
                 if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                    if let Some(setup) = sdf_cell.timing_checks.iter()
+                    if let Some(setup) = sdf_cell
+                        .timing_checks
+                        .iter()
                         .find(|c| c.check_type == gem::sdf_parser::TimingCheckType::Setup)
                     {
                         self.setup_time_ps = self.setup_time_ps.max(setup.value_ps.max(0) as u64);
                     }
-                    if let Some(hold) = sdf_cell.timing_checks.iter()
+                    if let Some(hold) = sdf_cell
+                        .timing_checks
+                        .iter()
                         .find(|c| c.check_type == gem::sdf_parser::TimingCheckType::Hold)
                     {
                         self.hold_time_ps = self.hold_time_ps.max(hold.value_ps.max(0) as u64);
@@ -1140,7 +1232,11 @@ impl TimingState {
             }
         }
 
-        clilog::info!("SDF timing: {} matched, {} unmatched (Liberty fallback)", matched, unmatched);
+        clilog::info!(
+            "SDF timing: {} matched, {} unmatched (Liberty fallback)",
+            matched,
+            unmatched
+        );
     }
 
     fn liberty_fallback_delay(
@@ -1158,7 +1254,9 @@ impl TimingState {
                 .unwrap_or_default(),
             DriverType::SRAM(_) => sram_timing
                 .as_ref()
-                .map(|t| PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps))
+                .map(|t| {
+                    PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps)
+                })
                 .unwrap_or(PackedDelay::new(1, 1)),
             _ => PackedDelay::default(),
         }
@@ -1250,7 +1348,11 @@ fn trace_clock_to_primary_input(
                 }
                 None => {
                     if verbose {
-                        clilog::debug!("  Clock trace: no driver found for net {} at depth {}", netid, depth);
+                        clilog::debug!(
+                            "  Clock trace: no driver found for net {} at depth {}",
+                            netid,
+                            depth
+                        );
                     }
                     return None;
                 }
@@ -1334,8 +1436,12 @@ fn run_programmatic_simulation(
     mut trace_file: Option<File>,
     mut wb_monitor: Option<WishboneBusMonitor>,
 ) {
-    clilog::info!("Programmatic simulation: clock_gpio={}, reset_gpio={}, reset_active_high={}",
-                  config.clock_gpio, config.reset_gpio, config.reset_active_high);
+    clilog::info!(
+        "Programmatic simulation: clock_gpio={}, reset_gpio={}, reset_active_high={}",
+        config.clock_gpio,
+        config.reset_gpio,
+        config.reset_active_high
+    );
 
     // Find GPIO pins (with port_mapping fallback for ChipFlow-style port names)
     let port_mapping = config.port_mapping.as_ref();
@@ -1345,7 +1451,8 @@ fn run_programmatic_simulation(
         for pinid in 0..netlistdb.num_pins {
             if netlistdb.pin2cell[pinid] == 0 {
                 let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                if pin_name.contains(&gpio_name) || pin_name.ends_with(&format!("gpio_in:{}", idx)) {
+                if pin_name.contains(&gpio_name) || pin_name.ends_with(&format!("gpio_in:{}", idx))
+                {
                     return Some(pinid);
                 }
             }
@@ -1373,7 +1480,8 @@ fn run_programmatic_simulation(
         for pinid in 0..netlistdb.num_pins {
             if netlistdb.pin2cell[pinid] == 0 {
                 let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                if pin_name.contains(&gpio_name) || pin_name.ends_with(&format!("gpio_out:{}", idx)) {
+                if pin_name.contains(&gpio_name) || pin_name.ends_with(&format!("gpio_out:{}", idx))
+                {
                     return Some(pinid);
                 }
             }
@@ -1399,15 +1507,30 @@ fn run_programmatic_simulation(
     let clock_pin = find_gpio_in(config.clock_gpio).expect("Clock GPIO pin not found");
     let reset_pin = find_gpio_in(config.reset_gpio).expect("Reset GPIO pin not found");
 
-    clilog::info!("Clock input pin: {} (gpio_in[{}])", clock_pin, config.clock_gpio);
-    clilog::info!("Reset input pin: {} (gpio_in[{}])", reset_pin, config.reset_gpio);
+    clilog::info!(
+        "Clock input pin: {} (gpio_in[{}])",
+        clock_pin,
+        config.clock_gpio
+    );
+    clilog::info!(
+        "Reset input pin: {} (gpio_in[{}])",
+        reset_pin,
+        config.reset_gpio
+    );
 
     // Resolve constant inputs
-    let constant_input_pins: Vec<(usize, u8)> = config.constant_inputs.iter()
+    let constant_input_pins: Vec<(usize, u8)> = config
+        .constant_inputs
+        .iter()
         .filter_map(|(gpio_str, &val)| {
             gpio_str.parse::<usize>().ok().and_then(|gpio_idx| {
                 find_gpio_in(gpio_idx).map(|pin| {
-                    clilog::info!("Constant input: gpio[{}] -> pin {} = {}", gpio_idx, pin, val);
+                    clilog::info!(
+                        "Constant input: gpio[{}] -> pin {} = {}",
+                        gpio_idx,
+                        pin,
+                        val
+                    );
                     (pin, val)
                 })
             })
@@ -1420,7 +1543,11 @@ fn run_programmatic_simulation(
         fl.set_verbose(args.flash_verbose);
         let firmware_path = std::path::Path::new(&flash_cfg.firmware);
         match fl.load_firmware(firmware_path, flash_cfg.firmware_offset) {
-            Ok(size) => clilog::info!("Loaded {} bytes firmware at offset 0x{:X}", size, flash_cfg.firmware_offset),
+            Ok(size) => clilog::info!(
+                "Loaded {} bytes firmware at offset 0x{:X}",
+                size,
+                flash_cfg.firmware_offset
+            ),
             Err(e) => panic!("Failed to load firmware: {}", e),
         }
         Some(fl)
@@ -1429,8 +1556,14 @@ fn run_programmatic_simulation(
     };
 
     // Flash GPIO pins
-    let flash_clk_out = config.flash.as_ref().and_then(|f| find_gpio_out(f.clk_gpio));
-    let flash_csn_out = config.flash.as_ref().and_then(|f| find_gpio_out(f.csn_gpio));
+    let flash_clk_out = config
+        .flash
+        .as_ref()
+        .and_then(|f| find_gpio_out(f.clk_gpio));
+    let flash_csn_out = config
+        .flash
+        .as_ref()
+        .and_then(|f| find_gpio_out(f.csn_gpio));
     let flash_d_out: Vec<Option<usize>> = if let Some(ref f) = config.flash {
         (0..4).map(|i| find_gpio_out(f.d0_gpio + i)).collect()
     } else {
@@ -1454,14 +1587,28 @@ fn run_programmatic_simulation(
         None
     };
 
-    let flash_clk_oeb = config.flash.as_ref().and_then(|f| find_gpio_oeb(f.clk_gpio));
-    let flash_csn_oeb = config.flash.as_ref().and_then(|f| find_gpio_oeb(f.csn_gpio));
+    let flash_clk_oeb = config
+        .flash
+        .as_ref()
+        .and_then(|f| find_gpio_oeb(f.clk_gpio));
+    let flash_csn_oeb = config
+        .flash
+        .as_ref()
+        .and_then(|f| find_gpio_oeb(f.csn_gpio));
 
     if config.flash.is_some() {
-        clilog::info!("Flash pins: clk_out={:?}, csn_out={:?}, d_out={:?}, d_in={:?}",
-                      flash_clk_out, flash_csn_out, flash_d_out, flash_d_in);
-        clilog::info!("Flash OEB pins: clk_oeb={:?}, csn_oeb={:?}",
-                      flash_clk_oeb, flash_csn_oeb);
+        clilog::info!(
+            "Flash pins: clk_out={:?}, csn_out={:?}, d_out={:?}, d_in={:?}",
+            flash_clk_out,
+            flash_csn_out,
+            flash_d_out,
+            flash_d_in
+        );
+        clilog::info!(
+            "Flash OEB pins: clk_oeb={:?}, csn_oeb={:?}",
+            flash_clk_oeb,
+            flash_csn_oeb
+        );
         // Check AIG mappings for d_in pins — if they have entries, update_circ_from_aig will overwrite them
         for (i, opt_pin) in flash_d_in.iter().enumerate() {
             if let Some(pin) = opt_pin {
@@ -1470,7 +1617,12 @@ fn run_programmatic_simulation(
                 let driver = if has_aig {
                     let idx = aigpin_iv >> 1;
                     let inv = (aigpin_iv & 1) != 0;
-                    format!("aigpin={} inv={} driver={:?}", idx, inv, aig.drivers.get(idx))
+                    format!(
+                        "aigpin={} inv={} driver={:?}",
+                        idx,
+                        inv,
+                        aig.drivers.get(idx)
+                    )
                 } else {
                     "NO AIG MAPPING".to_string()
                 };
@@ -1483,7 +1635,11 @@ fn run_programmatic_simulation(
     let uart_tx_pin = config.uart.as_ref().and_then(|u| find_gpio_out(u.tx_gpio));
     let uart_baud_rate = config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200);
     if let Some(pin) = uart_tx_pin {
-        clilog::info!("UART TX pin: {} (gpio_out[{}])", pin, config.uart.as_ref().unwrap().tx_gpio);
+        clilog::info!(
+            "UART TX pin: {} (gpio_out[{}])",
+            pin,
+            config.uart.as_ref().unwrap().tx_gpio
+        );
     }
 
     // Find Wishbone signals for debugging - look for DFF Q outputs
@@ -1522,29 +1678,49 @@ fn run_programmatic_simulation(
     // Find reset synchronizer signals
     let rst_sync_stage0_pin = find_net_pin("rst_n_sync.stage0");
     let rst_sync_rst_pin = find_net_pin("rst_n_sync.rst");
-    clilog::info!("Reset sync: stage0={:?}, rst={:?}", rst_sync_stage0_pin, rst_sync_rst_pin);
+    clilog::info!(
+        "Reset sync: stage0={:?}, rst={:?}",
+        rst_sync_stage0_pin,
+        rst_sync_rst_pin
+    );
     // Find address bits to see where CPU is fetching from
-    let ibus_adr: Vec<Option<usize>> = (0..24).map(|i| {
-        find_net_pin(&format!("ibus__adr[{}]", i))
-    }).collect();
-    clilog::info!("Wishbone debug: ibus_cyc={:?}, ibus_stb={:?}, dbus_cyc={:?}",
-                  ibus_cyc_pin, ibus_stb_pin, dbus_cyc_pin);
-    clilog::info!("ibus_adr pins found: {}/24", ibus_adr.iter().filter(|x| x.is_some()).count());
+    let ibus_adr: Vec<Option<usize>> = (0..24)
+        .map(|i| find_net_pin(&format!("ibus__adr[{}]", i)))
+        .collect();
+    clilog::info!(
+        "Wishbone debug: ibus_cyc={:?}, ibus_stb={:?}, dbus_cyc={:?}",
+        ibus_cyc_pin,
+        ibus_stb_pin,
+        dbus_cyc_pin
+    );
+    clilog::info!(
+        "ibus_adr pins found: {}/24",
+        ibus_adr.iter().filter(|x| x.is_some()).count()
+    );
 
     // SRAM peripheral (SRAMPeripheral Wishbone wrapper) signals
     let sram_wb_ack_pin = find_net_pin("sram.wb_bus__ack");
     let sram_read_en_pin = find_net_pin("sram.read_port__en");
-    let sram_write_en: Vec<Option<usize>> = (0..4).map(|i| {
-        find_net_pin(&format!("sram.write_port__en[{}]", i))
-    }).collect();
+    let sram_write_en: Vec<Option<usize>> = (0..4)
+        .map(|i| find_net_pin(&format!("sram.write_port__en[{}]", i)))
+        .collect();
     // Data bus address for store operations
-    let dbus_adr: Vec<Option<usize>> = (0..30).map(|i| {
-        find_net_pin(&format!("dbus__adr[{}]", i))
-    }).collect();
-    clilog::info!("SRAM peripheral: wb_ack={:?}, read_en={:?}, write_en=[{:?},{:?},{:?},{:?}]",
-                  sram_wb_ack_pin, sram_read_en_pin,
-                  sram_write_en[0], sram_write_en[1], sram_write_en[2], sram_write_en[3]);
-    clilog::info!("dbus_adr pins found: {}/30", dbus_adr.iter().filter(|x| x.is_some()).count());
+    let dbus_adr: Vec<Option<usize>> = (0..30)
+        .map(|i| find_net_pin(&format!("dbus__adr[{}]", i)))
+        .collect();
+    clilog::info!(
+        "SRAM peripheral: wb_ack={:?}, read_en={:?}, write_en=[{:?},{:?},{:?},{:?}]",
+        sram_wb_ack_pin,
+        sram_read_en_pin,
+        sram_write_en[0],
+        sram_write_en[1],
+        sram_write_en[2],
+        sram_write_en[3]
+    );
+    clilog::info!(
+        "dbus_adr pins found: {}/30",
+        dbus_adr.iter().filter(|x| x.is_some()).count()
+    );
 
     // Verify AIG topological order: for each AND gate, both inputs must have lower index
     {
@@ -1563,9 +1739,15 @@ fn run_programmatic_simulation(
             }
         }
         if topo_violations > 0 {
-            eprintln!("CRITICAL: {} AIG topological order violations! Single-pass eval will be WRONG!", topo_violations);
+            eprintln!(
+                "CRITICAL: {} AIG topological order violations! Single-pass eval will be WRONG!",
+                topo_violations
+            );
         } else {
-            clilog::info!("AIG topological order verified: all {} pins in correct order", aig.num_aigpins);
+            clilog::info!(
+                "AIG topological order verified: all {} pins in correct order",
+                aig.num_aigpins
+            );
         }
     }
 
@@ -1615,8 +1797,11 @@ fn run_programmatic_simulation(
     let max_cycles = args.max_cycles.unwrap_or(config.num_cycles);
     let reset_cycles = config.reset_cycles;
 
-    clilog::info!("Starting programmatic simulation: {} reset cycles, {} total cycles",
-                  reset_cycles, max_cycles);
+    clilog::info!(
+        "Starting programmatic simulation: {} reset cycles, {} total cycles",
+        reset_cycles,
+        max_cycles
+    );
 
     // Helper closure to evaluate combinational logic
     let eval_combinational = |state: &mut TimingState, circ_state: &[u8]| {
@@ -1684,9 +1869,13 @@ fn run_programmatic_simulation(
         // (SRAM writes to DO, then we need to push DO values to the net)
 
         for &pinid in &sram_input_pins {
-            if pinid == usize::MAX { continue; }
+            if pinid == usize::MAX {
+                continue;
+            }
             // Check if this pin is already in the AIG
-            if aig.pin2aigpin_iv[pinid] != usize::MAX { continue; }
+            if aig.pin2aigpin_iv[pinid] != usize::MAX {
+                continue;
+            }
             // Find a driver pin (AIG-mapped) on the same net
             let netid = netlistdb.pin2net[pinid];
             let mut driver_pin = usize::MAX;
@@ -1699,12 +1888,17 @@ fn run_programmatic_simulation(
             if driver_pin != usize::MAX {
                 sram_net_prop.push((pinid, driver_pin));
             } else {
-                eprintln!("WARNING: SRAM pin {} has no AIG-mapped driver on net {}",
-                         pinid, netid);
+                eprintln!(
+                    "WARNING: SRAM pin {} has no AIG-mapped driver on net {}",
+                    pinid, netid
+                );
             }
         }
     }
-    clilog::info!("Built SRAM net propagation map: {} pin pairs", sram_net_prop.len());
+    clilog::info!(
+        "Built SRAM net propagation map: {} pin pairs",
+        sram_net_prop.len()
+    );
 
     // Debug: show SRAM pin AIG mappings
     for sram in sram_cells.iter() {
@@ -1721,7 +1915,9 @@ fn run_programmatic_simulation(
     let mut sram_do_prop: Vec<(usize, Vec<usize>)> = Vec::new();
     for sram in sram_cells.iter() {
         for &do_pin in &sram.do_pins {
-            if do_pin == usize::MAX { continue; }
+            if do_pin == usize::MAX {
+                continue;
+            }
             let netid = netlistdb.pin2net[do_pin];
             let mut load_pins = Vec::new();
             for np in netlistdb.net2pin.iter_set(netid) {
@@ -1734,9 +1930,14 @@ fn run_programmatic_simulation(
             }
         }
     }
-    clilog::info!("Built SRAM DO propagation map: {} output pins, {} total loads",
-                 sram_do_prop.len(),
-                 sram_do_prop.iter().map(|(_, loads)| loads.len()).sum::<usize>());
+    clilog::info!(
+        "Built SRAM DO propagation map: {} output pins, {} total loads",
+        sram_do_prop.len(),
+        sram_do_prop
+            .iter()
+            .map(|(_, loads)| loads.len())
+            .sum::<usize>()
+    );
 
     // Helper functions are defined inline where used (no closures needed)
 
@@ -1763,7 +1964,11 @@ fn run_programmatic_simulation(
     for &(pin, val) in &constant_input_pins {
         circ_state[pin] = val;
     }
-    clilog::info!("Reset: setting gpio_in[{}] = {} (reset active)", config.reset_gpio, reset_active_val);
+    clilog::info!(
+        "Reset: setting gpio_in[{}] = {} (reset active)",
+        config.reset_gpio,
+        reset_active_val
+    );
 
     // Initial evaluation (like CXXRTL's initial agent.step())
     // This evaluates with reset already active
@@ -1794,8 +1999,10 @@ fn run_programmatic_simulation(
                             let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
                             let pin1_name = netlistdb.pinnames[dp].dbg_fmt_pin();
                             let pin2_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                            eprintln!("NET INCONSISTENCY: net '{}' pin {}({})={} vs pin {}({})={}",
-                                     net_name, dp, pin1_name, dv, pinid, pin2_name, val);
+                            eprintln!(
+                                "NET INCONSISTENCY: net '{}' pin {}({})={} vs pin {}({})={}",
+                                net_name, dp, pin1_name, dv, pinid, pin2_name, val
+                            );
                         }
                     }
                 } else {
@@ -1809,12 +2016,21 @@ fn run_programmatic_simulation(
             }
         }
         if net_inconsistencies > 0 {
-            eprintln!("TOTAL NET INCONSISTENCIES: {} (across {} nets)", net_inconsistencies, netlistdb.num_nets);
+            eprintln!(
+                "TOTAL NET INCONSISTENCIES: {} (across {} nets)",
+                net_inconsistencies, netlistdb.num_nets
+            );
         } else {
-            clilog::info!("Net consistency check: all pins consistent across {} nets", netlistdb.num_nets);
+            clilog::info!(
+                "Net consistency check: all pins consistent across {} nets",
+                netlistdb.num_nets
+            );
         }
         if unmapped_on_mapped_net > 0 {
-            clilog::info!("Warning: {} nets have both mapped and unmapped pins", unmapped_on_mapped_net);
+            clilog::info!(
+                "Warning: {} nets have both mapped and unmapped pins",
+                unmapped_on_mapped_net
+            );
         }
     }
 
@@ -1826,7 +2042,10 @@ fn run_programmatic_simulation(
         let is_dff = match cell_library {
             CellLibrary::SKY130 => {
                 let ct = extract_cell_type(celltype);
-                matches!(ct, "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp")
+                matches!(
+                    ct,
+                    "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp"
+                )
             }
             _ => matches!(celltype, "DFF" | "DFFSR"),
         };
@@ -1849,29 +2068,37 @@ fn run_programmatic_simulation(
                 }
             }
             if pinid_d != usize::MAX && pinid_q != usize::MAX && pinid_clk != usize::MAX {
-                dff_list.push((cellid, pinid_d, pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, pinid_de));
+                dff_list.push((
+                    cellid,
+                    pinid_d,
+                    pinid_q,
+                    pinid_clk,
+                    pinid_reset_b,
+                    pinid_set_b,
+                    pinid_de,
+                ));
             }
         }
     }
     // Build debug signal tracker: map cell names to Q pin IDs for key signals
     let debug_signals: Vec<(&str, usize)> = {
         let target_cells = [
-            ("_286237_", "ibus_fsm"),          // soc.cpu.ibus_adapt.fsm_state
-            ("_286613_", "dbus_fsm"),          // soc.cpu.dbus_adapt.fsm_state
-            ("_304372_", "fl_fsm0"),           // soc.spiflash.ctrl.fsm_state[0]
-            ("_304373_", "fl_fsm1"),           // soc.spiflash.ctrl.fsm_state[1]
-            ("_304374_", "fl_fsm2"),           // soc.spiflash.ctrl.fsm_state[2]
-            ("_304375_", "fl_fsm3"),           // soc.spiflash.ctrl.fsm_state[3]
-            ("_287134_", "cpu_fsm0"),          // cpu controller FSM state[0]
-            ("_287135_", "cpu_fsm1"),          // cpu controller FSM state[1]
-            ("_287136_", "cpu_fsm2"),          // cpu controller FSM state[2]
-            ("_304353_", "fl_ack"),            // soc.spiflash.ctrl.wb_bus__ack
-            ("_303438_", "sram_ack"),          // soc.sram.wb_bus__ack
-            ("_290639_", "rst"),               // rst_n_sync.rst
-            ("_290640_", "rst_stg0"),          // rst_n_sync.stage0
-            ("_304354_", "dcnt0"),             // soc.spiflash.ctrl.i_data_count[0]
-            ("_304355_", "dcnt1"),             // soc.spiflash.ctrl.i_data_count[1]
-            ("_304356_", "dcnt2"),             // soc.spiflash.ctrl.i_data_count[2]
+            ("_286237_", "ibus_fsm"), // soc.cpu.ibus_adapt.fsm_state
+            ("_286613_", "dbus_fsm"), // soc.cpu.dbus_adapt.fsm_state
+            ("_304372_", "fl_fsm0"),  // soc.spiflash.ctrl.fsm_state[0]
+            ("_304373_", "fl_fsm1"),  // soc.spiflash.ctrl.fsm_state[1]
+            ("_304374_", "fl_fsm2"),  // soc.spiflash.ctrl.fsm_state[2]
+            ("_304375_", "fl_fsm3"),  // soc.spiflash.ctrl.fsm_state[3]
+            ("_287134_", "cpu_fsm0"), // cpu controller FSM state[0]
+            ("_287135_", "cpu_fsm1"), // cpu controller FSM state[1]
+            ("_287136_", "cpu_fsm2"), // cpu controller FSM state[2]
+            ("_304353_", "fl_ack"),   // soc.spiflash.ctrl.wb_bus__ack
+            ("_303438_", "sram_ack"), // soc.sram.wb_bus__ack
+            ("_290639_", "rst"),      // rst_n_sync.rst
+            ("_290640_", "rst_stg0"), // rst_n_sync.stage0
+            ("_304354_", "dcnt0"),    // soc.spiflash.ctrl.i_data_count[0]
+            ("_304355_", "dcnt1"),    // soc.spiflash.ctrl.i_data_count[1]
+            ("_304356_", "dcnt2"),    // soc.spiflash.ctrl.i_data_count[2]
         ];
         let mut signals = Vec::new();
         for &(_cellid, _pinid_d, pinid_q, _, _, _, _) in &dff_list {
@@ -1896,13 +2123,21 @@ fn run_programmatic_simulation(
             // Log the first few non-system-clock DFFs
             if dffs_off_sysclk <= 20 {
                 let cell_name = format!("{:?}", netlistdb.cellnames[cellid]);
-                clilog::info!("DFF NOT on system clock: {} (clk_pin={}, sys_clk={})",
-                             &cell_name[..cell_name.len().min(80)], clk_pin, clock_pin);
+                clilog::info!(
+                    "DFF NOT on system clock: {} (clk_pin={}, sys_clk={})",
+                    &cell_name[..cell_name.len().min(80)],
+                    clk_pin,
+                    clock_pin
+                );
             }
         }
     }
-    clilog::info!("Found {} DFFs total: {} on system clock, {} on OTHER clocks",
-                 dff_list.len(), dffs_on_sysclk, dffs_off_sysclk);
+    clilog::info!(
+        "Found {} DFFs total: {} on system clock, {} on OTHER clocks",
+        dff_list.len(),
+        dffs_on_sysclk,
+        dffs_off_sysclk
+    );
 
     // Track previous CLK state, D value, and DE value for each DFF.
     // These are captured after FALL eval (before clock edge) so DFFs
@@ -1928,7 +2163,10 @@ fn run_programmatic_simulation(
         let is_dff = match cell_library {
             CellLibrary::SKY130 => {
                 let ct = extract_cell_type(celltype);
-                matches!(ct, "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp")
+                matches!(
+                    ct,
+                    "dfxtp" | "dfrtp" | "dfrbp" | "dfstp" | "dfbbp" | "edfxtp" | "sdfxtp"
+                )
             }
             _ => matches!(celltype, "DFF" | "DFFSR"),
         };
@@ -1959,7 +2197,10 @@ fn run_programmatic_simulation(
         }
     }
     if dffs_force_reset > 0 {
-        clilog::info!("Forced {} DFFs to reset/set values during initial state", dffs_force_reset);
+        clilog::info!(
+            "Forced {} DFFs to reset/set values during initial state",
+            dffs_force_reset
+        );
     }
 
     // Re-evaluate combinational after forcing DFF outputs
@@ -1987,8 +2228,12 @@ fn run_programmatic_simulation(
         };
         if cycle <= 20 && (cycle == 0 || cycle == config.reset_cycles as usize) {
             let is_reset = new_reset == reset_active_val;
-            clilog::info!("cycle {}: gpio_rst={} → {}", cycle, new_reset,
-                         if is_reset { "RESET" } else { "RUN" });
+            clilog::info!(
+                "cycle {}: gpio_rst={} → {}",
+                cycle,
+                new_reset,
+                if is_reset { "RESET" } else { "RUN" }
+            );
         }
         circ_state[reset_pin] = new_reset;
         // Apply constant inputs every cycle
@@ -2014,8 +2259,11 @@ fn run_programmatic_simulation(
         // in real hardware, data is stable BEFORE the clock edge. In our simulation,
         // the SPI clock and data DFFs advance simultaneously, so the current data
         // at a posedge has already changed. Using delayed data fixes this.
-        let step_flash = |fl: &mut CppSpiFlash, circ_state: &mut [u8], in_reset: bool,
-                          prev_d: &mut u8, prev_csn: &mut bool| {
+        let step_flash = |fl: &mut CppSpiFlash,
+                          circ_state: &mut [u8],
+                          in_reset: bool,
+                          prev_d: &mut u8,
+                          prev_csn: &mut bool| {
             let clk = flash_clk_out.map(|p| circ_state[p] != 0).unwrap_or(false);
             let current_csn = flash_csn_out.map(|p| circ_state[p] != 0).unwrap_or(true);
             let mut current_d_out = 0u8;
@@ -2057,7 +2305,13 @@ fn run_programmatic_simulation(
         // Pass in_reset flag to prevent spurious flash activity during reset
         let in_reset = cycle < reset_cycles;
         if let Some(ref mut fl) = flash {
-            step_flash(fl, &mut circ_state, in_reset, &mut prev_flash_d_out, &mut prev_flash_csn);
+            step_flash(
+                fl,
+                &mut circ_state,
+                in_reset,
+                &mut prev_flash_d_out,
+                &mut prev_flash_csn,
+            );
         }
 
         // 3. Capture DFF CLK, D, and DE states BEFORE setting clock HIGH.
@@ -2089,7 +2343,9 @@ fn run_programmatic_simulation(
         //    real hardware where DFFs sample D before the clock edge.
         let mut dffs_latched = 0usize;
         let mut dffs_in_reset = 0usize;
-        for (i, &(_cellid, _pinid_d, pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, pinid_de)) in dff_list.iter().enumerate() {
+        for (i, &(_cellid, _pinid_d, pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, pinid_de)) in
+            dff_list.iter().enumerate()
+        {
             let curr_clk = circ_state[pinid_clk];
             let prev_clk = dff_prev_clk[i];
 
@@ -2114,7 +2370,7 @@ fn run_programmatic_simulation(
             // Rising edge on THIS DFF's clock: latch pre-edge D→Q
             else if curr_clk != 0 && prev_clk == 0 {
                 let should_latch = if pinid_de != usize::MAX {
-                    dff_prev_de[i] != 0  // DE from pre-edge snapshot
+                    dff_prev_de[i] != 0 // DE from pre-edge snapshot
                 } else {
                     true
                 };
@@ -2136,7 +2392,12 @@ fn run_programmatic_simulation(
                 dff_q_changed += 1;
                 if cycle >= 10 && cycle <= 20 && changed_names.len() < 30 {
                     let cell_name = format!("{:?}", netlistdb.cellnames[cellid]);
-                    changed_names.push(format!("{}({}→{})", &cell_name[..cell_name.len().min(60)], prev_q, curr_q));
+                    changed_names.push(format!(
+                        "{}({}→{})",
+                        &cell_name[..cell_name.len().min(60)],
+                        prev_q,
+                        curr_q
+                    ));
                 }
             }
         }
@@ -2170,7 +2431,8 @@ fn run_programmatic_simulation(
         }
         // Debug: print key signal values every cycle in the critical window
         if cycle <= 20 || cycle % 10000 == 0 {
-            let vals: Vec<String> = debug_signals.iter()
+            let vals: Vec<String> = debug_signals
+                .iter()
                 .map(|&(label, pinid)| format!("{}={}", label, circ_state[pinid]))
                 .collect();
             if !vals.is_empty() {
@@ -2179,34 +2441,64 @@ fn run_programmatic_simulation(
         }
 
         // Log DFF latch stats for first few cycles and around reset release
-        if cycle <= 5 || (cycle >= 10 && cycle <= 15) || cycle == 20 || cycle == 50 || cycle == 100 {
+        if cycle <= 5 || (cycle >= 10 && cycle <= 15) || cycle == 20 || cycle == 50 || cycle == 100
+        {
             let dffs_no_edge = dff_list.len() - dffs_latched - dffs_in_reset;
-            clilog::info!("cycle {}: dffs_latched={}, dffs_in_reset={}, no_edge={}",
-                         cycle, dffs_latched, dffs_in_reset, dffs_no_edge);
+            clilog::info!(
+                "cycle {}: dffs_latched={}, dffs_in_reset={}, no_edge={}",
+                cycle,
+                dffs_latched,
+                dffs_in_reset,
+                dffs_no_edge
+            );
             // On first cycle, show breakdown of no-edge DFFs
             if cycle == 0 {
                 let mut held_high = 0usize;
                 let mut held_low = 0usize;
-                for (i, &(_cellid, _pinid_d, _pinid_q, pinid_clk, pinid_reset_b, pinid_set_b, _pinid_de)) in dff_list.iter().enumerate() {
+                for (
+                    i,
+                    &(
+                        _cellid,
+                        _pinid_d,
+                        _pinid_q,
+                        pinid_clk,
+                        pinid_reset_b,
+                        pinid_set_b,
+                        _pinid_de,
+                    ),
+                ) in dff_list.iter().enumerate()
+                {
                     let curr_clk = circ_state[pinid_clk];
                     let prev_clk = dff_prev_clk[i];
-                    let reset_active = pinid_reset_b != usize::MAX && circ_state[pinid_reset_b] == 0;
+                    let reset_active =
+                        pinid_reset_b != usize::MAX && circ_state[pinid_reset_b] == 0;
                     let set_active = pinid_set_b != usize::MAX && circ_state[pinid_set_b] == 0;
                     if !reset_active && !set_active && !(curr_clk != 0 && prev_clk == 0) {
-                        if curr_clk != 0 && prev_clk != 0 { held_high += 1; }
-                        else if curr_clk == 0 && prev_clk == 0 { held_low += 1; }
-                        else { /* falling edge */ }
+                        if curr_clk != 0 && prev_clk != 0 {
+                            held_high += 1;
+                        } else if curr_clk == 0 && prev_clk == 0 {
+                            held_low += 1;
+                        } else { /* falling edge */
+                        }
                     }
                 }
-                clilog::info!("  no_edge breakdown: clk_held_high={}, clk_held_low={}, falling={}",
-                             held_high, held_low, dffs_no_edge - held_high - held_low);
+                clilog::info!(
+                    "  no_edge breakdown: clk_held_high={}, clk_held_low={}, falling={}",
+                    held_high,
+                    held_low,
+                    dffs_no_edge - held_high - held_low
+                );
             }
         }
 
         // Write watchlist trace output
         if let Some(ref mut f) = trace_file {
             let values: Vec<String> = std::iter::once(cycle.to_string())
-                .chain(watchlist_entries.iter().map(|e| e.format_value(&circ_state)))
+                .chain(
+                    watchlist_entries
+                        .iter()
+                        .map(|e| e.format_value(&circ_state)),
+                )
                 .collect();
             writeln!(f, "{}", values.join(",")).expect("Failed to write trace");
         }
@@ -2257,7 +2549,13 @@ fn run_programmatic_simulation(
         // 6b. Step flash model AFTER rising edge eval (sees current SPI clock HIGH)
         // This is when the flash controller samples data from flash
         if let Some(ref mut fl) = flash {
-            step_flash(fl, &mut circ_state, in_reset, &mut prev_flash_d_out, &mut prev_flash_csn);
+            step_flash(
+                fl,
+                &mut circ_state,
+                in_reset,
+                &mut prev_flash_d_out,
+                &mut prev_flash_csn,
+            );
         }
 
         // 6c. (Removed) Edge-triggered DFF latching is now unified in step 5 above.
@@ -2297,8 +2595,14 @@ fn run_programmatic_simulation(
                         UartState::StartBit { start_cycle }
                     }
                 }
-                UartState::DataBits { start_cycle, bits_received, value } => {
-                    let bit_center = start_cycle + (bits_received as usize) * cycles_per_bit + cycles_per_bit / 2;
+                UartState::DataBits {
+                    start_cycle,
+                    bits_received,
+                    value,
+                } => {
+                    let bit_center = start_cycle
+                        + (bits_received as usize) * cycles_per_bit
+                        + cycles_per_bit / 2;
                     if cycle >= bit_center {
                         let new_value = value | ((tx as u8) << bits_received);
                         if bits_received >= 7 {
@@ -2314,7 +2618,11 @@ fn run_programmatic_simulation(
                             }
                         }
                     } else {
-                        UartState::DataBits { start_cycle, bits_received, value }
+                        UartState::DataBits {
+                            start_cycle,
+                            bits_received,
+                            value,
+                        }
                     }
                 }
                 UartState::StopBit { start_cycle, value } => {
@@ -2326,7 +2634,11 @@ fn run_programmatic_simulation(
                                 event: "tx".to_string(),
                                 payload: value,
                             });
-                            let ch = if value >= 32 && value < 127 { value as char } else { '.' };
+                            let ch = if value >= 32 && value < 127 {
+                                value as char
+                            } else {
+                                '.'
+                            };
                             clilog::info!("UART TX @ cycle {}: 0x{:02X} '{}'", cycle, value, ch);
                         }
                         UartState::Idle
@@ -2341,7 +2653,13 @@ fn run_programmatic_simulation(
         // Progress logging
         if cycle % 10000 == 0 && cycle > 0 {
             let tx_val = uart_tx_pin.map(|p| circ_state[p]).unwrap_or(255);
-            clilog::info!("Cycle {} / {} (uart_tx={}, uart_events={})", cycle, max_cycles, tx_val, uart_events.len());
+            clilog::info!(
+                "Cycle {} / {} (uart_tx={}, uart_events={})",
+                cycle,
+                max_cycles,
+                tx_val,
+                uart_events.len()
+            );
         }
     }
 
@@ -2353,18 +2671,27 @@ fn run_programmatic_simulation(
 
     if let Some(output_path) = &config.output_events {
         #[derive(Serialize)]
-        struct EventsOutput { events: Vec<UartEvent> }
-        let output = EventsOutput { events: uart_events };
+        struct EventsOutput {
+            events: Vec<UartEvent>,
+        }
+        let output = EventsOutput {
+            events: uart_events,
+        };
         let json = serde_json::to_string_pretty(&output).expect("Failed to serialize events");
         let mut file = File::create(output_path).expect("Failed to create events file");
-        file.write_all(json.as_bytes()).expect("Failed to write events");
+        file.write_all(json.as_bytes())
+            .expect("Failed to write events");
         clilog::info!("Wrote events to {}", output_path);
     }
 
     // Print flash model statistics
     if let Some(ref fl) = flash {
-        println!("Flash model: steps={}, posedges={}, negedges={}",
-                 fl.get_step_count(), fl.get_posedge_count(), fl.get_negedge_count());
+        println!(
+            "Flash model: steps={}, posedges={}, negedges={}",
+            fl.get_step_count(),
+            fl.get_posedge_count(),
+            fl.get_negedge_count()
+        );
     }
 
     println!();
@@ -2397,7 +2724,9 @@ fn main() {
         if let Some(ref path) = cfg.netlist_path {
             PathBuf::from(path)
         } else {
-            panic!("No netlist path provided (need --config with netlist_path or positional argument)");
+            panic!(
+                "No netlist path provided (need --config with netlist_path or positional argument)"
+            );
         }
     } else {
         panic!("No netlist path provided");
@@ -2405,7 +2734,10 @@ fn main() {
 
     // Determine liberty path from config or command line
     let liberty_path = if let Some(ref cfg) = config {
-        cfg.liberty_path.as_ref().map(PathBuf::from).or_else(|| args.liberty.clone())
+        cfg.liberty_path
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| args.liberty.clone())
     } else {
         args.liberty.clone()
     };
@@ -2448,12 +2780,14 @@ fn main() {
     };
 
     // Load PDK models if available
-    let pdk_cells_path = args.pdk_cells
-        .clone()
-        .or_else(|| {
-            let default_path = std::path::PathBuf::from("sky130_fd_sc_hd/cells");
-            if default_path.exists() { Some(default_path) } else { None }
-        });
+    let pdk_cells_path = args.pdk_cells.clone().or_else(|| {
+        let default_path = std::path::PathBuf::from("sky130_fd_sc_hd/cells");
+        if default_path.exists() {
+            Some(default_path)
+        } else {
+            None
+        }
+    });
 
     let pdk_models = if let Some(ref pdk_path) = pdk_cells_path {
         clilog::info!("Loading PDK cell models from: {}", pdk_path.display());
@@ -2492,7 +2826,9 @@ fn main() {
 
     // Load timing: SDF (per-instance) or Liberty (uniform)
     if let Some(ref sdf_path) = args.sdf {
-        let corner: gem::sdf_parser::SdfCorner = args.sdf_corner.parse()
+        let corner: gem::sdf_parser::SdfCorner = args
+            .sdf_corner
+            .parse()
             .unwrap_or_else(|e| panic!("Invalid SDF corner: {}", e));
         clilog::info!("Loading SDF: {} (corner: {})", sdf_path.display(), corner);
         let sdf = gem::sdf_parser::SdfFile::parse_file(sdf_path, corner)
@@ -2542,10 +2878,7 @@ fn main() {
                     {
                         posedge_monitor.insert(primary_clk_pin);
                     } else if args.verbose && posedge_monitor.is_empty() {
-                        clilog::debug!(
-                            "Clock pin {} could not be traced to primary input",
-                            pinid
-                        );
+                        clilog::debug!("Clock pin {} could not be traced to primary input", pinid);
                     }
                 }
             }
@@ -2612,7 +2945,8 @@ fn main() {
                             if let Some(pos) = pin_name.find(&bit_pattern) {
                                 let end_pos = pos + bit_pattern.len();
                                 let is_exact = end_pos == pin_name.len()
-                                    || !pin_name[end_pos..].starts_with(|c: char| c.is_ascii_digit());
+                                    || !pin_name[end_pos..]
+                                        .starts_with(|c: char| c.is_ascii_digit());
                                 if is_exact {
                                     wire_pin = Some(pinid);
                                 }
@@ -2632,14 +2966,20 @@ fn main() {
                 if found_count > 0 {
                     let format = sig.format.clone().unwrap_or_else(|| "hex".to_string());
                     // Log some sample pin mappings for verification
-                    let sample_pins: Vec<String> = pins.iter().enumerate()
+                    let sample_pins: Vec<String> = pins
+                        .iter()
+                        .enumerate()
                         .filter(|(_, &p)| p < usize::MAX)
                         .take(5)
                         .map(|(i, &p)| format!("[{}]={}", i, p))
                         .collect();
                     clilog::info!(
                         "Watchlist: {} -> {}/{} bits found (bundle, format={}, pins: {}...)",
-                        sig.name, found_count, width, format, sample_pins.join(", ")
+                        sig.name,
+                        found_count,
+                        width,
+                        format,
+                        sample_pins.join(", ")
                     );
                     entries.push(WatchlistEntry::Bundle {
                         name: sig.name.clone(),
@@ -2647,7 +2987,12 @@ fn main() {
                         format,
                     });
                 } else {
-                    clilog::warn!("Watchlist: {} not found (bundle pattern: {}[0..{}])", sig.name, sig.net, width);
+                    clilog::warn!(
+                        "Watchlist: {} not found (bundle pattern: {}[0..{}])",
+                        sig.name,
+                        sig.net,
+                        width
+                    );
                 }
             } else {
                 // Single-bit signal
@@ -2656,14 +3001,22 @@ fn main() {
                 // First try: find by net name (for internal wires)
                 for netid in 0..netlistdb.num_nets {
                     let net_name = netlistdb.netnames[netid].dbg_fmt_pin();
-                    if net_name == sig.net || net_name.ends_with(&sig.net) || net_name.contains(&sig.net) {
+                    if net_name == sig.net
+                        || net_name.ends_with(&sig.net)
+                        || net_name.contains(&sig.net)
+                    {
                         // Find a pin on this net
                         for pinid in netlistdb.net2pin.iter_set(netid) {
                             entries.push(WatchlistEntry::Bit {
                                 name: sig.name.clone(),
                                 pin: pinid,
                             });
-                            clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
+                            clilog::info!(
+                                "Watchlist: {} -> pin {} (net {})",
+                                sig.name,
+                                pinid,
+                                net_name
+                            );
                             found = true;
                             break;
                         }
@@ -2682,7 +3035,12 @@ fn main() {
                                 name: sig.name.clone(),
                                 pin: pinid,
                             });
-                            clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                            clilog::info!(
+                                "Watchlist: {} -> pin {} ({})",
+                                sig.name,
+                                pinid,
+                                pin_name
+                            );
                             found = true;
                             break;
                         }
@@ -2711,9 +3069,10 @@ fn main() {
     });
 
     // Create Wishbone bus monitor if requested
-    let wb_monitor = args.wb_monitor.as_ref().map(|prefix| {
-        WishboneBusMonitor::discover(prefix, &netlistdb)
-    });
+    let wb_monitor = args
+        .wb_monitor
+        .as_ref()
+        .map(|prefix| WishboneBusMonitor::discover(prefix, &netlistdb));
 
     // Check for config-based (programmatic) simulation
     if let Some(cfg) = config {
@@ -2733,11 +3092,16 @@ fn main() {
     }
 
     // VCD-driven simulation mode
-    let input_vcd_path = args.input_vcd.as_ref().expect("VCD file required (use --config for programmatic mode)");
+    let input_vcd_path = args
+        .input_vcd
+        .as_ref()
+        .expect("VCD file required (use --config for programmatic mode)");
     let input_vcd = File::open(input_vcd_path).expect("Failed to open VCD");
     let mut bufrd = BufReader::with_capacity(65536, input_vcd);
     let mut vcd_parser = Parser::new(&mut bufrd);
-    let header = vcd_parser.parse_header().expect("Failed to parse VCD header");
+    let header = vcd_parser
+        .parse_header()
+        .expect("Failed to parse VCD header");
     drop(vcd_parser);
     let mut vcd_file = bufrd.into_inner();
     vcd_file.seek(SeekFrom::Start(0)).unwrap();
@@ -2786,7 +3150,9 @@ fn main() {
             if netlistdb.pin2cell[pinid] == 0 {
                 // Primary IO
                 let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                if pin_name.contains(&gpio_out_name) || pin_name.ends_with(&format!("gpio_out:{}", args.uart_tx_gpio)) {
+                if pin_name.contains(&gpio_out_name)
+                    || pin_name.ends_with(&format!("gpio_out:{}", args.uart_tx_gpio))
+                {
                     found_pin = Some(pinid);
                     clilog::info!("Found UART TX on pin {}: {}", pinid, pin_name);
                     break;
@@ -2794,7 +3160,10 @@ fn main() {
             }
         }
         if found_pin.is_none() {
-            clilog::warn!("Could not find gpio_out[{}] for UART TX monitoring", args.uart_tx_gpio);
+            clilog::warn!(
+                "Could not find gpio_out[{}] for UART TX monitoring",
+                args.uart_tx_gpio
+            );
         }
         found_pin
     } else {
@@ -2811,7 +3180,10 @@ fn main() {
     let mut flash_last_d_in = 0xFu8; // Flash idles with all lines high
 
     if let Some(tx_pin) = uart_tx_pin {
-        let has_aig_mapping = aig.pin2aigpin_iv.get(tx_pin).map_or(false, |&v| v != usize::MAX);
+        let has_aig_mapping = aig
+            .pin2aigpin_iv
+            .get(tx_pin)
+            .map_or(false, |&v| v != usize::MAX);
         clilog::info!(
             "UART monitoring: baud={}, clock={}Hz, cycles_per_bit={}, has_aig_mapping={}",
             args.baud_rate,
@@ -2820,7 +3192,10 @@ fn main() {
             has_aig_mapping
         );
         if !has_aig_mapping {
-            clilog::warn!("UART TX pin {} has no AIG mapping - output won't be tracked!", tx_pin);
+            clilog::warn!(
+                "UART TX pin {} has no AIG mapping - output won't be tracked!",
+                tx_pin
+            );
         }
     }
 
@@ -2839,7 +3214,9 @@ fn main() {
         for pinid in 0..netlistdb.num_pins {
             if netlistdb.pin2cell[pinid] == 0 {
                 let pin_name = netlistdb.pinnames[pinid].dbg_fmt_pin();
-                if pin_name.contains(&gpio_name) || pin_name.ends_with(&format!("{}:{}", gpio_type, idx)) {
+                if pin_name.contains(&gpio_name)
+                    || pin_name.ends_with(&format!("{}:{}", gpio_type, idx))
+                {
                     return Some(pinid);
                 }
             }
@@ -2949,7 +3326,12 @@ fn main() {
     if let Some(pin) = ibus_cyc_pin {
         let pin_name = netlistdb.pinnames[pin].dbg_fmt_pin();
         let net_name = netlistdb.netnames[netlistdb.pin2net[pin]].dbg_fmt_pin();
-        clilog::info!("Found ibus_cyc wire: pin {} ({}) on net {}", pin, pin_name, net_name);
+        clilog::info!(
+            "Found ibus_cyc wire: pin {} ({}) on net {}",
+            pin,
+            pin_name,
+            net_name
+        );
     } else {
         clilog::warn!("Could not find ibus__cyc wire for monitoring");
     }
@@ -2993,15 +3375,27 @@ fn main() {
 
         // Check AIG mappings for flash pins
         if let Some(clk_pin) = flash_clk_out {
-            let has_aig = aig.pin2aigpin_iv.get(clk_pin).map_or(false, |&v| v != usize::MAX);
+            let has_aig = aig
+                .pin2aigpin_iv
+                .get(clk_pin)
+                .map_or(false, |&v| v != usize::MAX);
             let pin_name = netlistdb.pinnames[clk_pin].dbg_fmt_pin();
-            clilog::info!("Flash CLK pin {} ({}) AIG mapping: {}", clk_pin, pin_name, has_aig);
+            clilog::info!(
+                "Flash CLK pin {} ({}) AIG mapping: {}",
+                clk_pin,
+                pin_name,
+                has_aig
+            );
 
             // Check pin 81150 (output583:X) mapping
             if let Some(&aigpin_81150) = aig.pin2aigpin_iv.get(81150) {
                 if aigpin_81150 != usize::MAX {
                     let idx = aigpin_81150 >> 1;
-                    clilog::info!("Pin 81150 (output583:X) AIG: idx={}, driver={:?}", idx, aig.drivers.get(idx));
+                    clilog::info!(
+                        "Pin 81150 (output583:X) AIG: idx={}, driver={:?}",
+                        idx,
+                        aig.drivers.get(idx)
+                    );
                 } else {
                     clilog::info!("Pin 81150 (output583:X) AIG: not mapped");
                 }
@@ -3014,7 +3408,14 @@ fn main() {
                 let pin_dir = netlistdb.pindirect[pinid];
                 let pin_net = netlistdb.pin2net[pinid];
                 let aigpin_iv = aig.pin2aigpin_iv.get(pinid).copied().unwrap_or(usize::MAX);
-                clilog::info!("  pin {}: {}, dir={:?}, net={}, aig={}", pinid, pin_name, pin_dir, pin_net, aigpin_iv);
+                clilog::info!(
+                    "  pin {}: {}, dir={:?}, net={}, aig={}",
+                    pinid,
+                    pin_name,
+                    pin_dir,
+                    pin_net,
+                    aigpin_iv
+                );
             }
 
             // Check pins on net 20966 (output583's input net)
@@ -3031,7 +3432,14 @@ fn main() {
                 let np_cell = netlistdb.pin2cell[np];
                 let np_dir = netlistdb.pindirect[np];
                 let np_aig = aig.pin2aigpin_iv.get(np).copied().unwrap_or(usize::MAX);
-                clilog::info!("  pin {}: {} (cell={}, dir={:?}, aig={})", np, np_name, np_cell, np_dir, np_aig);
+                clilog::info!(
+                    "  pin {}: {} (cell={}, dir={:?}, aig={})",
+                    np,
+                    np_name,
+                    np_cell,
+                    np_dir,
+                    np_aig
+                );
             }
 
             // Debug: trace what's driving the flash clock
@@ -3041,7 +3449,12 @@ fn main() {
                     let inv = (aigpin_iv & 1) != 0;
                     if idx > 0 && idx <= aig.num_aigpins {
                         let driver = &aig.drivers[idx];
-                        clilog::info!("Flash CLK driver: idx={}, inv={}, driver={:?}", idx, inv, driver);
+                        clilog::info!(
+                            "Flash CLK driver: idx={}, inv={}, driver={:?}",
+                            idx,
+                            inv,
+                            driver
+                        );
 
                         // If it's a DFF, check the D input
                         if let DriverType::DFF(cell_idx) = driver {
@@ -3050,8 +3463,12 @@ fn main() {
                             if let Some(dff) = aig.dffs.get(cell_idx) {
                                 let d_idx = dff.d_iv >> 1;
                                 let d_inv = (dff.d_iv & 1) != 0;
-                                clilog::info!("Flash CLK DFF D input: idx={}, inv={}, driver={:?}",
-                                              d_idx, d_inv, aig.drivers.get(d_idx));
+                                clilog::info!(
+                                    "Flash CLK DFF D input: idx={}, inv={}, driver={:?}",
+                                    d_idx,
+                                    d_inv,
+                                    aig.drivers.get(d_idx)
+                                );
                             }
                         }
                         // If it's an InputPort, check what that pin is
@@ -3079,7 +3496,13 @@ fn main() {
                                 let np_name = netlistdb.pinnames[np].dbg_fmt_pin();
                                 let np_cell = netlistdb.pin2cell[np];
                                 let np_dir = netlistdb.pindirect[np];
-                                clilog::info!("  pin {}: {} (cell={}, dir={:?})", np, np_name, np_cell, np_dir);
+                                clilog::info!(
+                                    "  pin {}: {} (cell={}, dir={:?})",
+                                    np,
+                                    np_name,
+                                    np_cell,
+                                    np_dir
+                                );
                             }
                         }
                     }
@@ -3087,7 +3510,10 @@ fn main() {
             }
         }
         if let Some(csn_pin) = flash_csn_out {
-            let has_aig = aig.pin2aigpin_iv.get(csn_pin).map_or(false, |&v| v != usize::MAX);
+            let has_aig = aig
+                .pin2aigpin_iv
+                .get(csn_pin)
+                .map_or(false, |&v| v != usize::MAX);
             clilog::info!("Flash CSN pin {} AIG mapping: {}", csn_pin, has_aig);
         }
     }
@@ -3138,7 +3564,8 @@ fn main() {
                             if let Some(pos) = pin_name.find(&bit_pattern) {
                                 let end_pos = pos + bit_pattern.len();
                                 let is_exact = end_pos == pin_name.len()
-                                    || !pin_name[end_pos..].starts_with(|c: char| c.is_ascii_digit());
+                                    || !pin_name[end_pos..]
+                                        .starts_with(|c: char| c.is_ascii_digit());
                                 if is_exact {
                                     wire_pin = Some(pinid);
                                 }
@@ -3158,14 +3585,20 @@ fn main() {
                 if found_count > 0 {
                     let format = sig.format.clone().unwrap_or_else(|| "hex".to_string());
                     // Log some sample pin mappings for verification
-                    let sample_pins: Vec<String> = pins.iter().enumerate()
+                    let sample_pins: Vec<String> = pins
+                        .iter()
+                        .enumerate()
                         .filter(|(_, &p)| p < usize::MAX)
                         .take(5)
                         .map(|(i, &p)| format!("[{}]={}", i, p))
                         .collect();
                     clilog::info!(
                         "Watchlist: {} -> {}/{} bits found (bundle, format={}, pins: {}...)",
-                        sig.name, found_count, width, format, sample_pins.join(", ")
+                        sig.name,
+                        found_count,
+                        width,
+                        format,
+                        sample_pins.join(", ")
                     );
                     entries.push(WatchlistEntry::Bundle {
                         name: sig.name.clone(),
@@ -3173,7 +3606,12 @@ fn main() {
                         format,
                     });
                 } else {
-                    clilog::warn!("Watchlist: {} not found (bundle pattern: {}[0..{}])", sig.name, sig.net, width);
+                    clilog::warn!(
+                        "Watchlist: {} not found (bundle pattern: {}[0..{}])",
+                        sig.name,
+                        sig.net,
+                        width
+                    );
                 }
             } else {
                 // Single-bit signal
@@ -3189,7 +3627,12 @@ fn main() {
                                 name: sig.name.clone(),
                                 pin: pinid,
                             });
-                            clilog::info!("Watchlist: {} -> pin {} (net {})", sig.name, pinid, net_name);
+                            clilog::info!(
+                                "Watchlist: {} -> pin {} (net {})",
+                                sig.name,
+                                pinid,
+                                net_name
+                            );
                             found = true;
                             break;
                         }
@@ -3209,7 +3652,12 @@ fn main() {
                                 name: sig.name.clone(),
                                 pin: pinid,
                             });
-                            clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                            clilog::info!(
+                                "Watchlist: {} -> pin {} ({})",
+                                sig.name,
+                                pinid,
+                                pin_name
+                            );
                             found = true;
                             break;
                         }
@@ -3225,7 +3673,12 @@ fn main() {
                                 name: sig.name.clone(),
                                 pin: pinid,
                             });
-                            clilog::info!("Watchlist: {} -> pin {} ({})", sig.name, pinid, pin_name);
+                            clilog::info!(
+                                "Watchlist: {} -> pin {} ({})",
+                                sig.name,
+                                pinid,
+                                pin_name
+                            );
                             found = true;
                             break;
                         }
@@ -3281,8 +3734,10 @@ fn main() {
                             DriverType::InputPort(pinid) => {
                                 state.values[i] = circ_state[*pinid];
                             }
-                            DriverType::DFF(_) | DriverType::InputClockFlag(_, _)
-                            | DriverType::Tie0 | DriverType::SRAM(_) => {
+                            DriverType::DFF(_)
+                            | DriverType::InputClockFlag(_, _)
+                            | DriverType::Tie0
+                            | DriverType::SRAM(_) => {
                                 // DFFs start at 0, others don't change
                             }
                         }
@@ -3345,12 +3800,12 @@ fn main() {
                         if is_dff {
                             let mut pinid_d = usize::MAX;
                             let mut pinid_q = usize::MAX;
-                            let mut pinid_de = usize::MAX;  // Data enable for edfxtp
+                            let mut pinid_de = usize::MAX; // Data enable for edfxtp
                             for pinid in netlistdb.cell2pin.iter_set(cellid) {
                                 match netlistdb.pinnames[pinid].1.as_str() {
                                     "D" => pinid_d = pinid,
                                     "Q" => pinid_q = pinid,
-                                    "DE" => pinid_de = pinid,  // Enable input
+                                    "DE" => pinid_de = pinid, // Enable input
                                     _ => {}
                                 }
                             }
@@ -3359,7 +3814,7 @@ fn main() {
                                 let should_latch = if pinid_de != usize::MAX {
                                     circ_state[pinid_de] != 0
                                 } else {
-                                    true  // Regular DFFs always latch
+                                    true // Regular DFFs always latch
                                 };
                                 if should_latch {
                                     circ_state[pinid_q] = circ_state[pinid_d];
@@ -3372,7 +3827,8 @@ fn main() {
                     for sram in &mut sram_cells {
                         let en = sram.en_pin != usize::MAX && circ_state[sram.en_pin] != 0;
                         if en {
-                            let r_wb = sram.r_wb_pin != usize::MAX && circ_state[sram.r_wb_pin] != 0;
+                            let r_wb =
+                                sram.r_wb_pin != usize::MAX && circ_state[sram.r_wb_pin] != 0;
                             let addr = sram.read_addr(&circ_state);
                             if addr < 1024 {
                                 if r_wb {
@@ -3382,7 +3838,8 @@ fn main() {
                                     if args.verbose && stats.cycles_simulated <= 20 {
                                         clilog::debug!(
                                             "SRAM read: addr={:#x}, data={:#010x}",
-                                            addr, data
+                                            addr,
+                                            data
                                         );
                                     }
                                 } else {
@@ -3442,8 +3899,7 @@ fn main() {
                         }
                     }
 
-                    stats.max_combinational_delay =
-                        stats.max_combinational_delay.max(max_arrival);
+                    stats.max_combinational_delay = stats.max_combinational_delay.max(max_arrival);
 
                     // Check setup/hold for all DFFs
                     for (_cell_id, dff) in &aig.dffs {
@@ -3512,7 +3968,9 @@ fn main() {
 
                     // Debug: log reset and CSn state in early cycles (regardless of flash)
                     if args.verbose && stats.cycles_simulated <= 100 {
-                        let reset_val = find_gpio_pin("gpio_in", 40).map(|p| circ_state[p]).unwrap_or(255);
+                        let reset_val = find_gpio_pin("gpio_in", 40)
+                            .map(|p| circ_state[p])
+                            .unwrap_or(255);
                         let csn_val = flash_csn_out.map(|p| circ_state[p]).unwrap_or(255);
                         let clk_val = flash_clk_out.map(|p| circ_state[p]).unwrap_or(255);
 
@@ -3526,15 +3984,26 @@ fn main() {
 
                         clilog::debug!(
                             "Cycle {}: rst={}, cyc={}, D={}, _09415={}, n639={}, n2949={}",
-                            stats.cycles_simulated, rst_sync, ibus_cyc, ibus_cyc_d, s09415, n639, n2949
+                            stats.cycles_simulated,
+                            rst_sync,
+                            ibus_cyc,
+                            ibus_cyc_d,
+                            s09415,
+                            n639,
+                            n2949
                         );
                     }
 
                     // Write watchlist trace output
                     if let Some(ref mut f) = trace_file {
-                        let values: Vec<String> = std::iter::once(stats.cycles_simulated.to_string())
-                            .chain(watchlist_entries.iter().map(|e| e.format_value(&circ_state)))
-                            .collect();
+                        let values: Vec<String> =
+                            std::iter::once(stats.cycles_simulated.to_string())
+                                .chain(
+                                    watchlist_entries
+                                        .iter()
+                                        .map(|e| e.format_value(&circ_state)),
+                                )
+                                .collect();
                         writeln!(f, "{}", values.join(",")).expect("Failed to write trace");
                     }
 
@@ -3558,14 +4027,20 @@ fn main() {
 
                         // Debug: log flash activity in early cycles
                         if args.verbose && stats.cycles_simulated <= 25 {
-                            let reset_val = find_gpio_pin("gpio_in", 40).map(|p| circ_state[p]).unwrap_or(255);
+                            let reset_val = find_gpio_pin("gpio_in", 40)
+                                .map(|p| circ_state[p])
+                                .unwrap_or(255);
 
                             // Count how many non-zero values in circ_state (rough proxy for "active" state)
                             let nonzero_count = circ_state.iter().filter(|&&v| v != 0).count();
 
                             // Check gpio_oeb values for flash pins
-                            let oeb0 = find_gpio_pin("gpio_oeb", 0).map(|p| circ_state[p]).unwrap_or(255);
-                            let oeb1 = find_gpio_pin("gpio_oeb", 1).map(|p| circ_state[p]).unwrap_or(255);
+                            let oeb0 = find_gpio_pin("gpio_oeb", 0)
+                                .map(|p| circ_state[p])
+                                .unwrap_or(255);
+                            let oeb1 = find_gpio_pin("gpio_oeb", 1)
+                                .map(|p| circ_state[p])
+                                .unwrap_or(255);
 
                             clilog::debug!(
                                 "Cycle {}: reset={}, clk={}, csn={}, d_out=0x{:X}, oeb0={}, oeb1={}, byte_count={}, nonzero_pins={}",
@@ -3623,9 +4098,15 @@ fn main() {
                                     UartState::StartBit { start_cycle }
                                 }
                             }
-                            UartState::DataBits { start_cycle, bits_received, value } => {
+                            UartState::DataBits {
+                                start_cycle,
+                                bits_received,
+                                value,
+                            } => {
                                 // Sample at middle of each bit
-                                let bit_center = start_cycle + (bits_received as usize) * cycles_per_bit + cycles_per_bit / 2;
+                                let bit_center = start_cycle
+                                    + (bits_received as usize) * cycles_per_bit
+                                    + cycles_per_bit / 2;
                                 if cycle >= bit_center {
                                     let new_value = value | ((tx as u8) << bits_received);
                                     if bits_received >= 7 {
@@ -3642,7 +4123,11 @@ fn main() {
                                         }
                                     }
                                 } else {
-                                    UartState::DataBits { start_cycle, bits_received, value }
+                                    UartState::DataBits {
+                                        start_cycle,
+                                        bits_received,
+                                        value,
+                                    }
                                 }
                             }
                             UartState::StopBit { start_cycle, value } => {
@@ -3664,7 +4149,9 @@ fn main() {
                                             };
                                             clilog::info!(
                                                 "UART TX @ cycle {}: 0x{:02X} '{}'",
-                                                cycle, value, ch
+                                                cycle,
+                                                value,
+                                                ch
                                             );
                                         }
                                     }
@@ -3721,10 +4208,13 @@ fn main() {
             events: Vec<UartEvent>,
         }
 
-        let output = EventsOutput { events: uart_events };
+        let output = EventsOutput {
+            events: uart_events,
+        };
         let json = serde_json::to_string_pretty(&output).expect("Failed to serialize events");
         let mut file = File::create(output_path).expect("Failed to create events file");
-        file.write_all(json.as_bytes()).expect("Failed to write events");
+        file.write_all(json.as_bytes())
+            .expect("Failed to write events");
         clilog::info!("Wrote events to {:?}", output_path);
     }
 
@@ -3734,7 +4224,10 @@ fn main() {
     println!("Cycles simulated: {}", stats.cycles_simulated);
     println!("Clock period: {} ps", args.clock_period);
     println!();
-    println!("Max combinational delay: {} ps", stats.max_combinational_delay);
+    println!(
+        "Max combinational delay: {} ps",
+        stats.max_combinational_delay
+    );
     println!(
         "Critical path slack: {} ps",
         args.clock_period as i64 - stats.max_combinational_delay as i64
@@ -3895,19 +4388,25 @@ mod tests {
         // Set up a write: EN=1, R_WB=0 (write), addr=0, BEN=all ones, DI=0xDEADBEEF
         cs[1] = 1; // EN
         cs[2] = 0; // R_WB = write
-        set_bus(&mut cs, 3, 10, 0);            // addr = 0
-        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN = all bits
-        set_bus(&mut cs, 45, 32, 0xDEADBEEF);  // DI = 0xDEADBEEF
+        set_bus(&mut cs, 3, 10, 0); // addr = 0
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF); // BEN = all bits
+        set_bus(&mut cs, 45, 32, 0xDEADBEEF); // DI = 0xDEADBEEF
 
         // With clock held low - step() should NOT trigger (no rising edge)
         cs[0] = 0;
-        assert!(!sram.step(&mut cs), "step() should not trigger without rising edge");
+        assert!(
+            !sram.step(&mut cs),
+            "step() should not trigger without rising edge"
+        );
         assert_eq!(sram.memory[0], 0, "memory should be unchanged");
 
         // With clock held high (but no transition) - step() should NOT trigger
         cs[0] = 1;
         sram.last_clk = true; // Pretend clock was already high
-        assert!(!sram.step(&mut cs), "step() should not trigger when clock stays high");
+        assert!(
+            !sram.step(&mut cs),
+            "step() should not trigger when clock stays high"
+        );
         assert_eq!(sram.memory[0], 0, "memory should be unchanged");
 
         // Now do a proper rising edge
@@ -3924,14 +4423,14 @@ mod tests {
         // Write 0x12345678 to address 5
         cs[1] = 1; // EN
         cs[2] = 0; // R_WB = write
-        set_bus(&mut cs, 3, 10, 5);            // addr = 5
-        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN = all bits
-        set_bus(&mut cs, 45, 32, 0x12345678);  // DI
+        set_bus(&mut cs, 3, 10, 5); // addr = 5
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF); // BEN = all bits
+        set_bus(&mut cs, 45, 32, 0x12345678); // DI
         clock_edge(&mut sram, &mut cs);
 
         // Now read from address 5
         cs[2] = 1; // R_WB = read
-        set_bus(&mut cs, 3, 10, 5);  // addr = 5
+        set_bus(&mut cs, 3, 10, 5); // addr = 5
         clock_edge(&mut sram, &mut cs);
 
         let do_val = read_bus(&cs, 77, 32);
@@ -3948,14 +4447,17 @@ mod tests {
         // Write with only lower 16 bits enabled (BEN[0..15] = 1, BEN[16..31] = 0)
         cs[1] = 1; // EN
         cs[2] = 0; // R_WB = write
-        set_bus(&mut cs, 3, 10, 10);          // addr = 10
+        set_bus(&mut cs, 3, 10, 10); // addr = 10
         set_bus(&mut cs, 13, 32, 0x0000FFFF); // BEN = lower 16 bits only
         set_bus(&mut cs, 45, 32, 0x55555555); // DI
         clock_edge(&mut sram, &mut cs);
 
         // Upper 16 bits should be preserved from original, lower 16 should be new
-        assert_eq!(sram.memory[10], 0xAAAA5555,
-            "byte enable should mask write: expected 0xAAAA5555, got 0x{:08X}", sram.memory[10]);
+        assert_eq!(
+            sram.memory[10], 0xAAAA5555,
+            "byte enable should mask write: expected 0xAAAA5555, got 0x{:08X}",
+            sram.memory[10]
+        );
     }
 
     #[test]
@@ -3965,9 +4467,9 @@ mod tests {
         // Set up write but with EN=0
         cs[1] = 0; // EN = disabled
         cs[2] = 0; // R_WB = write
-        set_bus(&mut cs, 3, 10, 0);            // addr = 0
-        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN
-        set_bus(&mut cs, 45, 32, 0xCAFEBABE);  // DI
+        set_bus(&mut cs, 3, 10, 0); // addr = 0
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF); // BEN
+        set_bus(&mut cs, 45, 32, 0xCAFEBABE); // DI
         clock_edge(&mut sram, &mut cs);
 
         assert_eq!(sram.memory[0], 0, "write should not occur when EN=0");
@@ -3975,7 +4477,7 @@ mod tests {
         // Also verify read doesn't drive output when EN=0
         sram.memory[0] = 0xCAFEBABE;
         cs[2] = 1; // R_WB = read
-        // Clear DO pins
+                   // Clear DO pins
         set_bus(&mut cs, 77, 32, 0);
         clock_edge(&mut sram, &mut cs);
 
@@ -4010,8 +4512,8 @@ mod tests {
 
         cs[1] = 1; // EN
         cs[2] = 0; // write
-        set_bus(&mut cs, 3, 10, 42);           // addr = 42
-        set_bus(&mut cs, 13, 32, 0xFFFFFFFF);  // BEN = all
+        set_bus(&mut cs, 3, 10, 42); // addr = 42
+        set_bus(&mut cs, 13, 32, 0xFFFFFFFF); // BEN = all
 
         // First write
         set_bus(&mut cs, 45, 32, 0x11111111);
@@ -4039,7 +4541,11 @@ mod tests {
         clock_edge(&mut sram, &mut cs);
 
         assert_eq!(sram.memory[7], 0xFEEDFACE, "read should not modify memory");
-        assert_eq!(read_bus(&cs, 77, 32), 0xFEEDFACE, "DO should have read value");
+        assert_eq!(
+            read_bus(&cs, 77, 32),
+            0xFEEDFACE,
+            "DO should have read value"
+        );
     }
 
     /// This test demonstrates the bug in the inline SRAM simulation code.
@@ -4068,7 +4574,10 @@ mod tests {
         // Setting clock to 0 → no rising edge.
         cs[0] = 0;
         let triggered = sram.step(&mut cs);
-        assert!(!triggered, "step() correctly requires rising edge - no write yet");
+        assert!(
+            !triggered,
+            "step() correctly requires rising edge - no write yet"
+        );
         assert_eq!(sram.memory[0], 0, "memory unchanged without clock edge");
 
         // Now give it a rising edge

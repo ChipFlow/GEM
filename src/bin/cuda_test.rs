@@ -3,7 +3,6 @@
 use compact_str::CompactString;
 use gem::aig::{DriverType, SimControlType, AIG};
 use gem::aigpdk::{AIGPDKLeafPins, AIGPDK_SRAM_SIZE};
-use gem::sky130::{SKY130LeafPins, CellLibrary, detect_library_from_file};
 use gem::display::{extract_display_info_from_json, format_display_message};
 use gem::event_buffer::{
     process_events, AssertConfig, EventBuffer, EventType, SimControl, SimStats, MAX_EVENTS,
@@ -11,6 +10,7 @@ use gem::event_buffer::{
 use gem::flatten::FlattenedScriptV1;
 use gem::liberty_parser::TimingLibrary;
 use gem::pe::Partition;
+use gem::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
 use gem::staging::build_staged_aigs;
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
 use std::collections::{HashMap, HashSet};
@@ -633,8 +633,7 @@ fn main() {
     clilog::info!("Simulator args:\n{:#?}", args);
 
     // Detect cell library
-    let lib = detect_library_from_file(&args.netlist_verilog)
-        .expect("Failed to read netlist file");
+    let lib = detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
     clilog::info!("Detected cell library: {}", lib);
 
     if lib == CellLibrary::Mixed {
@@ -643,22 +642,18 @@ fn main() {
 
     // Use appropriate LeafPinProvider based on detected library
     let netlistdb = match lib {
-        CellLibrary::SKY130 => {
-            NetlistDB::from_sverilog_file(
-                &args.netlist_verilog,
-                args.top_module.as_deref(),
-                &SKY130LeafPins,
-            )
-            .expect("cannot build netlist")
-        }
-        CellLibrary::AIGPDK | CellLibrary::Mixed => {
-            NetlistDB::from_sverilog_file(
-                &args.netlist_verilog,
-                args.top_module.as_deref(),
-                &AIGPDKLeafPins(),
-            )
-            .expect("cannot build netlist")
-        }
+        CellLibrary::SKY130 => NetlistDB::from_sverilog_file(
+            &args.netlist_verilog,
+            args.top_module.as_deref(),
+            &SKY130LeafPins,
+        )
+        .expect("cannot build netlist"),
+        CellLibrary::AIGPDK | CellLibrary::Mixed => NetlistDB::from_sverilog_file(
+            &args.netlist_verilog,
+            args.top_module.as_deref(),
+            &AIGPDKLeafPins(),
+        )
+        .expect("cannot build netlist"),
     };
 
     let aig = AIG::from_netlistdb(&netlistdb);

@@ -77,11 +77,7 @@ fn build_one_boomerang_stage(
 
     // first discover the (remaining) subgraph to implement.
     let endpoints_vec: Vec<usize> = unrealized_comb_outputs.iter().copied().collect();
-    let order = traverser.topo_traverse(
-        aig,
-        Some(&endpoints_vec),
-        Some(&realized_inputs),
-    );
+    let order = traverser.topo_traverse(aig, Some(&endpoints_vec), Some(&realized_inputs));
     // Dense id2order: aigpin -> topo order index. usize::MAX = not present.
     let mut id2order = vec![usize::MAX; aig.num_aigpins + 1];
     for (order_i, &i) in order.iter().enumerate() {
@@ -316,16 +312,10 @@ fn build_one_boomerang_stage(
                     DriverType::AndGate(a, b) => (a, b),
                     _ => panic!(),
                 };
-                if a >= 2
-                    && level[id2order[a >> 1]] == 0
-                    && hier_visited_nodes_count[a >> 1] == 0
-                {
+                if a >= 2 && level[id2order[a >> 1]] == 0 && hier_visited_nodes_count[a >> 1] == 0 {
                     lvl1_necessary_nodes.insert(a >> 1);
                 }
-                if b >= 2
-                    && level[id2order[b >> 1]] == 0
-                    && hier_visited_nodes_count[b >> 1] == 0
-                {
+                if b >= 2 && level[id2order[b >> 1]] == 0 && hier_visited_nodes_count[b >> 1] == 0 {
                     lvl1_necessary_nodes.insert(b >> 1);
                 }
             }
@@ -801,11 +791,9 @@ impl Partition {
 fn collect_comb_outputs(aig: &AIG, staged: &StagedAIG, endpoints: &[usize]) -> Vec<usize> {
     let mut comb_outputs = Vec::new();
     for &endpt_i in endpoints {
-        staged
-            .get_endpoint_group(aig, endpt_i)
-            .for_each_input(|i| {
-                comb_outputs.push(i);
-            });
+        staged.get_endpoint_group(aig, endpt_i).for_each_input(|i| {
+            comb_outputs.push(i);
+        });
     }
     comb_outputs
 }
@@ -839,7 +827,11 @@ pub fn process_partitions(
         .unzip();
 
     let all_original_parts = if let Some(prebuilt) = prebuilt {
-        assert_eq!(prebuilt.len(), parts.len(), "prebuilt partitions count mismatch");
+        assert_eq!(
+            prebuilt.len(),
+            parts.len(),
+            "prebuilt partitions count mismatch"
+        );
         prebuilt
     } else {
         let built = parts
@@ -888,8 +880,7 @@ pub fn process_partitions(
                         return None;
                     }
                     // O(num_aigpins/64) bitset union instead of O(subgraph) DFS
-                    let merged_count =
-                        bitset_union_popcount(node_bitset_i, &node_bitsets[abs_j]);
+                    let merged_count = bitset_union_popcount(node_bitset_i, &node_bitsets[abs_j]);
                     Some((
                         merged_count - cnt_nodes[abs_j].max(cnt_node_i),
                         merged_count,
@@ -980,10 +971,7 @@ pub fn process_partitions(
                     parallel_trial_stride *= 2;
                 }
 
-                let PartsPartitions {
-                    parts_ij,
-                    result,
-                } = merge_trials[merge_i].take().unwrap();
+                let PartsPartitions { parts_ij, result } = merge_trials[merge_i].take().unwrap();
 
                 match result {
                     TrialResult::Completed(None) => {

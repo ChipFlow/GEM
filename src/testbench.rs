@@ -29,12 +29,7 @@ pub mod spiflash_ffi {
             len: usize,
             offset: usize,
         ) -> c_int;
-        pub fn spiflash_step(
-            flash: *mut SpiFlashModel,
-            clk: c_int,
-            csn: c_int,
-            d_o: u8,
-        ) -> u8;
+        pub fn spiflash_step(flash: *mut SpiFlashModel, clk: c_int, csn: c_int, d_o: u8) -> u8;
         pub fn spiflash_get_command(flash: *mut SpiFlashModel) -> u8;
         pub fn spiflash_get_byte_count(flash: *mut SpiFlashModel) -> u32;
         pub fn spiflash_get_step_count(flash: *mut SpiFlashModel) -> u32;
@@ -64,9 +59,8 @@ impl CppSpiFlash {
         let mut data = Vec::new();
         file.read_to_end(&mut data)?;
 
-        let result = unsafe {
-            spiflash_ffi::spiflash_load(self.ptr, data.as_ptr(), data.len(), offset)
-        };
+        let result =
+            unsafe { spiflash_ffi::spiflash_load(self.ptr, data.as_ptr(), data.len(), offset) };
 
         if result < 0 {
             Err(std::io::Error::new(
@@ -144,8 +138,8 @@ pub struct PeripheralMonitor {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct MonitorConfig {
-    pub position: u32,   // bit position in state buffer to monitor
-    pub edge_type: u32,  // 0 = any edge, 1 = rising, 2 = falling
+    pub position: u32,  // bit position in state buffer to monitor
+    pub edge_type: u32, // 0 = any edge, 1 = rising, 2 = falling
 }
 
 /// GPU↔CPU peripheral callback control block (must match Metal `PeripheralControl` struct).
@@ -167,8 +161,8 @@ pub struct PeripheralControl {
     // Tracked previous output values for edge detection (max 16 monitors)
     pub prev_values: [u32; 16],
     // Autonomous mode fields
-    pub autonomous_break_tick: u32,       // tick offset where monitor first fired (0 = none, 1-indexed)
-    pub autonomous_ticks_completed: u32,  // counter incremented per autonomous tick
+    pub autonomous_break_tick: u32, // tick offset where monitor first fired (0 = none, 1-indexed)
+    pub autonomous_ticks_completed: u32, // counter incremented per autonomous tick
 }
 
 impl Default for PeripheralControl {
@@ -292,9 +286,18 @@ pub struct SramInitConfig {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UartState {
     Idle,
-    StartBit { start_cycle: usize },
-    DataBits { start_cycle: usize, bits_received: u8, value: u8 },
-    StopBit { start_cycle: usize, value: u8 },
+    StartBit {
+        start_cycle: usize,
+    },
+    DataBits {
+        start_cycle: usize,
+        bits_received: u8,
+        value: u8,
+    },
+    StopBit {
+        start_cycle: usize,
+        value: u8,
+    },
 }
 
 /// Decoded UART event.
@@ -353,8 +356,14 @@ impl UartMonitor {
                     UartState::StartBit { start_cycle }
                 }
             }
-            UartState::DataBits { start_cycle, bits_received, value } => {
-                let bit_center = start_cycle + (bits_received as usize) * self.cycles_per_bit + self.cycles_per_bit / 2;
+            UartState::DataBits {
+                start_cycle,
+                bits_received,
+                value,
+            } => {
+                let bit_center = start_cycle
+                    + (bits_received as usize) * self.cycles_per_bit
+                    + self.cycles_per_bit / 2;
                 if cycle >= bit_center {
                     let new_value = value | ((tx as u8) << bits_received);
                     if bits_received >= 7 {
@@ -370,7 +379,11 @@ impl UartMonitor {
                         }
                     }
                 } else {
-                    UartState::DataBits { start_cycle, bits_received, value }
+                    UartState::DataBits {
+                        start_cycle,
+                        bits_received,
+                        value,
+                    }
                 }
             }
             UartState::StopBit { start_cycle, value } => {
@@ -382,7 +395,11 @@ impl UartMonitor {
                             event: "tx".to_string(),
                             payload: value,
                         });
-                        let ch = if value >= 32 && value < 127 { value as char } else { '.' };
+                        let ch = if value >= 32 && value < 127 {
+                            value as char
+                        } else {
+                            '.'
+                        };
                         clilog::info!("UART TX @ cycle {}: 0x{:02X} '{}'", cycle, value, ch);
                         received = Some(value);
                     }
@@ -429,7 +446,11 @@ pub enum WatchlistEntry {
     /// Single-bit signal.
     Bit { name: String, pin: usize },
     /// Multi-bit bundle (pins ordered LSB to MSB).
-    Bundle { name: String, pins: Vec<usize>, format: String },
+    Bundle {
+        name: String,
+        pins: Vec<usize>,
+        format: String,
+    },
 }
 
 impl WatchlistEntry {

@@ -3,26 +3,31 @@
 //
 // Metal port for Apple Silicon
 
-use std::path::PathBuf;
-use gem::aigpdk::{AIGPDKLeafPins, AIGPDK_SRAM_SIZE};
-use gem::aig::{DriverType, AIG, SimControlType};
-use gem::staging::build_staged_aigs;
-use gem::pe::Partition;
-use gem::flatten::FlattenedScriptV1;
-use gem::event_buffer::{EventBuffer, EventType, SimControl, AssertConfig, SimStats, process_events, MAX_EVENTS};
-use gem::display::{extract_display_info_from_json, format_display_message};
-use netlistdb::{Direction, GeneralPinName, NetlistDB};
-use sverilogparse::SVerilogRange;
 use compact_str::CompactString;
-use ulib::{AsUPtr, AsUPtrMut, Device, UVec};
-use std::fs::File;
-use std::io::{BufReader, BufWriter, Seek, SeekFrom};
-use std::hash::Hash;
-use std::rc::Rc;
+use gem::aig::{DriverType, SimControlType, AIG};
+use gem::aigpdk::{AIGPDKLeafPins, AIGPDK_SRAM_SIZE};
+use gem::display::{extract_display_info_from_json, format_display_message};
+use gem::event_buffer::{
+    process_events, AssertConfig, EventBuffer, EventType, SimControl, SimStats, MAX_EVENTS,
+};
+use gem::flatten::FlattenedScriptV1;
+use gem::pe::Partition;
+use gem::staging::build_staged_aigs;
+use netlistdb::{Direction, GeneralPinName, NetlistDB};
 use std::collections::{HashMap, HashSet};
-use vcd_ng::{Parser, ScopeItem, Var, Scope, FastFlow, FastFlowToken, FFValueChange, Writer, SimulationCommand};
+use std::fs::File;
+use std::hash::Hash;
+use std::io::{BufReader, BufWriter, Seek, SeekFrom};
+use std::path::PathBuf;
+use std::rc::Rc;
+use sverilogparse::SVerilogRange;
+use ulib::{AsUPtr, AsUPtrMut, Device, UVec};
+use vcd_ng::{
+    FFValueChange, FastFlow, FastFlowToken, Parser, Scope, ScopeItem, SimulationCommand, Var,
+    Writer,
+};
 
-use metal::{Device as MTLDevice, MTLSize, ComputePipelineState, CommandQueue, MTLResourceOptions};
+use metal::{CommandQueue, ComputePipelineState, Device as MTLDevice, MTLResourceOptions, MTLSize};
 
 #[derive(clap::Parser, Debug)]
 struct SimulatorArgs {
@@ -32,7 +37,7 @@ struct SimulatorArgs {
     #[clap(long)]
     top_module: Option<String>,
     /// Level split thresholds.
-    #[clap(long, value_delimiter=',')]
+    #[clap(long, value_delimiter = ',')]
     level_split: Vec<usize>,
     /// Input path for the serialized partitions.
     gemparts: PathBuf,
@@ -76,7 +81,7 @@ struct SimulatorArgs {
 #[derive(PartialEq, Eq, Clone, Debug)]
 struct VCDHier {
     cur: CompactString,
-    prev: Option<Rc<VCDHier>>
+    prev: Option<Rc<VCDHier>>,
 }
 
 struct VCDHierRevIter<'i>(Option<&'i VCDHier>);
@@ -88,7 +93,7 @@ impl<'i> Iterator for VCDHierRevIter<'i> {
     fn next(&mut self) -> Option<&'i CompactString> {
         let name = self.0?;
         if name.cur.is_empty() {
-            return None
+            return None;
         }
         let ret = &name.cur;
         self.0 = name.prev.as_ref().map(|a| a.as_ref());
@@ -123,7 +128,10 @@ impl VCDHier {
 
     #[inline]
     fn empty() -> Self {
-        VCDHier { cur: "".into(), prev: None }
+        VCDHier {
+            cur: "".into(),
+            prev: None,
+        }
     }
 
     #[inline]
@@ -138,32 +146,34 @@ impl VCDHier {
 }
 
 fn match_scope_path<'i>(mut scope: &'i str, cur: &str) -> Option<&'i str> {
-    if scope.len() == 0 { return Some("") }
+    if scope.len() == 0 {
+        return Some("");
+    }
     if scope.starts_with('/') {
         scope = &scope[1..];
     }
-    if scope.len() == 0 { Some("") }
-    else if scope.starts_with(cur) {
-        if scope.len() == cur.len() { Some("") }
-        else if scope.as_bytes()[cur.len()] == b'/' {
+    if scope.len() == 0 {
+        Some("")
+    } else if scope.starts_with(cur) {
+        if scope.len() == cur.len() {
+            Some("")
+        } else if scope.as_bytes()[cur.len()] == b'/' {
             Some(&scope[cur.len() + 1..])
+        } else {
+            None
         }
-        else { None }
+    } else {
+        None
     }
-    else { None }
 }
 
-fn find_top_scope<'i>(
-    items: &'i [ScopeItem], top_scope: &'_ str
-) -> Option<&'i Scope> {
+fn find_top_scope<'i>(items: &'i [ScopeItem], top_scope: &'_ str) -> Option<&'i Scope> {
     for item in items {
         if let ScopeItem::Scope(scope) = item {
-            if let Some(s1) = match_scope_path(
-                top_scope, scope.identifier.as_str()
-            ) {
+            if let Some(s1) = match_scope_path(top_scope, scope.identifier.as_str()) {
                 return match s1 {
                     "" => Some(scope),
-                    _ => find_top_scope(&scope.children[..], s1)
+                    _ => find_top_scope(&scope.children[..], s1),
                 };
             }
         }
@@ -172,7 +182,11 @@ fn find_top_scope<'i>(
 }
 
 /// Recursively collect all scope paths from VCD header
-fn collect_all_scopes<'a>(items: &'a [ScopeItem], prefix: &str, scopes: &mut Vec<(String, &'a Scope)>) {
+fn collect_all_scopes<'a>(
+    items: &'a [ScopeItem],
+    prefix: &str,
+    scopes: &mut Vec<(String, &'a Scope)>,
+) {
     for item in items {
         if let ScopeItem::Scope(scope) = item {
             let scope_path = if prefix.is_empty() {
@@ -241,7 +255,10 @@ fn auto_detect_vcd_scope<'i>(
         return None;
     }
 
-    clilog::debug!("Searching for VCD scope containing {} input ports", required_ports.len());
+    clilog::debug!(
+        "Searching for VCD scope containing {} input ports",
+        required_ports.len()
+    );
     clilog::debug!("Required ports: {:?}", required_ports);
 
     // Try common DUT scope names first
@@ -249,7 +266,11 @@ fn auto_detect_vcd_scope<'i>(
     for name in &common_names {
         for (path, scope) in &all_scopes {
             if path.ends_with(name) && check_scope_contains_ports(scope, &required_ports) {
-                clilog::info!("Auto-detected VCD scope: {} (matched common pattern '{}')", path, name);
+                clilog::info!(
+                    "Auto-detected VCD scope: {} (matched common pattern '{}')",
+                    path,
+                    name
+                );
                 return Some((path.clone(), *scope));
             }
         }
@@ -258,7 +279,10 @@ fn auto_detect_vcd_scope<'i>(
     // Try any scope that contains all required ports
     for (path, scope) in &all_scopes {
         if check_scope_contains_ports(scope, &required_ports) {
-            clilog::info!("Auto-detected VCD scope: {} (contains all required ports)", path);
+            clilog::info!(
+                "Auto-detected VCD scope: {} (contains all required ports)",
+                path
+            );
             return Some((path.clone(), *scope));
         }
     }
@@ -276,7 +300,8 @@ fn auto_detect_vcd_scope<'i>(
 /// Used for validation against Metal results.
 fn simulate_block_v1(
     script: &[u32],
-    input_state: &[u32], output_state: &mut [u32],
+    input_state: &[u32],
+    output_state: &mut [u32],
     sram_data: &mut [u32],
     _debug_verbose: bool,
 ) {
@@ -298,7 +323,7 @@ fn simulate_block_v1(
         }
         if num_stages == 0 {
             script_pi += 256;
-            break
+            break;
         }
         script_pi += 256;
         let mut writeouts = vec![0u32; num_ios as usize];
@@ -309,10 +334,12 @@ fn simulate_block_v1(
                 let mut cur_state = state[i];
                 let idx = script[script_pi + (i * 2)];
                 let mut mask = script[script_pi + (i * 2 + 1)];
-                if mask == 0 { continue }
+                if mask == 0 {
+                    continue;
+                }
                 let value = match (idx >> 31) != 0 {
                     false => input_state[idx as usize],
-                    true => output_state[(idx ^ (1 << 31)) as usize]
+                    true => output_state[(idx ^ (1 << 31)) as usize],
                 };
                 while mask != 0 {
                     cur_state <<= 1;
@@ -339,8 +366,12 @@ fn simulate_block_v1(
                         let t_shuffle = script[script_pi + i * 4 + k_inner];
                         let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u16;
                         let t_shuffle_2_idx = (t_shuffle >> 16) as u16;
-                        hier_inputs[i] |= (state[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1) << (k * 2);
-                        hier_inputs[i] |= (state[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1);
+                        hier_inputs[i] |=
+                            (state[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1)
+                                << (k * 2);
+                        hier_inputs[i] |=
+                            (state[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1)
+                                << (k * 2 + 1);
                     }
                 }
                 script_pi += 256 * 4;
@@ -405,8 +436,12 @@ fn simulate_block_v1(
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
                     let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u32;
                     let t_shuffle_2_idx = (t_shuffle >> 16) as u32;
-                    sram_duplicate_perm[i as usize] |= (writeouts[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1) << (k * 2);
-                    sram_duplicate_perm[i as usize] |= (writeouts[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1);
+                    sram_duplicate_perm[i as usize] |=
+                        (writeouts[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1)
+                            << (k * 2);
+                    sram_duplicate_perm[i as usize] |=
+                        (writeouts[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1)
+                            << (k * 2 + 1);
                 }
             }
             script_pi += 256 * 4;
@@ -431,7 +466,8 @@ fn simulate_block_v1(
             let r = ram[port_r_addr_iv as usize];
             let w0 = ram[port_w_addr_iv as usize];
             writeouts[(num_ios - num_srams + sram_i_u32) as usize] = r;
-            ram[port_w_addr_iv as usize] = (w0 & !port_w_wr_en) | (port_w_wr_data_iv & port_w_wr_en);
+            ram[port_w_addr_iv as usize] =
+                (w0 & !port_w_wr_en) | (port_w_wr_data_iv & port_w_wr_en);
         }
 
         for i in 0..num_output_duplicates {
@@ -448,8 +484,16 @@ fn simulate_block_v1(
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
                     let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u32;
                     let t_shuffle_2_idx = (t_shuffle >> 16) as u32;
-                    clken_perm[i as usize] |= (writeouts_for_clken[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1) << (k * 2);
-                    clken_perm[i as usize] |= (writeouts_for_clken[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1);
+                    clken_perm[i as usize] |= (writeouts_for_clken
+                        [(t_shuffle_1_idx >> 5) as usize]
+                        >> (t_shuffle_1_idx & 31)
+                        & 1)
+                        << (k * 2);
+                    clken_perm[i as usize] |= (writeouts_for_clken
+                        [(t_shuffle_2_idx >> 5) as usize]
+                        >> (t_shuffle_2_idx & 31)
+                        & 1)
+                        << (k * 2 + 1);
                 }
             }
             script_pi += 256 * 4;
@@ -469,7 +513,7 @@ fn simulate_block_v1(
         }
 
         if is_last_part != 0 {
-            break
+            break;
         }
     }
     assert_eq!(script_pi, script.len());
@@ -596,7 +640,9 @@ impl MetalSimulator {
         for cycle_i in 0..num_cycles {
             // Reset event buffer at start of each cycle
             // SAFETY: event_buffer_ptr is valid and we own it
-            unsafe { (*event_buffer_ptr).reset(); }
+            unsafe {
+                (*event_buffer_ptr).reset();
+            }
 
             for stage_i in 0..num_major_stages {
                 let params = SimParams {
@@ -640,9 +686,7 @@ impl MetalSimulator {
             // The assertion conditions are stored in the state buffer
             // SAFETY: states_ptr points to valid shared memory, GPU has finished
             if !assertion_positions.is_empty() {
-                let states_slice = unsafe {
-                    std::slice::from_raw_parts(states_ptr, states.len())
-                };
+                let states_slice = unsafe { std::slice::from_raw_parts(states_ptr, states.len()) };
 
                 // The output state for cycle_i is at offset (cycle_i + 1) * state_size
                 let cycle_output_offset = (cycle_i + 1) * state_size;
@@ -658,7 +702,6 @@ impl MetalSimulator {
                         // So when the bit is 1, the assertion should fire (fail)
                         let condition = (states_slice[abs_word_idx] >> bit_idx) & 1;
 
-
                         if condition == 1 {
                             // Write event to buffer
                             let event_type = match control_type {
@@ -668,7 +711,10 @@ impl MetalSimulator {
                             };
 
                             unsafe {
-                                let count = (*event_buffer_ptr).count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) as usize;
+                                let count = (*event_buffer_ptr)
+                                    .count
+                                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                                    as usize;
                                 if count < MAX_EVENTS {
                                     let event = &mut (*event_buffer_ptr).events[count];
                                     event.event_type = event_type as u32;
@@ -679,7 +725,10 @@ impl MetalSimulator {
 
                             clilog::debug!(
                                 "[cycle {}] Assertion condition fired: cell={}, pos={}, type={:?}",
-                                cycle_i, cell_id, pos, control_type
+                                cycle_i,
+                                cell_id,
+                                pos,
+                                control_type
                             );
                         }
                     }
@@ -688,9 +737,7 @@ impl MetalSimulator {
 
             // Check display conditions after GPU finishes
             if !display_positions.is_empty() {
-                let states_slice = unsafe {
-                    std::slice::from_raw_parts(states_ptr, states.len())
-                };
+                let states_slice = unsafe { std::slice::from_raw_parts(states_ptr, states.len()) };
 
                 let cycle_output_offset = (cycle_i + 1) * state_size;
 
@@ -712,7 +759,8 @@ impl MetalSimulator {
                                 if abs_arg_idx < states_slice.len() {
                                     // For now, just get the single bit value
                                     // Full implementation would accumulate bits based on width
-                                    let val = ((states_slice[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
+                                    let val =
+                                        ((states_slice[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
                                     args.push(val);
                                 }
                             }
@@ -723,7 +771,10 @@ impl MetalSimulator {
 
                             // Write display event to buffer
                             unsafe {
-                                let count = (*event_buffer_ptr).count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) as usize;
+                                let count = (*event_buffer_ptr)
+                                    .count
+                                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                                    as usize;
                                 if count < MAX_EVENTS {
                                     let event = &mut (*event_buffer_ptr).events[count];
                                     event.event_type = EventType::Display as u32;
@@ -734,7 +785,9 @@ impl MetalSimulator {
 
                             clilog::debug!(
                                 "[cycle {}] Display fired: cell={}, format='{}'",
-                                cycle_i, cell_id, format
+                                cycle_i,
+                                cell_id,
+                                format
                             );
                         }
                     }
@@ -773,7 +826,9 @@ impl MetalSimulator {
 
         // Clean up event buffer
         // SAFETY: We created this box and are done with it
-        unsafe { drop(Box::from_raw(event_buffer_ptr)); }
+        unsafe {
+            drop(Box::from_raw(event_buffer_ptr));
+        }
 
         (final_control, cycles_completed)
     }
@@ -793,20 +848,26 @@ fn main() {
     let netlistdb = NetlistDB::from_sverilog_file(
         &args.netlist_verilog,
         args.top_module.as_deref(),
-        &AIGPDKLeafPins()
-    ).expect("cannot build netlist");
+        &AIGPDKLeafPins(),
+    )
+    .expect("cannot build netlist");
 
     let mut aig = AIG::from_netlistdb(&netlistdb);
 
     // Load display format info from JSON if available
-    let json_path = args.json_path.clone().unwrap_or_else(|| {
-        args.netlist_verilog.with_extension("json")
-    });
+    let json_path = args
+        .json_path
+        .clone()
+        .unwrap_or_else(|| args.netlist_verilog.with_extension("json"));
     if json_path.exists() {
         match extract_display_info_from_json(&json_path) {
             Ok(display_info) => {
                 if !display_info.is_empty() {
-                    clilog::info!("Loaded {} display format strings from {:?}", display_info.len(), json_path);
+                    clilog::info!(
+                        "Loaded {} display format strings from {:?}",
+                        display_info.len(),
+                        json_path
+                    );
                     aig.populate_display_info(&display_info);
                 }
             }
@@ -821,8 +882,13 @@ fn main() {
     let f = std::fs::File::open(&args.gemparts).unwrap();
     let mut buf = std::io::BufReader::new(f);
     let parts_in_stages: Vec<Vec<Partition>> = serde_bare::from_reader(&mut buf).unwrap();
-    clilog::info!("# of effective partitions in each stage: {:?}",
-                  parts_in_stages.iter().map(|ps| ps.len()).collect::<Vec<_>>());
+    clilog::info!(
+        "# of effective partitions in each stage: {:?}",
+        parts_in_stages
+            .iter()
+            .map(|ps| ps.len())
+            .collect::<Vec<_>>()
+    );
 
     let mut input_layout = Vec::new();
     for (i, driv) in aig.drivers.iter().enumerate() {
@@ -832,9 +898,17 @@ fn main() {
     }
 
     let mut script = FlattenedScriptV1::from(
-        &aig, &stageds.iter().map(|(_, _, staged)| staged).collect::<Vec<_>>(),
-        &parts_in_stages.iter().map(|ps| ps.as_slice()).collect::<Vec<_>>(),
-        args.num_blocks, input_layout
+        &aig,
+        &stageds
+            .iter()
+            .map(|(_, _, staged)| staged)
+            .collect::<Vec<_>>(),
+        &parts_in_stages
+            .iter()
+            .map(|ps| ps.as_slice())
+            .collect::<Vec<_>>(),
+        args.num_blocks,
+        input_layout,
     );
 
     // Load SDF timing data if provided
@@ -885,7 +959,9 @@ fn main() {
         match auto_detect_vcd_scope(&header.items[..], &netlistdb, top_module_name) {
             Some((_path, scope)) => scope,
             None => {
-                panic!("Failed to auto-detect VCD scope. Please specify --input-vcd-scope manually.");
+                panic!(
+                    "Failed to auto-detect VCD scope. Please specify --input-vcd-scope manually."
+                );
             }
         }
     };
@@ -895,10 +971,10 @@ fn main() {
 
     let mut match_one_input = |var: &Var, i: Option<isize>, vcd_pos: usize| {
         let key = (VCDHier::empty(), var.reference.as_str(), i);
-        if let Some(&id) = netlistdb.pinname2id.get(
-            &key as &dyn GeneralPinName
-        ) {
-            if netlistdb.pindirect[id] != Direction::O { return }
+        if let Some(&id) = netlistdb.pinname2id.get(&key as &dyn GeneralPinName) {
+            if netlistdb.pindirect[id] != Direction::O {
+                return;
+            }
             vcd2inp.insert((var.code.0, vcd_pos), id);
             inp_port_given.insert(id);
         }
@@ -925,13 +1001,12 @@ fn main() {
         }
     }
     for i in netlistdb.cell2pin.iter_set(0) {
-        if netlistdb.pindirect[i] != Direction::I &&
-            !inp_port_given.contains(&i)
-        {
+        if netlistdb.pindirect[i] != Direction::I && !inp_port_given.contains(&i) {
             clilog::warn!(
                 GATESIM_VCDI_MISSING_PI,
                 "Primary input port {:?} not present in the VCD input",
-                netlistdb.pinnames[i]);
+                netlistdb.pinnames[i]
+            );
         }
     }
 
@@ -947,22 +1022,40 @@ fn main() {
     for &scope in &output_vcd_scope {
         writer.add_module(scope).unwrap();
     }
-    let out2vcd = netlistdb.cell2pin.iter_set(0).filter_map(|i| {
-        if netlistdb.pindirect[i] == Direction::I {
-            let aigpin = aig.pin2aigpin_iv[i];
-            if matches!(aig.drivers[aigpin >> 1], DriverType::InputPort(_)) {
-                clilog::info!("skipped output for port {} as it is a pass-through of input port.", netlistdb.pinnames[i].dbg_fmt_pin());
-                return None
+    let out2vcd = netlistdb
+        .cell2pin
+        .iter_set(0)
+        .filter_map(|i| {
+            if netlistdb.pindirect[i] == Direction::I {
+                let aigpin = aig.pin2aigpin_iv[i];
+                if matches!(aig.drivers[aigpin >> 1], DriverType::InputPort(_)) {
+                    clilog::info!(
+                        "skipped output for port {} as it is a pass-through of input port.",
+                        netlistdb.pinnames[i].dbg_fmt_pin()
+                    );
+                    return None;
+                }
+                if aigpin <= 1 {
+                    return Some((
+                        aigpin,
+                        u32::MAX,
+                        writer
+                            .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
+                            .unwrap(),
+                    ));
+                }
+                Some((
+                    aigpin,
+                    *script.output_map.get(&aigpin).unwrap(),
+                    writer
+                        .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
+                        .unwrap(),
+                ))
+            } else {
+                None
             }
-            if aigpin <= 1 {
-                return Some((aigpin, u32::MAX, writer.add_wire(
-                    1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin())).unwrap()))
-            }
-            Some((aigpin, *script.output_map.get(&aigpin).unwrap(), writer.add_wire(
-                1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin())).unwrap()))
-        }
-        else { None }
-    }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     for _ in 0..output_vcd_scope.len() {
         writer.upscope().unwrap();
@@ -983,7 +1076,9 @@ fn main() {
     while let Some(tok) = vcdflow.next_token().unwrap() {
         match tok {
             FastFlowToken::Timestamp(t) => {
-                if t == vcd_time { continue }
+                if t == vcd_time {
+                    continue;
+                }
                 if last_vcd_time_active {
                     input_states.extend(state.iter().copied());
                     offsets_timestamps.push((input_states.len(), vcd_time_last_active));
@@ -1000,7 +1095,7 @@ fn main() {
                     if let Some(max_cycles) = args.max_cycles {
                         if offsets_timestamps.len() >= max_cycles {
                             clilog::info!("reached maximum cycles, stop reading input vcd");
-                            break
+                            break;
                         }
                     }
                 }
@@ -1013,7 +1108,7 @@ fn main() {
                 for pos in std::mem::take(&mut delayed_bit_changes) {
                     state[(pos >> 5) as usize] ^= 1u32 << (pos & 31);
                 }
-            },
+            }
             FastFlowToken::Value(FFValueChange { id, bits }) => {
                 for (pos, b) in bits.iter().enumerate() {
                     if let Some(&pin) = vcd2inp.get(&(id.0, pos)) {
@@ -1027,8 +1122,13 @@ fn main() {
                             }
                         };
                         let old_value = state[(pos >> 5) as usize] >> (pos & 31) & 1;
-                        if old_value == match b { b'1' => 1, _ => 0 } {
-                            continue
+                        if old_value
+                            == match b {
+                                b'1' => 1,
+                                _ => 0,
+                            }
+                        {
+                            continue;
                         }
                         if let Some((pe, ne)) = aig.clock_pin2aigpins.get(&pin).copied() {
                             // This is a clock pin - handle edge detection
@@ -1092,10 +1192,16 @@ fn main() {
             clilog::info!("Simulation completed {} cycles", cycles_completed);
         }
         SimControl::Pause => {
-            clilog::info!("Simulation paused at cycle {} ($stop encountered)", cycles_completed);
+            clilog::info!(
+                "Simulation paused at cycle {} ($stop encountered)",
+                cycles_completed
+            );
         }
         SimControl::Terminate => {
-            clilog::info!("Simulation terminated at cycle {} ($finish encountered)", cycles_completed);
+            clilog::info!(
+                "Simulation terminated at cycle {} ($finish encountered)",
+                cycles_completed
+            );
         }
     }
 
@@ -1110,21 +1216,36 @@ fn main() {
         clilog::info!("running sanity test");
         for i in 0..offsets_timestamps.len() {
             let mut output_state = vec![0; script.reg_io_state_size as usize];
-            output_state.copy_from_slice(&input_states_sanity[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)]);
+            output_state.copy_from_slice(
+                &input_states_sanity[((i + 1) * script.reg_io_state_size as usize)
+                    ..((i + 2) * script.reg_io_state_size as usize)],
+            );
             for stage_i in 0..script.num_major_stages {
                 for blk_i in 0..script.num_blocks {
                     simulate_block_v1(
-                        &script.blocks_data[script.blocks_start[stage_i * script.num_blocks + blk_i]..script.blocks_start[stage_i * script.num_blocks + blk_i + 1]],
-                        &input_states_sanity[(i * script.reg_io_state_size as usize)..((i + 1) * script.reg_io_state_size as usize)],
+                        &script.blocks_data[script.blocks_start[stage_i * script.num_blocks + blk_i]
+                            ..script.blocks_start[stage_i * script.num_blocks + blk_i + 1]],
+                        &input_states_sanity[(i * script.reg_io_state_size as usize)
+                            ..((i + 1) * script.reg_io_state_size as usize)],
                         &mut output_state,
                         &mut sram_storage_sanity,
-                        false
+                        false,
                     );
                 }
             }
-            input_states_sanity[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)].copy_from_slice(&output_state);
-            if output_state != input_states_uvec[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)] {
-                println!("sanity check fail at cycle {i}.\ncpu good: {:?}\nmetal bad: {:?}", output_state, &input_states_uvec[((i + 1) * script.reg_io_state_size as usize)..((i + 2) * script.reg_io_state_size as usize)]);
+            input_states_sanity[((i + 1) * script.reg_io_state_size as usize)
+                ..((i + 2) * script.reg_io_state_size as usize)]
+                .copy_from_slice(&output_state);
+            if output_state
+                != input_states_uvec[((i + 1) * script.reg_io_state_size as usize)
+                    ..((i + 2) * script.reg_io_state_size as usize)]
+            {
+                println!(
+                    "sanity check fail at cycle {i}.\ncpu good: {:?}\nmetal bad: {:?}",
+                    output_state,
+                    &input_states_uvec[((i + 1) * script.reg_io_state_size as usize)
+                        ..((i + 2) * script.reg_io_state_size as usize)]
+                );
                 panic!()
             }
         }
@@ -1136,7 +1257,7 @@ fn main() {
     let mut last_val = vec![2; out2vcd.len()];
     for &(offset, timestamp) in &offsets_timestamps {
         if timestamp == u64::MAX {
-            continue
+            continue;
         }
         writer.timestamp(timestamp).unwrap();
         for (i, &(output_aigpin, output_pos, vid)) in out2vcd.iter().enumerate() {
@@ -1145,20 +1266,27 @@ fn main() {
                 u32::MAX => {
                     assert!(output_aigpin <= 1);
                     output_aigpin as u32
-                },
+                }
                 output_pos @ _ => {
-                    let value_new_output = input_states_uvec[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1;
+                    let value_new_output = input_states_uvec[offset + (output_pos >> 5) as usize]
+                        >> (output_pos & 31)
+                        & 1;
                     value_new_output
-                },
+                }
             };
             if value_new == last_val[i] {
-                continue
+                continue;
             }
             last_val[i] = value_new;
-            writer.change_scalar(vid, match value_new {
-                1 => Value::V1,
-                _ => Value::V0
-            }).unwrap();
+            writer
+                .change_scalar(
+                    vid,
+                    match value_new {
+                        1 => Value::V1,
+                        _ => Value::V0,
+                    },
+                )
+                .unwrap();
         }
     }
 }

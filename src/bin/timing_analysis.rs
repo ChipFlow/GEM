@@ -124,12 +124,21 @@ fn main() {
     }
 }
 
-fn print_text_report(aig: &AIG, report: &gem::aig::TimingReport, args: &Args, netlistdb: &NetlistDB) {
+fn print_text_report(
+    aig: &AIG,
+    report: &gem::aig::TimingReport,
+    args: &Args,
+    netlistdb: &NetlistDB,
+) {
     println!();
     println!("{}", report);
 
     // Print clock period info
-    println!("Clock period: {} ps ({:.3} ns)", args.clock_period, args.clock_period as f64 / 1000.0);
+    println!(
+        "Clock period: {} ps ({:.3} ns)",
+        args.clock_period,
+        args.clock_period as f64 / 1000.0
+    );
     println!();
 
     // Print critical paths
@@ -194,8 +203,10 @@ fn print_text_report(aig: &AIG, report: &gem::aig::TimingReport, args: &Args, ne
 
     // Summary
     if report.has_violations() {
-        println!("TIMING ANALYSIS: FAILED ({} setup, {} hold violations)",
-                 report.setup_violations, report.hold_violations);
+        println!(
+            "TIMING ANALYSIS: FAILED ({} setup, {} hold violations)",
+            report.setup_violations, report.hold_violations
+        );
     } else {
         println!("TIMING ANALYSIS: PASSED");
     }

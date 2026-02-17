@@ -528,10 +528,7 @@ pub fn extract_cell_type(name: &str) -> &str {
 
 /// Return Direction::I as fallback but log an error.
 fn unknown_pin(macro_name: &CompactString, pin_name: &CompactString) -> Direction {
-    panic!(
-        "Unknown SKY130 pin: macro={}, pin={}",
-        macro_name, pin_name
-    );
+    panic!("Unknown SKY130 pin: macro={}, pin={}", macro_name, pin_name);
 }
 
 /// Check if a cell name is a SKY130 standard cell or associated macro.
@@ -543,10 +540,19 @@ pub fn is_sky130_cell(name: &str) -> bool {
 pub fn is_aigpdk_cell(name: &str) -> bool {
     matches!(
         name,
-        "INV" | "BUF" | "CKLNQD" |
-        "AND2_00_0" | "AND2_01_0" | "AND2_10_0" | "AND2_11_0" | "AND2_11_1" |
-        "DFF" | "DFFSR" | "LATCH" |
-        "GEM_ASSERT" | "GEM_DISPLAY"
+        "INV"
+            | "BUF"
+            | "CKLNQD"
+            | "AND2_00_0"
+            | "AND2_01_0"
+            | "AND2_10_0"
+            | "AND2_11_0"
+            | "AND2_11_1"
+            | "DFF"
+            | "DFFSR"
+            | "LATCH"
+            | "GEM_ASSERT"
+            | "GEM_DISPLAY"
     ) || name.starts_with("$__RAMGEM_")
 }
 
@@ -607,8 +613,8 @@ pub fn detect_library(cell_types: impl Iterator<Item = impl AsRef<str>>) -> Cell
 ///
 /// This does a quick scan of the file without full parsing.
 pub fn detect_library_from_file(path: &std::path::Path) -> std::io::Result<CellLibrary> {
-    use std::io::{BufRead, BufReader};
     use std::fs::File;
+    use std::io::{BufRead, BufReader};
 
     let file = File::open(path)?;
     let reader = BufReader::new(file);
@@ -623,8 +629,18 @@ pub fn detect_library_from_file(path: &std::path::Path) -> std::io::Result<CellL
             has_sky130 = true;
         }
         // Look for AIGPDK cells (typically at start of instantiation)
-        for cell in ["AND2_", "INV ", "BUF ", "DFF ", "DFFSR ", "LATCH ", "CKLNQD ",
-                     "GEM_ASSERT ", "GEM_DISPLAY ", "$__RAMGEM_"] {
+        for cell in [
+            "AND2_",
+            "INV ",
+            "BUF ",
+            "DFF ",
+            "DFFSR ",
+            "LATCH ",
+            "CKLNQD ",
+            "GEM_ASSERT ",
+            "GEM_DISPLAY ",
+            "$__RAMGEM_",
+        ] {
             if line.contains(cell) {
                 has_aigpdk = true;
                 break;

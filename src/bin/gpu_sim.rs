@@ -12,13 +12,13 @@
 
 use gem::aig::{DriverType, AIG};
 use gem::aigpdk::AIGPDKLeafPins;
-use gem::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
 use gem::flatten::FlattenedScriptV1;
-use gem::staging::build_staged_aigs;
 use gem::pe::Partition;
+use gem::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
+use gem::staging::build_staged_aigs;
 use gem::testbench::{CppSpiFlash, PortMapping, TestbenchConfig};
-use netlistdb::{GeneralPinName, NetlistDB};
 use indexmap::IndexSet;
+use netlistdb::{GeneralPinName, NetlistDB};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
@@ -28,7 +28,10 @@ use ulib::{AsUPtr, Device};
 #[macro_use]
 extern crate objc;
 
-use metal::{Device as MTLDevice, MTLSize, ComputePipelineState, CommandQueue, MTLResourceOptions, SharedEvent};
+use metal::{
+    CommandQueue, ComputePipelineState, Device as MTLDevice, MTLResourceOptions, MTLSize,
+    SharedEvent,
+};
 
 // ── CLI Arguments ────────────────────────────────────────────────────────────
 
@@ -115,10 +118,10 @@ struct BitOp {
 /// Parameters for the state_prep kernel (must match Metal shader StatePrepParams struct).
 #[repr(C)]
 struct StatePrepParams {
-    state_size: u32,    // number of u32 words per state slot
-    num_ops: u32,       // number of bit set/clear operations
-    num_monitors: u32,  // number of peripheral monitors to check (0 = skip)
-    tick_number: u32,   // current tick number
+    state_size: u32,   // number of u32 words per state slot
+    num_ops: u32,      // number of bit set/clear operations
+    num_monitors: u32, // number of peripheral monitors to check (0 = skip)
+    tick_number: u32,  // current tick number
 }
 
 /// GPU-side flash state (must match Metal FlashState struct exactly).
@@ -164,7 +167,7 @@ struct FlashModelParams {
 /// GPU-side UART decoder state (must match Metal UartDecoderState).
 #[repr(C)]
 struct UartDecoderState {
-    state: u32,          // 0=IDLE, 1=START, 2=DATA, 3=STOP
+    state: u32, // 0=IDLE, 1=START, 2=DATA, 3=STOP
     last_tx: u32,
     start_cycle: u32,
     bits_received: u32,
@@ -354,9 +357,14 @@ impl MetalSimulator {
 
         let command_buffer = self.command_queue.new_command_buffer();
         self.encode_dispatch(
-            &command_buffer, num_blocks, stage_i,
-            blocks_start_buffer, blocks_data_buffer,
-            sram_data_buffer, states_buffer, event_buffer_metal,
+            &command_buffer,
+            num_blocks,
+            stage_i,
+            blocks_start_buffer,
+            blocks_data_buffer,
+            sram_data_buffer,
+            states_buffer,
+            event_buffer_metal,
             timing_constraints_buffer,
         );
         command_buffer.commit();
@@ -568,20 +576,24 @@ impl MetalSimulator {
 
         for _tick_offset in 0..batch_size {
             // ── Falling edge: state_prep + flash_din + simulate ──
-            self.encode_state_prep(
-                cb, states_buffer,
-                fall_prep_params_buffer, fall_ops_buffer,
-            );
+            self.encode_state_prep(cb, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
             self.encode_apply_flash_din(
-                cb, states_buffer,
-                flash_state_buffer, flash_din_params_buffer,
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
             );
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
                 self.encode_dispatch(
-                    cb, num_blocks, stage_i,
-                    blocks_start_buffer, blocks_data_buffer,
-                    sram_data_buffer, states_buffer, event_buffer_metal,
+                    cb,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
                     timing_constraints_buffer,
                 );
             }
@@ -590,25 +602,32 @@ impl MetalSimulator {
             // Flash sees SPI CLK=0 (clock gated low when system CLK=0).
             // Produces d_in that will be applied before rising-edge simulate.
             self.encode_flash_model_step(
-                cb, states_buffer,
-                flash_state_buffer, flash_model_params_buffer, flash_data_buffer,
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
             );
 
             // ── Rising edge: state_prep + flash_din + simulate ──
-            self.encode_state_prep(
-                cb, states_buffer,
-                rise_prep_params_buffer, rise_ops_buffer,
-            );
+            self.encode_state_prep(cb, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
             self.encode_apply_flash_din(
-                cb, states_buffer,
-                flash_state_buffer, flash_din_params_buffer,
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
             );
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
                 self.encode_dispatch(
-                    cb, num_blocks, stage_i,
-                    blocks_start_buffer, blocks_data_buffer,
-                    sram_data_buffer, states_buffer, event_buffer_metal,
+                    cb,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
                     timing_constraints_buffer,
                 );
             }
@@ -616,13 +635,20 @@ impl MetalSimulator {
             // ── Flash model step after rising edge + IO step ──
             // Flash sees SPI CLK after DFFs have latched (posedge system CLK).
             self.encode_flash_model_step(
-                cb, states_buffer,
-                flash_state_buffer, flash_model_params_buffer, flash_data_buffer,
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
             );
             self.encode_io_step(
-                cb, states_buffer,
-                uart_state_buffer, uart_params_buffer, uart_channel_buffer,
-                wb_trace_channel_buffer, wb_trace_params_buffer,
+                cb,
+                states_buffer,
+                uart_state_buffer,
+                uart_params_buffer,
+                uart_channel_buffer,
+                wb_trace_channel_buffer,
+                wb_trace_params_buffer,
             );
         }
 
@@ -666,8 +692,8 @@ impl MetalSimulator {
         #[inline]
         fn gpu_times(cb: &metal::CommandBufferRef) -> (f64, f64) {
             unsafe {
-                let obj: *mut objc::runtime::Object = &*(cb as *const _ as *const objc::runtime::Object)
-                    as *const _ as *mut _;
+                let obj: *mut objc::runtime::Object =
+                    &*(cb as *const _ as *const objc::runtime::Object) as *const _ as *mut _;
                 let start: f64 = msg_send![obj, GPUStartTime];
                 let end: f64 = msg_send![obj, GPUEndTime];
                 (start, end)
@@ -680,28 +706,70 @@ impl MetalSimulator {
         for _ in 0..10 {
             let cb = self.command_queue.new_command_buffer();
             self.encode_state_prep(cb, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
-            self.encode_apply_flash_din(cb, states_buffer, flash_state_buffer, flash_din_params_buffer);
+            self.encode_apply_flash_din(
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
+            );
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
-                self.encode_dispatch(cb, num_blocks, stage_i, blocks_start_buffer,
-                    blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal,
-                    timing_constraints_buffer);
+                self.encode_dispatch(
+                    cb,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
+                    timing_constraints_buffer,
+                );
             }
-            self.encode_flash_model_step(cb, states_buffer, flash_state_buffer,
-                flash_model_params_buffer, flash_data_buffer);
+            self.encode_flash_model_step(
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
+            );
             self.encode_state_prep(cb, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
-            self.encode_apply_flash_din(cb, states_buffer, flash_state_buffer, flash_din_params_buffer);
+            self.encode_apply_flash_din(
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
+            );
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
-                self.encode_dispatch(cb, num_blocks, stage_i, blocks_start_buffer,
-                    blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal,
-                    timing_constraints_buffer);
+                self.encode_dispatch(
+                    cb,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
+                    timing_constraints_buffer,
+                );
             }
-            self.encode_flash_model_step(cb, states_buffer, flash_state_buffer,
-                flash_model_params_buffer, flash_data_buffer);
-            self.encode_io_step(cb, states_buffer, uart_state_buffer,
-                uart_params_buffer, uart_channel_buffer,
-                wb_trace_channel_buffer, wb_trace_params_buffer);
+            self.encode_flash_model_step(
+                cb,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
+            );
+            self.encode_io_step(
+                cb,
+                states_buffer,
+                uart_state_buffer,
+                uart_params_buffer,
+                uart_channel_buffer,
+                wb_trace_channel_buffer,
+                wb_trace_params_buffer,
+            );
             cb.commit();
             cb.wait_until_completed();
         }
@@ -722,14 +790,21 @@ impl MetalSimulator {
             // 1. state_prep (falling) — isolated
             let cb1 = self.command_queue.new_command_buffer();
             self.encode_state_prep(cb1, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
-            cb1.commit(); cb1.wait_until_completed();
+            cb1.commit();
+            cb1.wait_until_completed();
             let (s, e) = gpu_times(cb1);
             time_state_prep_fall += e - s;
 
             // 2. gpu_apply_flash_din — isolated
             let cb1b = self.command_queue.new_command_buffer();
-            self.encode_apply_flash_din(cb1b, states_buffer, flash_state_buffer, flash_din_params_buffer);
-            cb1b.commit(); cb1b.wait_until_completed();
+            self.encode_apply_flash_din(
+                cb1b,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
+            );
+            cb1b.commit();
+            cb1b.wait_until_completed();
             let (s, e) = gpu_times(cb1b);
             time_flash_din += e - s;
 
@@ -737,33 +812,55 @@ impl MetalSimulator {
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
                 let cb2 = self.command_queue.new_command_buffer();
-                self.encode_dispatch(cb2, num_blocks, stage_i, blocks_start_buffer,
-                    blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal,
-                    timing_constraints_buffer);
-                cb2.commit(); cb2.wait_until_completed();
+                self.encode_dispatch(
+                    cb2,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
+                    timing_constraints_buffer,
+                );
+                cb2.commit();
+                cb2.wait_until_completed();
                 let (s, e) = gpu_times(cb2);
                 time_simulate_fall += e - s;
             }
 
             // 3b. gpu_flash_model_step after falling edge — isolated
             let cb2b = self.command_queue.new_command_buffer();
-            self.encode_flash_model_step(cb2b, states_buffer, flash_state_buffer,
-                flash_model_params_buffer, flash_data_buffer);
-            cb2b.commit(); cb2b.wait_until_completed();
+            self.encode_flash_model_step(
+                cb2b,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
+            );
+            cb2b.commit();
+            cb2b.wait_until_completed();
             let (s, e) = gpu_times(cb2b);
             time_flash_step_fall += e - s;
 
             // 4. state_prep (rising) — isolated
             let cb3 = self.command_queue.new_command_buffer();
             self.encode_state_prep(cb3, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
-            cb3.commit(); cb3.wait_until_completed();
+            cb3.commit();
+            cb3.wait_until_completed();
             let (s, e) = gpu_times(cb3);
             time_state_prep_rise += e - s;
 
             // 5. gpu_apply_flash_din — isolated
             let cb3b = self.command_queue.new_command_buffer();
-            self.encode_apply_flash_din(cb3b, states_buffer, flash_state_buffer, flash_din_params_buffer);
-            cb3b.commit(); cb3b.wait_until_completed();
+            self.encode_apply_flash_din(
+                cb3b,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
+            );
+            cb3b.commit();
+            cb3b.wait_until_completed();
             let (s, e) = gpu_times(cb3b);
             time_flash_din += e - s;
 
@@ -771,57 +868,132 @@ impl MetalSimulator {
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
                 let cb4 = self.command_queue.new_command_buffer();
-                self.encode_dispatch(cb4, num_blocks, stage_i, blocks_start_buffer,
-                    blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal,
-                    timing_constraints_buffer);
-                cb4.commit(); cb4.wait_until_completed();
+                self.encode_dispatch(
+                    cb4,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
+                    timing_constraints_buffer,
+                );
+                cb4.commit();
+                cb4.wait_until_completed();
                 let (s, e) = gpu_times(cb4);
                 time_simulate_rise += e - s;
             }
 
             // 7. gpu_flash_model_step after rising edge — isolated
             let cb5 = self.command_queue.new_command_buffer();
-            self.encode_flash_model_step(cb5, states_buffer, flash_state_buffer,
-                flash_model_params_buffer, flash_data_buffer);
-            cb5.commit(); cb5.wait_until_completed();
+            self.encode_flash_model_step(
+                cb5,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
+            );
+            cb5.commit();
+            cb5.wait_until_completed();
             let (s, e) = gpu_times(cb5);
             time_flash_step_rise += e - s;
 
             // 8. gpu_io_step — isolated
             let cb6 = self.command_queue.new_command_buffer();
-            self.encode_io_step(cb6, states_buffer, uart_state_buffer,
-                uart_params_buffer, uart_channel_buffer,
-                wb_trace_channel_buffer, wb_trace_params_buffer);
-            cb6.commit(); cb6.wait_until_completed();
+            self.encode_io_step(
+                cb6,
+                states_buffer,
+                uart_state_buffer,
+                uart_params_buffer,
+                uart_channel_buffer,
+                wb_trace_channel_buffer,
+                wb_trace_params_buffer,
+            );
+            cb6.commit();
+            cb6.wait_until_completed();
             let (s, e) = gpu_times(cb6);
             time_io_step += e - s;
 
             // Full tick in single CB for comparison
             let cb_full = self.command_queue.new_command_buffer();
-            self.encode_state_prep(cb_full, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
-            self.encode_apply_flash_din(cb_full, states_buffer, flash_state_buffer, flash_din_params_buffer);
+            self.encode_state_prep(
+                cb_full,
+                states_buffer,
+                fall_prep_params_buffer,
+                fall_ops_buffer,
+            );
+            self.encode_apply_flash_din(
+                cb_full,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
+            );
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
-                self.encode_dispatch(cb_full, num_blocks, stage_i, blocks_start_buffer,
-                    blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal,
-                    timing_constraints_buffer);
+                self.encode_dispatch(
+                    cb_full,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
+                    timing_constraints_buffer,
+                );
             }
-            self.encode_flash_model_step(cb_full, states_buffer, flash_state_buffer,
-                flash_model_params_buffer, flash_data_buffer);
-            self.encode_state_prep(cb_full, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
-            self.encode_apply_flash_din(cb_full, states_buffer, flash_state_buffer, flash_din_params_buffer);
+            self.encode_flash_model_step(
+                cb_full,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
+            );
+            self.encode_state_prep(
+                cb_full,
+                states_buffer,
+                rise_prep_params_buffer,
+                rise_ops_buffer,
+            );
+            self.encode_apply_flash_din(
+                cb_full,
+                states_buffer,
+                flash_state_buffer,
+                flash_din_params_buffer,
+            );
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0);
-                self.encode_dispatch(cb_full, num_blocks, stage_i, blocks_start_buffer,
-                    blocks_data_buffer, sram_data_buffer, states_buffer, event_buffer_metal,
-                    timing_constraints_buffer);
+                self.encode_dispatch(
+                    cb_full,
+                    num_blocks,
+                    stage_i,
+                    blocks_start_buffer,
+                    blocks_data_buffer,
+                    sram_data_buffer,
+                    states_buffer,
+                    event_buffer_metal,
+                    timing_constraints_buffer,
+                );
             }
-            self.encode_flash_model_step(cb_full, states_buffer, flash_state_buffer,
-                flash_model_params_buffer, flash_data_buffer);
-            self.encode_io_step(cb_full, states_buffer, uart_state_buffer,
-                uart_params_buffer, uart_channel_buffer,
-                wb_trace_channel_buffer, wb_trace_params_buffer);
-            cb_full.commit(); cb_full.wait_until_completed();
+            self.encode_flash_model_step(
+                cb_full,
+                states_buffer,
+                flash_state_buffer,
+                flash_model_params_buffer,
+                flash_data_buffer,
+            );
+            self.encode_io_step(
+                cb_full,
+                states_buffer,
+                uart_state_buffer,
+                uart_params_buffer,
+                uart_channel_buffer,
+                wb_trace_channel_buffer,
+                wb_trace_params_buffer,
+            );
+            cb_full.commit();
+            cb_full.wait_until_completed();
             let (s, e) = gpu_times(cb_full);
             time_full_tick += e - s;
         }
@@ -830,13 +1002,22 @@ impl MetalSimulator {
         let n = num_ticks as f64;
 
         let time_flash_step = time_flash_step_fall + time_flash_step_rise;
-        let total_isolated = time_state_prep_fall + time_flash_din + time_simulate_fall
-            + time_flash_step_fall + time_state_prep_rise + time_simulate_rise
-            + time_flash_step_rise + time_io_step;
+        let total_isolated = time_state_prep_fall
+            + time_flash_din
+            + time_simulate_fall
+            + time_flash_step_fall
+            + time_state_prep_rise
+            + time_simulate_rise
+            + time_flash_step_rise
+            + time_io_step;
 
         let print_kernel = |name: &str, t: f64| {
             let us = t / n * 1e6;
-            let pct = if total_isolated > 0.0 { 100.0 * t / total_isolated } else { 0.0 };
+            let pct = if total_isolated > 0.0 {
+                100.0 * t / total_isolated
+            } else {
+                0.0
+            };
             println!("  {:<36} {:>8.2}μs/tick  {:>5.1}%", name, us, pct);
         };
 
@@ -849,27 +1030,47 @@ impl MetalSimulator {
         print_kernel("simulate_v1_stage (rising)", time_simulate_rise);
         print_kernel("gpu_flash_model_step (rising)", time_flash_step_rise);
         print_kernel("gpu_io_step", time_io_step);
-        println!("  {:<36} {:>8.2}μs/tick",
-            "TOTAL (isolated sum)", total_isolated / n * 1e6);
+        println!(
+            "  {:<36} {:>8.2}μs/tick",
+            "TOTAL (isolated sum)",
+            total_isolated / n * 1e6
+        );
         println!();
-        println!("  {:<36} {:>8.2}μs/tick",
-            "Full tick (single CB)", time_full_tick / n * 1e6);
-        println!("  {:<36} {:>8.2}μs/tick",
-            "Wall clock (2× ticks, profiling)", wall_elapsed.as_secs_f64() / n * 1e6);
+        println!(
+            "  {:<36} {:>8.2}μs/tick",
+            "Full tick (single CB)",
+            time_full_tick / n * 1e6
+        );
+        println!(
+            "  {:<36} {:>8.2}μs/tick",
+            "Wall clock (2× ticks, profiling)",
+            wall_elapsed.as_secs_f64() / n * 1e6
+        );
         println!();
 
         let sim_us = time_simulate_fall / n * 1e6 + time_simulate_rise / n * 1e6;
         let io_us = time_flash_din / n * 1e6 + time_flash_step / n * 1e6 + time_io_step / n * 1e6;
         let prep_us = time_state_prep_fall / n * 1e6 + time_state_prep_rise / n * 1e6;
-        println!("  Simulation kernels total:     {:>8.2}μs/tick  ({:.1}%)",
-            sim_us, 100.0 * (time_simulate_fall + time_simulate_rise) / total_isolated);
-        println!("  IO model kernels total:       {:>8.2}μs/tick  ({:.1}%)",
-            io_us, 100.0 * (time_flash_din + time_flash_step + time_io_step) / total_isolated);
-        println!("  State prep total:             {:>8.2}μs/tick  ({:.1}%)",
-            prep_us, 100.0 * (time_state_prep_fall + time_state_prep_rise) / total_isolated);
+        println!(
+            "  Simulation kernels total:     {:>8.2}μs/tick  ({:.1}%)",
+            sim_us,
+            100.0 * (time_simulate_fall + time_simulate_rise) / total_isolated
+        );
+        println!(
+            "  IO model kernels total:       {:>8.2}μs/tick  ({:.1}%)",
+            io_us,
+            100.0 * (time_flash_din + time_flash_step + time_io_step) / total_isolated
+        );
+        println!(
+            "  State prep total:             {:>8.2}μs/tick  ({:.1}%)",
+            prep_us,
+            100.0 * (time_state_prep_fall + time_state_prep_rise) / total_isolated
+        );
         println!();
-        println!("  CB submission overhead:        {:>8.2}μs/tick (wall - GPU)",
-            (wall_elapsed.as_secs_f64() - total_isolated - time_full_tick) / n * 1e6);
+        println!(
+            "  CB submission overhead:        {:>8.2}μs/tick (wall - GPU)",
+            (wall_elapsed.as_secs_f64() - total_isolated - time_full_tick) / n * 1e6
+        );
     }
 }
 
@@ -927,14 +1128,20 @@ fn build_gpio_mapping(
 
     // Build reverse lookup: port_name → gpio_index for port_mapping mode
     let input_name_to_gpio: HashMap<String, usize> = port_mapping
-        .map(|pm| pm.inputs.iter()
-            .filter_map(|(k, v)| k.parse::<usize>().ok().map(|idx| (v.clone(), idx)))
-            .collect())
+        .map(|pm| {
+            pm.inputs
+                .iter()
+                .filter_map(|(k, v)| k.parse::<usize>().ok().map(|idx| (v.clone(), idx)))
+                .collect()
+        })
         .unwrap_or_default();
     let output_name_to_gpio: HashMap<String, usize> = port_mapping
-        .map(|pm| pm.outputs.iter()
-            .filter_map(|(k, v)| k.parse::<usize>().ok().map(|idx| (v.clone(), idx)))
-            .collect())
+        .map(|pm| {
+            pm.outputs
+                .iter()
+                .filter_map(|(k, v)| k.parse::<usize>().ok().map(|idx| (v.clone(), idx)))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Map input ports → state buffer positions
@@ -943,12 +1150,19 @@ fn build_gpio_mapping(
             DriverType::InputPort(pinid) => {
                 let pin_name = netlistdb.pinnames[*pinid].dbg_fmt_pin();
                 // Try port_mapping first, then fall back to gpio_in[N] parsing
-                let gpio_idx = input_name_to_gpio.get(&pin_name).copied()
+                let gpio_idx = input_name_to_gpio
+                    .get(&pin_name)
+                    .copied()
                     .or_else(|| parse_gpio_index(&pin_name, "gpio_in"));
                 if let Some(gpio_idx) = gpio_idx {
                     if let Some(&pos) = script.input_map.get(&aigpin_idx) {
                         input_bits.insert(gpio_idx, pos);
-                        clilog::debug!("input[{}] = pin '{}' → state pos {}", gpio_idx, pin_name, pos);
+                        clilog::debug!(
+                            "input[{}] = pin '{}' → state pos {}",
+                            gpio_idx,
+                            pin_name,
+                            pos
+                        );
                     }
                 }
                 // Also store by name for constant_ports
@@ -964,8 +1178,13 @@ fn build_gpio_mapping(
                         negedge_flag_bits.push(pos);
                     }
                     let pin_name = netlistdb.pinnames[*pinid].dbg_fmt_pin();
-                    clilog::debug!("ClockFlag aigpin={} pin={} negedge={} pos={}",
-                                   aigpin_idx, pin_name, is_negedge, pos);
+                    clilog::debug!(
+                        "ClockFlag aigpin={} pin={} negedge={} pos={}",
+                        aigpin_idx,
+                        pin_name,
+                        is_negedge,
+                        pos
+                    );
                 }
             }
             _ => {}
@@ -976,35 +1195,65 @@ fn build_gpio_mapping(
     for i in netlistdb.cell2pin.iter_set(0) {
         let pin_name = netlistdb.pinnames[i].dbg_fmt_pin();
         // Try port_mapping first, then fall back to gpio_out[N] parsing
-        let gpio_idx = output_name_to_gpio.get(&pin_name).copied()
+        let gpio_idx = output_name_to_gpio
+            .get(&pin_name)
+            .copied()
             .or_else(|| parse_gpio_index(&pin_name, "gpio_out"));
         if let Some(gpio_idx) = gpio_idx {
             let aigpin_iv = aig.pin2aigpin_iv[i];
             if aigpin_iv == usize::MAX {
-                clilog::info!("output[{}] pin '{}' has no AIG connection (usize::MAX)", gpio_idx, pin_name);
+                clilog::info!(
+                    "output[{}] pin '{}' has no AIG connection (usize::MAX)",
+                    gpio_idx,
+                    pin_name
+                );
                 continue;
             }
             if aigpin_iv <= 1 {
-                clilog::info!("output[{}] pin '{}' is constant (aigpin_iv={})", gpio_idx, pin_name, aigpin_iv);
+                clilog::info!(
+                    "output[{}] pin '{}' is constant (aigpin_iv={})",
+                    gpio_idx,
+                    pin_name,
+                    aigpin_iv
+                );
                 continue;
             }
             if let Some(&pos) = script.output_map.get(&aigpin_iv) {
                 output_bits.insert(gpio_idx, pos);
-                clilog::debug!("output[{}] = pin '{}' → state pos {}", gpio_idx, pin_name, pos);
+                clilog::debug!(
+                    "output[{}] = pin '{}' → state pos {}",
+                    gpio_idx,
+                    pin_name,
+                    pos
+                );
             } else if let Some(&pos) = script.output_map.get(&(aigpin_iv ^ 1)) {
                 output_bits.insert(gpio_idx, pos);
-                clilog::debug!("output[{}] = pin '{}' → state pos {} (flipped inv)",
-                              gpio_idx, pin_name, pos);
+                clilog::debug!(
+                    "output[{}] = pin '{}' → state pos {} (flipped inv)",
+                    gpio_idx,
+                    pin_name,
+                    pos
+                );
             } else {
-                clilog::info!("output[{}] pin '{}' aigpin_iv={} (aigpin={}) not in output_map (dir={:?})",
-                              gpio_idx, pin_name, aigpin_iv, aigpin_iv >> 1, netlistdb.pindirect[i]);
+                clilog::info!(
+                    "output[{}] pin '{}' aigpin_iv={} (aigpin={}) not in output_map (dir={:?})",
+                    gpio_idx,
+                    pin_name,
+                    aigpin_iv,
+                    aigpin_iv >> 1,
+                    netlistdb.pindirect[i]
+                );
             }
         }
     }
 
-    clilog::info!("GPIO mapping: {} inputs, {} outputs, {} posedge flags, {} negedge flags",
-                  input_bits.len(), output_bits.len(),
-                  posedge_flag_bits.len(), negedge_flag_bits.len());
+    clilog::info!(
+        "GPIO mapping: {} inputs, {} outputs, {} posedge flags, {} negedge flags",
+        input_bits.len(),
+        output_bits.len(),
+        posedge_flag_bits.len(),
+        negedge_flag_bits.len()
+    );
 
     clilog::info!("Named input ports: {} mapped", named_input_bits.len());
 
@@ -1106,10 +1355,12 @@ fn build_wb_trace_params(
     params.ibus_cyc_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.fetch.ibus__cyc");
     params.ibus_stb_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.fetch.ibus__stb");
     for i in 0..WB_TRACE_MAX_ADR_BITS {
-        params.ibus_adr_pos[i] = resolve_bus_signal(aig, netlistdb, script, "cpu.fetch.ibus__adr", i);
+        params.ibus_adr_pos[i] =
+            resolve_bus_signal(aig, netlistdb, script, "cpu.fetch.ibus__adr", i);
     }
     for i in 0..WB_TRACE_MAX_DAT_BITS {
-        params.ibus_rdata_pos[i] = resolve_bus_signal(aig, netlistdb, script, "cpu.fetch.ibus_rdata", i);
+        params.ibus_rdata_pos[i] =
+            resolve_bus_signal(aig, netlistdb, script, "cpu.fetch.ibus_rdata", i);
     }
 
     // dbus (data bus)
@@ -1117,31 +1368,62 @@ fn build_wb_trace_params(
     params.dbus_stb_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.loadstore.dbus__stb");
     params.dbus_we_pos = resolve_signal_pos(aig, netlistdb, script, "cpu.loadstore.dbus__we");
     for i in 0..WB_TRACE_MAX_ADR_BITS {
-        params.dbus_adr_pos[i] = resolve_bus_signal(aig, netlistdb, script, "cpu.loadstore.dbus__adr", i);
+        params.dbus_adr_pos[i] =
+            resolve_bus_signal(aig, netlistdb, script, "cpu.loadstore.dbus__adr", i);
     }
 
     // peripheral acks
-    params.spiflash_ack_pos = resolve_signal_pos(aig, netlistdb, script, "spiflash.ctrl.wb_bus__ack");
+    params.spiflash_ack_pos =
+        resolve_signal_pos(aig, netlistdb, script, "spiflash.ctrl.wb_bus__ack");
     params.sram_ack_pos = resolve_signal_pos(aig, netlistdb, script, "sram.wb_bus__ack");
     params.csr_ack_pos = resolve_signal_pos(aig, netlistdb, script, "wb_to_csr.wb_bus__ack");
 
     // Check if we resolved any signals
-    let found = [params.ibus_cyc_pos, params.ibus_stb_pos, params.dbus_cyc_pos].iter()
-        .filter(|&&p| p != 0xFFFFFFFF).count();
+    let found = [
+        params.ibus_cyc_pos,
+        params.ibus_stb_pos,
+        params.dbus_cyc_pos,
+    ]
+    .iter()
+    .filter(|&&p| p != 0xFFFFFFFF)
+    .count();
     if found > 0 {
         params.has_trace = 1;
-        let ibus_adr_count = params.ibus_adr_pos.iter().filter(|&&p| p != 0xFFFFFFFF).count();
-        let ibus_rdata_count = params.ibus_rdata_pos.iter().filter(|&&p| p != 0xFFFFFFFF).count();
-        let dbus_adr_count = params.dbus_adr_pos.iter().filter(|&&p| p != 0xFFFFFFFF).count();
-        clilog::info!("WB trace: ibus_cyc={} ibus_stb={} ibus_adr={}/30 ibus_rdata={}/32",
-            params.ibus_cyc_pos != 0xFFFFFFFF, params.ibus_stb_pos != 0xFFFFFFFF,
-            ibus_adr_count, ibus_rdata_count);
-        clilog::info!("WB trace: dbus_cyc={} dbus_stb={} dbus_we={} dbus_adr={}/30",
-            params.dbus_cyc_pos != 0xFFFFFFFF, params.dbus_stb_pos != 0xFFFFFFFF,
-            params.dbus_we_pos != 0xFFFFFFFF, dbus_adr_count);
-        clilog::info!("WB trace: spiflash_ack={} sram_ack={} csr_ack={}",
-            params.spiflash_ack_pos != 0xFFFFFFFF, params.sram_ack_pos != 0xFFFFFFFF,
-            params.csr_ack_pos != 0xFFFFFFFF);
+        let ibus_adr_count = params
+            .ibus_adr_pos
+            .iter()
+            .filter(|&&p| p != 0xFFFFFFFF)
+            .count();
+        let ibus_rdata_count = params
+            .ibus_rdata_pos
+            .iter()
+            .filter(|&&p| p != 0xFFFFFFFF)
+            .count();
+        let dbus_adr_count = params
+            .dbus_adr_pos
+            .iter()
+            .filter(|&&p| p != 0xFFFFFFFF)
+            .count();
+        clilog::info!(
+            "WB trace: ibus_cyc={} ibus_stb={} ibus_adr={}/30 ibus_rdata={}/32",
+            params.ibus_cyc_pos != 0xFFFFFFFF,
+            params.ibus_stb_pos != 0xFFFFFFFF,
+            ibus_adr_count,
+            ibus_rdata_count
+        );
+        clilog::info!(
+            "WB trace: dbus_cyc={} dbus_stb={} dbus_we={} dbus_adr={}/30",
+            params.dbus_cyc_pos != 0xFFFFFFFF,
+            params.dbus_stb_pos != 0xFFFFFFFF,
+            params.dbus_we_pos != 0xFFFFFFFF,
+            dbus_adr_count
+        );
+        clilog::info!(
+            "WB trace: spiflash_ack={} sram_ack={} csr_ack={}",
+            params.spiflash_ack_pos != 0xFFFFFFFF,
+            params.sram_ack_pos != 0xFFFFFFFF,
+            params.csr_ack_pos != 0xFFFFFFFF
+        );
     } else {
         clilog::info!("WB trace: no bus signals found in netlist, tracing disabled");
     }
@@ -1173,32 +1455,53 @@ fn build_falling_edge_ops(
 ) -> Vec<BitOp> {
     let mut ops = Vec::new();
     // Clock = 0
-    ops.push(BitOp { position: gpio_map.input_bits[&clock_gpio], value: 0 });
+    ops.push(BitOp {
+        position: gpio_map.input_bits[&clock_gpio],
+        value: 0,
+    });
     // Reset
-    ops.push(BitOp { position: gpio_map.input_bits[&reset_gpio], value: reset_val as u32 });
+    ops.push(BitOp {
+        position: gpio_map.input_bits[&reset_gpio],
+        value: reset_val as u32,
+    });
     // Negedge flag = 1
     for &pos in &gpio_map.negedge_flag_bits {
-        ops.push(BitOp { position: pos, value: 1 });
+        ops.push(BitOp {
+            position: pos,
+            value: 1,
+        });
     }
     // Posedge flag = 0
     for &pos in &gpio_map.posedge_flag_bits {
-        ops.push(BitOp { position: pos, value: 0 });
+        ops.push(BitOp {
+            position: pos,
+            value: 0,
+        });
     }
     // Constant inputs
     for (gpio_str, val) in constant_inputs {
         if let Ok(gpio_idx) = gpio_str.parse::<usize>() {
             if let Some(&pos) = gpio_map.input_bits.get(&gpio_idx) {
-                ops.push(BitOp { position: pos, value: *val as u32 });
+                ops.push(BitOp {
+                    position: pos,
+                    value: *val as u32,
+                });
             }
         }
     }
     // Named constant ports (e.g. por_l, resetb_h)
     for (port_name, val) in constant_ports {
         if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
-            ops.push(BitOp { position: pos, value: *val as u32 });
+            ops.push(BitOp {
+                position: pos,
+                value: *val as u32,
+            });
             clilog::debug!("constant_port '{}' → pos {} = {}", port_name, pos, val);
         } else {
-            clilog::warn!("constant_port '{}' not found in named_input_bits", port_name);
+            clilog::warn!(
+                "constant_port '{}' not found in named_input_bits",
+                port_name
+            );
         }
     }
     ops
@@ -1217,29 +1520,47 @@ fn build_rising_edge_ops(
 ) -> Vec<BitOp> {
     let mut ops = Vec::new();
     // Clock = 1
-    ops.push(BitOp { position: gpio_map.input_bits[&clock_gpio], value: 1 });
+    ops.push(BitOp {
+        position: gpio_map.input_bits[&clock_gpio],
+        value: 1,
+    });
     // Reset
-    ops.push(BitOp { position: gpio_map.input_bits[&reset_gpio], value: reset_val as u32 });
+    ops.push(BitOp {
+        position: gpio_map.input_bits[&reset_gpio],
+        value: reset_val as u32,
+    });
     // Posedge flag = 1
     for &pos in &gpio_map.posedge_flag_bits {
-        ops.push(BitOp { position: pos, value: 1 });
+        ops.push(BitOp {
+            position: pos,
+            value: 1,
+        });
     }
     // Negedge flag = 0
     for &pos in &gpio_map.negedge_flag_bits {
-        ops.push(BitOp { position: pos, value: 0 });
+        ops.push(BitOp {
+            position: pos,
+            value: 0,
+        });
     }
     // Constant inputs
     for (gpio_str, val) in constant_inputs {
         if let Ok(gpio_idx) = gpio_str.parse::<usize>() {
             if let Some(&pos) = gpio_map.input_bits.get(&gpio_idx) {
-                ops.push(BitOp { position: pos, value: *val as u32 });
+                ops.push(BitOp {
+                    position: pos,
+                    value: *val as u32,
+                });
             }
         }
     }
     // Named constant ports
     for (port_name, val) in constant_ports {
         if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
-            ops.push(BitOp { position: pos, value: *val as u32 });
+            ops.push(BitOp {
+                position: pos,
+                value: *val as u32,
+            });
         }
     }
     ops
@@ -1258,12 +1579,15 @@ fn create_prep_params_buffer(
         MTLResourceOptions::StorageModeShared,
     );
     unsafe {
-        std::ptr::write(buf.contents() as *mut StatePrepParams, StatePrepParams {
-            state_size,
-            num_ops,
-            num_monitors,
-            tick_number,
-        });
+        std::ptr::write(
+            buf.contents() as *mut StatePrepParams,
+            StatePrepParams {
+                state_size,
+                num_ops,
+                num_monitors,
+                tick_number,
+            },
+        );
     }
     buf
 }
@@ -1271,18 +1595,14 @@ fn create_prep_params_buffer(
 /// Create a Metal buffer containing a BitOp array.
 fn create_ops_buffer(device: &metal::Device, ops: &[BitOp]) -> metal::Buffer {
     let size = if ops.is_empty() {
-        std::mem::size_of::<BitOp>() as u64  // minimum 1 element
+        std::mem::size_of::<BitOp>() as u64 // minimum 1 element
     } else {
         (ops.len() * std::mem::size_of::<BitOp>()) as u64
     };
     let buf = device.new_buffer(size, MTLResourceOptions::StorageModeShared);
     if !ops.is_empty() {
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                ops.as_ptr(),
-                buf.contents() as *mut BitOp,
-                ops.len(),
-            );
+            std::ptr::copy_nonoverlapping(ops.as_ptr(), buf.contents() as *mut BitOp, ops.len());
         }
     }
     buf
@@ -1296,11 +1616,7 @@ fn create_ops_buffer(device: &metal::Device, ops: &[BitOp]) -> metal::Buffer {
 ///
 /// This is used to diagnose whether the AIG construction is correct
 /// (if direct eval matches FlattenedScript → bug is in AIG; if they differ → bug in flattening).
-fn eval_aig_direct(
-    aig: &AIG,
-    input_state: &[u32],
-    script: &FlattenedScriptV1,
-) -> Vec<u8> {
+fn eval_aig_direct(aig: &AIG, input_state: &[u32], script: &FlattenedScriptV1) -> Vec<u8> {
     let mut pin_values = vec![0u8; aig.num_aigpins + 1];
     // pin 0 = constant 0 (Tie0)
 
@@ -1330,8 +1646,16 @@ fn eval_aig_direct(
             let a_inv = (a_iv & 1) as u8;
             let b_pin = b_iv >> 1;
             let b_inv = (b_iv & 1) as u8;
-            let a_val = if a_pin == 0 { 0 } else { pin_values[a_pin] ^ a_inv };
-            let b_val = if b_pin == 0 { 0 } else { pin_values[b_pin] ^ b_inv };
+            let a_val = if a_pin == 0 {
+                0
+            } else {
+                pin_values[a_pin] ^ a_inv
+            };
+            let b_val = if b_pin == 0 {
+                0
+            } else {
+                pin_values[b_pin] ^ b_inv
+            };
             pin_values[pin] = a_val & b_val;
         }
         // Non-AndGate, non-primary-input pins (shouldn't happen in traversal) stay 0
@@ -1368,8 +1692,16 @@ fn compare_aig_vs_flattened(
         let en_inv = (dff.en_iv & 1) as u8;
 
         // Direct AIG evaluation
-        let d_val_direct = if d_pin == 0 { 0 } else { pin_values[d_pin] ^ d_inv };
-        let en_val_direct = if en_pin == 0 { 0 } else { pin_values[en_pin] ^ en_inv };
+        let d_val_direct = if d_pin == 0 {
+            0
+        } else {
+            pin_values[d_pin] ^ d_inv
+        };
+        let en_val_direct = if en_pin == 0 {
+            0
+        } else {
+            pin_values[en_pin] ^ en_inv
+        };
 
         if en_val_direct != 0 {
             dff_en_active_count += 1;
@@ -1426,10 +1758,16 @@ fn compare_aig_vs_flattened(
     }
 
     eprintln!("=== AIG vs FlattenedScript comparison at tick {} ===", tick);
-    eprintln!("  DFFs: {} match, {} MISMATCH (out of {} total)",
-        dff_match_count, dff_mismatch_count, aig.dffs.len());
-    eprintln!("  DFF en_active={}, d_ones_direct={}, d_ones_flat={}",
-        dff_en_active_count, dff_d_ones_direct, dff_d_ones_flat);
+    eprintln!(
+        "  DFFs: {} match, {} MISMATCH (out of {} total)",
+        dff_match_count,
+        dff_mismatch_count,
+        aig.dffs.len()
+    );
+    eprintln!(
+        "  DFF en_active={}, d_ones_direct={}, d_ones_flat={}",
+        dff_en_active_count, dff_d_ones_direct, dff_d_ones_flat
+    );
     eprintln!("  All output_map entries: {} mismatches", po_mismatch_count);
     for m in &first_mismatches {
         eprintln!("  MISMATCH: {}", m);
@@ -1451,12 +1789,19 @@ fn compare_aig_vs_flattened(
                     format!("cell_{}", cellid)
                 };
                 q_one_entries.push((cellid, pos, name));
-                q_hash = q_hash.wrapping_mul(6364136223846793005).wrapping_add(pos as u64);
+                q_hash = q_hash
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(pos as u64);
             }
         }
     }
     q_one_entries.sort_by_key(|&(cellid, _, _)| cellid);
-    eprintln!("  DFF Q values = 1 in input_state: {}/{} (hash=0x{:016X})", q_ones, aig.dffs.len(), q_hash);
+    eprintln!(
+        "  DFF Q values = 1 in input_state: {}/{} (hash=0x{:016X})",
+        q_ones,
+        aig.dffs.len(),
+        q_hash
+    );
     if q_ones <= 100 {
         for (cellid, pos, name) in &q_one_entries {
             eprintln!("  Q=1: cell {} pos={} = {}", cellid, pos, name);
@@ -1521,7 +1866,9 @@ fn simulate_block_v1_inner(
                 let mut cur_state = state[i];
                 let idx = script[script_pi + (i * 2)];
                 let mut mask = script[script_pi + (i * 2 + 1)];
-                if mask == 0 { continue; }
+                if mask == 0 {
+                    continue;
+                }
                 let value = match (idx >> 31) != 0 {
                     false => input_state[idx as usize],
                     true => output_state[(idx ^ (1 << 31)) as usize],
@@ -1529,7 +1876,9 @@ fn simulate_block_v1_inner(
                 while mask != 0 {
                     cur_state <<= 1;
                     let lowbit = mask & (-(mask as i32)) as u32;
-                    if (value & lowbit) != 0 { cur_state |= 1; }
+                    if (value & lowbit) != 0 {
+                        cur_state |= 1;
+                    }
                     mask ^= lowbit;
                 }
                 state[i] = cur_state;
@@ -1549,8 +1898,12 @@ fn simulate_block_v1_inner(
                         let t_shuffle = script[script_pi + i * 4 + k_inner];
                         let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u16;
                         let t_shuffle_2_idx = (t_shuffle >> 16) as u16;
-                        hier_inputs[i] |= (state[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1) << (k * 2);
-                        hier_inputs[i] |= (state[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1);
+                        hier_inputs[i] |=
+                            (state[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1)
+                                << (k * 2);
+                        hier_inputs[i] |=
+                            (state[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1)
+                                << (k * 2 + 1);
                     }
                 }
                 script_pi += 256 * 4;
@@ -1609,8 +1962,12 @@ fn simulate_block_v1_inner(
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
                     let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u32;
                     let t_shuffle_2_idx = (t_shuffle >> 16) as u32;
-                    sram_duplicate_perm[i as usize] |= (writeouts[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1) << (k * 2);
-                    sram_duplicate_perm[i as usize] |= (writeouts[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1);
+                    sram_duplicate_perm[i as usize] |=
+                        (writeouts[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1)
+                            << (k * 2);
+                    sram_duplicate_perm[i as usize] |=
+                        (writeouts[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1)
+                            << (k * 2 + 1);
                 }
             }
             script_pi += 256 * 4;
@@ -1634,7 +1991,8 @@ fn simulate_block_v1_inner(
             let r = ram[port_r_addr_iv as usize];
             let w0 = ram[port_w_addr_iv as usize];
             writeouts[(num_ios - num_srams + sram_i_u32) as usize] = r;
-            ram[port_w_addr_iv as usize] = (w0 & !port_w_wr_en) | (port_w_wr_data_iv & port_w_wr_en);
+            ram[port_w_addr_iv as usize] =
+                (w0 & !port_w_wr_en) | (port_w_wr_data_iv & port_w_wr_en);
         }
 
         for i in 0..num_output_duplicates {
@@ -1651,8 +2009,16 @@ fn simulate_block_v1_inner(
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
                     let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u32;
                     let t_shuffle_2_idx = (t_shuffle >> 16) as u32;
-                    clken_perm[i as usize] |= (writeouts_for_clken[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1) << (k * 2);
-                    clken_perm[i as usize] |= (writeouts_for_clken[(t_shuffle_2_idx >> 5) as usize] >> (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1);
+                    clken_perm[i as usize] |= (writeouts_for_clken
+                        [(t_shuffle_1_idx >> 5) as usize]
+                        >> (t_shuffle_1_idx & 31)
+                        & 1)
+                        << (k * 2);
+                    clken_perm[i as usize] |= (writeouts_for_clken
+                        [(t_shuffle_2_idx >> 5) as usize]
+                        >> (t_shuffle_2_idx & 31)
+                        & 1)
+                        << (k * 2 + 1);
                 }
             }
             script_pi += 256 * 4;
@@ -1665,18 +2031,24 @@ fn simulate_block_v1_inner(
 
         if diag {
             // Count non-zero clken_perm bits across all DFF positions
-            let clken_nonzero: usize = clken_perm[..num_ios as usize].iter()
-                .map(|c| c.count_ones() as usize).sum();
+            let clken_nonzero: usize = clken_perm[..num_ios as usize]
+                .iter()
+                .map(|c| c.count_ones() as usize)
+                .sum();
             let clken_set0_all_ones: usize = (0..num_ios as usize)
-                .filter(|&i| script[script_pi + i * 4 + 1] == u32::MAX).count();
+                .filter(|&i| script[script_pi + i * 4 + 1] == u32::MAX)
+                .count();
             let clken_set0_zero: usize = (0..num_ios as usize)
-                .filter(|&i| script[script_pi + i * 4 + 1] == 0).count();
-            let changed_bits: usize = (0..num_ios as usize).map(|i| {
-                let old_wo = input_state[(io_offset as usize + i)];
-                let clken = clken_perm[i];
-                let wo = (old_wo & !clken) | (writeouts[i] & clken);
-                (old_wo ^ wo).count_ones() as usize
-            }).sum();
+                .filter(|&i| script[script_pi + i * 4 + 1] == 0)
+                .count();
+            let changed_bits: usize = (0..num_ios as usize)
+                .map(|i| {
+                    let old_wo = input_state[(io_offset as usize + i)];
+                    let clken = clken_perm[i];
+                    let wo = (old_wo & !clken) | (writeouts[i] & clken);
+                    (old_wo ^ wo).count_ones() as usize
+                })
+                .sum();
             eprintln!("  DIAG partition: num_ios={}, io_offset={}, clken_nonzero_bits={}, set0_all={}, set0_zero={}, changed_bits={}",
                 num_ios, io_offset, clken_nonzero, clken_set0_all_ones, clken_set0_zero, changed_bits);
             // Show first few positions with non-zero clken_perm
@@ -1691,8 +2063,11 @@ fn simulate_block_v1_inner(
                 }
             }
             // Also show posedge flag in input_state
-            eprintln!("    input_state[0]=0x{:08X} (bit0=posedge_flag={})",
-                input_state[0], input_state[0] & 1);
+            eprintln!(
+                "    input_state[0]=0x{:08X} (bit0=posedge_flag={})",
+                input_state[0],
+                input_state[0] & 1
+            );
         }
 
         script_pi += 256 * 4;
@@ -1704,7 +2079,9 @@ fn simulate_block_v1_inner(
             output_state[(io_offset + i) as usize] = wo;
         }
 
-        if is_last_part != 0 { break; }
+        if is_last_part != 0 {
+            break;
+        }
     }
     assert_eq!(script_pi, script.len());
 }
@@ -1775,7 +2152,10 @@ fn main() {
     let parts_in_stages: Vec<Vec<Partition>> = serde_bare::from_reader(&mut buf).unwrap();
     clilog::info!(
         "Partitions per stage: {:?}",
-        parts_in_stages.iter().map(|ps| ps.len()).collect::<Vec<_>>()
+        parts_in_stages
+            .iter()
+            .map(|ps| ps.len())
+            .collect::<Vec<_>>()
     );
 
     let mut input_layout = Vec::new();
@@ -1787,8 +2167,14 @@ fn main() {
 
     let mut script = FlattenedScriptV1::from(
         &aig,
-        &stageds.iter().map(|(_, _, staged)| staged).collect::<Vec<_>>(),
-        &parts_in_stages.iter().map(|ps| ps.as_slice()).collect::<Vec<_>>(),
+        &stageds
+            .iter()
+            .map(|(_, _, staged)| staged)
+            .collect::<Vec<_>>(),
+        &parts_in_stages
+            .iter()
+            .map(|ps| ps.as_slice())
+            .collect::<Vec<_>>(),
         args.num_blocks,
         input_layout,
     );
@@ -1804,7 +2190,10 @@ fn main() {
     // ── Load SDF timing data (from CLI or testbench config) ──────────────
     {
         let sdf_path = args.sdf.clone().or_else(|| {
-            config.timing.as_ref().map(|t| std::path::PathBuf::from(&t.sdf_file))
+            config
+                .timing
+                .as_ref()
+                .map(|t| std::path::PathBuf::from(&t.sdf_file))
         });
         let sdf_corner_str = if args.sdf.is_some() {
             &args.sdf_corner
@@ -1824,11 +2213,20 @@ fn main() {
             match gem::sdf_parser::SdfFile::parse_file(sdf_path, sdf_corner) {
                 Ok(sdf) => {
                     clilog::info!("SDF loaded: {}", sdf.summary());
-                    let clock_ps = config.timing.as_ref()
+                    let clock_ps = config
+                        .timing
+                        .as_ref()
                         .map(|t| t.clock_period_ps)
                         .or(config.clock_period_ps)
                         .unwrap_or(25000);
-                    script.load_timing_from_sdf(&aig, &netlistdb, &sdf, clock_ps, None, args.sdf_debug);
+                    script.load_timing_from_sdf(
+                        &aig,
+                        &netlistdb,
+                        &sdf,
+                        clock_ps,
+                        None,
+                        args.sdf_debug,
+                    );
                     script.inject_timing_to_script();
                 }
                 Err(e) => clilog::warn!("Failed to load SDF: {}", e),
@@ -1860,10 +2258,20 @@ fn main() {
         for i in 0..4 {
             let gpio = flash_cfg.d0_gpio + i;
             if gpio_map.input_bits.contains_key(&gpio) {
-                clilog::info!("Flash D{} input GPIO {} -> state pos {}", i, gpio, gpio_map.input_bits[&gpio]);
+                clilog::info!(
+                    "Flash D{} input GPIO {} -> state pos {}",
+                    i,
+                    gpio,
+                    gpio_map.input_bits[&gpio]
+                );
             }
             if gpio_map.output_bits.contains_key(&gpio) {
-                clilog::info!("Flash D{} output GPIO {} -> state pos {}", i, gpio, gpio_map.output_bits[&gpio]);
+                clilog::info!(
+                    "Flash D{} output GPIO {} -> state pos {}",
+                    i,
+                    gpio,
+                    gpio_map.output_bits[&gpio]
+                );
             }
         }
     }
@@ -1895,7 +2303,11 @@ fn main() {
         fl.set_verbose(args.flash_verbose);
         let firmware_path = std::path::Path::new(&flash_cfg.firmware);
         match fl.load_firmware(firmware_path, flash_cfg.firmware_offset) {
-            Ok(size) => clilog::info!("Loaded {} bytes firmware at offset 0x{:X}", size, flash_cfg.firmware_offset),
+            Ok(size) => clilog::info!(
+                "Loaded {} bytes firmware at offset 0x{:X}",
+                size,
+                flash_cfg.firmware_offset
+            ),
             Err(e) => panic!("Failed to load firmware: {}", e),
         }
         Some(fl)
@@ -1904,13 +2316,14 @@ fn main() {
     };
 
     // CLI --clock-period overrides config file clock_period_ps; default 1000ps (1GHz) if neither set
-    let clock_period_ps = args.clock_period
-        .or(config.clock_period_ps)
-        .unwrap_or(1000);
+    let clock_period_ps = args.clock_period.or(config.clock_period_ps).unwrap_or(1000);
     let clock_hz = 1_000_000_000_000u64 / clock_period_ps;
-    clilog::info!("Clock period: {} ps ({} MHz), UART cycles_per_bit: {}",
-        clock_period_ps, clock_hz / 1_000_000,
-        clock_hz / config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200) as u64);
+    clilog::info!(
+        "Clock period: {} ps ({} MHz), UART cycles_per_bit: {}",
+        clock_period_ps,
+        clock_hz / 1_000_000,
+        clock_hz / config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200) as u64
+    );
     let uart_baud = config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200);
     let uart_tx_gpio = config.uart.as_ref().map(|u| u.tx_gpio);
 
@@ -1927,10 +2340,7 @@ fn main() {
         MTLResourceOptions::StorageModeShared,
     );
     let states: &mut [u32] = unsafe {
-        std::slice::from_raw_parts_mut(
-            states_buffer.contents() as *mut u32,
-            2 * state_size,
-        )
+        std::slice::from_raw_parts_mut(states_buffer.contents() as *mut u32, 2 * state_size)
     };
     states.fill(0);
 
@@ -1950,14 +2360,27 @@ fn main() {
 
     // Initialize: set reset active
     let reset_val = if config.reset_active_high { 1u8 } else { 0u8 };
-    set_bit(&mut states[..state_size], gpio_map.input_bits[&reset_gpio], reset_val);
-    clilog::info!("Initial state: reset GPIO {} = {} (active)", reset_gpio, reset_val);
+    set_bit(
+        &mut states[..state_size],
+        gpio_map.input_bits[&reset_gpio],
+        reset_val,
+    );
+    clilog::info!(
+        "Initial state: reset GPIO {} = {} (active)",
+        reset_gpio,
+        reset_val
+    );
 
     // Initialize constant ports (e.g. por_l=1, resetb_h=1 for Caravel wrapper)
     for (port_name, val) in &config.constant_ports {
         if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
             set_bit(&mut states[..state_size], pos, *val);
-            clilog::info!("Initial state: port '{}' = {} (pos {})", port_name, val, pos);
+            clilog::info!(
+                "Initial state: port '{}' = {} (pos {})",
+                port_name,
+                val,
+                pos
+            );
         } else {
             clilog::warn!("constant_port '{}' not found in named inputs", port_name);
         }
@@ -1965,7 +2388,12 @@ fn main() {
 
     // Set flash D_IN defaults (high = no data) — initial state before GPU flash takes over
     if let Some(ref flash_cfg) = config.flash {
-        set_flash_din(&mut states[..state_size], &gpio_map, flash_cfg.d0_gpio, 0x0F);
+        set_flash_din(
+            &mut states[..state_size],
+            &gpio_map,
+            flash_cfg.d0_gpio,
+            0x0F,
+        );
     }
 
     // Create Metal buffers for script data (read-only, use UVec's Metal path)
@@ -2004,7 +2432,9 @@ fn main() {
         let non_zero = constraints.iter().filter(|&&v| v != 0).count();
         clilog::info!(
             "Timing constraints: {} words, {} with DFF constraints, clock_period={}ps",
-            constraints.len(), non_zero, clock_ps
+            constraints.len(),
+            non_zero,
+            clock_ps
         );
         // Prepend clock_period_ps as first element
         let mut buf = Vec::with_capacity(1 + constraints.len());
@@ -2035,10 +2465,20 @@ fn main() {
 
     // Build initial falling/rising edge BitOp arrays (no flash_din — handled by GPU)
     let fall_ops = build_falling_edge_ops(
-        &gpio_map, clock_gpio, reset_gpio, reset_val_active, &config.constant_inputs, &config.constant_ports,
+        &gpio_map,
+        clock_gpio,
+        reset_gpio,
+        reset_val_active,
+        &config.constant_inputs,
+        &config.constant_ports,
     );
     let rise_ops = build_rising_edge_ops(
-        &gpio_map, clock_gpio, reset_gpio, reset_val_active, &config.constant_inputs, &config.constant_ports,
+        &gpio_map,
+        clock_gpio,
+        reset_gpio,
+        reset_val_active,
+        &config.constant_inputs,
+        &config.constant_ports,
     );
     let fall_ops_len = fall_ops.len();
     let rise_ops_len = rise_ops.len();
@@ -2048,10 +2488,18 @@ fn main() {
 
     // Create StatePrepParams buffers
     let fall_prep_params_buffer = create_prep_params_buffer(
-        &simulator.device, state_size as u32, fall_ops.len() as u32, 0, 0,
+        &simulator.device,
+        state_size as u32,
+        fall_ops.len() as u32,
+        0,
+        0,
     );
     let rise_prep_params_buffer = create_prep_params_buffer(
-        &simulator.device, state_size as u32, rise_ops.len() as u32, 0, 0,
+        &simulator.device,
+        state_size as u32,
+        rise_ops.len() as u32,
+        0,
+        0,
     );
 
     // ── GPU Flash IO buffers ────────────────────────────────────────────
@@ -2064,16 +2512,25 @@ fn main() {
     unsafe {
         let fs = &mut *(flash_state_buffer.contents() as *mut FlashState);
         *fs = std::mem::zeroed();
-        fs.data_width = 1;   // SPI single-bit mode (reset by posedge_csn, but first tx has none)
-        fs.prev_csn = 1;     // CSN starts high (deselected)
+        fs.data_width = 1; // SPI single-bit mode (reset by posedge_csn, but first tx has none)
+        fs.prev_csn = 1; // CSN starts high (deselected)
         fs.model_prev_csn = 1; // Model internal edge detection starts high
-        fs.d_i = 0x0F;       // Flash output starts high
-        fs.in_reset = 1;     // Start in reset
-        // Verify write
+        fs.d_i = 0x0F; // Flash output starts high
+        fs.in_reset = 1; // Start in reset
+                         // Verify write
         let verify = std::ptr::read_volatile(&fs.d_i);
-        assert_eq!(verify, 0x0F, "FlashState.d_i not written correctly: got 0x{:02X}", verify);
-        clilog::info!("FlashState init: d_i=0x{:02X}, data_width={}, prev_csn={}, in_reset={}",
-            fs.d_i, fs.data_width, fs.prev_csn, fs.in_reset);
+        assert_eq!(
+            verify, 0x0F,
+            "FlashState.d_i not written correctly: got 0x{:02X}",
+            verify
+        );
+        clilog::info!(
+            "FlashState init: d_i=0x{:02X}, data_width={}, prev_csn={}, in_reset={}",
+            fs.d_i,
+            fs.data_width,
+            fs.prev_csn,
+            fs.in_reset
+        );
     }
 
     // FlashDinParams (constant)
@@ -2085,7 +2542,9 @@ fn main() {
         let p = &mut *(flash_din_params_buffer.contents() as *mut FlashDinParams);
         p.has_flash = if config.flash.is_some() { 1 } else { 0 };
         for i in 0..4 {
-            p.d_in_pos[i] = config.flash.as_ref()
+            p.d_in_pos[i] = config
+                .flash
+                .as_ref()
                 .and_then(|f| gpio_map.input_bits.get(&(f.d0_gpio + i)).copied())
                 .unwrap_or(0xFFFFFFFF);
         }
@@ -2099,14 +2558,20 @@ fn main() {
     unsafe {
         let p = &mut *(flash_model_params_buffer.contents() as *mut FlashModelParams);
         p.state_size = state_size as u32;
-        p.clk_out_pos = config.flash.as_ref()
+        p.clk_out_pos = config
+            .flash
+            .as_ref()
             .and_then(|f| gpio_map.output_bits.get(&f.clk_gpio).copied())
             .unwrap_or(0);
-        p.csn_out_pos = config.flash.as_ref()
+        p.csn_out_pos = config
+            .flash
+            .as_ref()
             .and_then(|f| gpio_map.output_bits.get(&f.csn_gpio).copied())
             .unwrap_or(0);
         for i in 0..4 {
-            p.d_out_pos[i] = config.flash.as_ref()
+            p.d_out_pos[i] = config
+                .flash
+                .as_ref()
                 .and_then(|f| gpio_map.output_bits.get(&(f.d0_gpio + i)).copied())
                 .unwrap_or(0xFFFFFFFF);
         }
@@ -2118,17 +2583,24 @@ fn main() {
     // Log flash din params too
     unsafe {
         let p = &*(flash_din_params_buffer.contents() as *const FlashDinParams);
-        clilog::info!("FlashDinParams: has_flash={}, d_in_pos={:?}", p.has_flash, p.d_in_pos);
+        clilog::info!(
+            "FlashDinParams: has_flash={}, d_in_pos={:?}",
+            p.has_flash,
+            p.d_in_pos
+        );
     }
 
     // Flash data buffer (16 MB, loaded with firmware)
-    let flash_data_buffer = simulator.device.new_buffer(
-        16 * 1024 * 1024,
-        MTLResourceOptions::StorageModeShared,
-    );
+    let flash_data_buffer = simulator
+        .device
+        .new_buffer(16 * 1024 * 1024, MTLResourceOptions::StorageModeShared);
     unsafe {
         // Fill with 0xFF (erased flash state)
-        std::ptr::write_bytes(flash_data_buffer.contents() as *mut u8, 0xFF, 16 * 1024 * 1024);
+        std::ptr::write_bytes(
+            flash_data_buffer.contents() as *mut u8,
+            0xFF,
+            16 * 1024 * 1024,
+        );
     }
     // Load firmware into flash data buffer
     if let Some(ref flash_cfg) = config.flash {
@@ -2136,14 +2608,22 @@ fn main() {
         let firmware_path = std::path::Path::new(&flash_cfg.firmware);
         let mut file = File::open(firmware_path).expect("Failed to open firmware file");
         let mut data = Vec::new();
-        file.read_to_end(&mut data).expect("Failed to read firmware");
+        file.read_to_end(&mut data)
+            .expect("Failed to read firmware");
         let offset = flash_cfg.firmware_offset;
-        assert!(offset + data.len() <= 16 * 1024 * 1024, "Firmware too large for flash buffer");
+        assert!(
+            offset + data.len() <= 16 * 1024 * 1024,
+            "Firmware too large for flash buffer"
+        );
         unsafe {
             let dest = (flash_data_buffer.contents() as *mut u8).add(offset);
             std::ptr::copy_nonoverlapping(data.as_ptr(), dest, data.len());
         }
-        clilog::info!("Loaded {} bytes firmware into GPU flash buffer at offset 0x{:X}", data.len(), offset);
+        clilog::info!(
+            "Loaded {} bytes firmware into GPU flash buffer at offset 0x{:X}",
+            data.len(),
+            offset
+        );
     }
 
     // ── GPU UART IO buffers ─────────────────────────────────────────────
@@ -2155,8 +2635,8 @@ fn main() {
     );
     unsafe {
         let us = &mut *(uart_state_buffer.contents() as *mut UartDecoderState);
-        us.state = 0;          // IDLE
-        us.last_tx = 1;        // TX line idle high
+        us.state = 0; // IDLE
+        us.last_tx = 1; // TX line idle high
         us.start_cycle = 0;
         us.bits_received = 0;
         us.value = 0;
@@ -2256,7 +2736,9 @@ fn main() {
         );
 
         // Clean up event buffer
-        unsafe { drop(Box::from_raw(event_buffer_ptr)); }
+        unsafe {
+            drop(Box::from_raw(event_buffer_ptr));
+        }
         return;
     }
 
@@ -2275,9 +2757,8 @@ fn main() {
             (&fall_ops_buffer, fall_ops_len),
             (&rise_ops_buffer, rise_ops_len),
         ] {
-            let ops: &mut [BitOp] = unsafe {
-                std::slice::from_raw_parts_mut(buf.contents() as *mut BitOp, len)
-            };
+            let ops: &mut [BitOp] =
+                unsafe { std::slice::from_raw_parts_mut(buf.contents() as *mut BitOp, len) };
             for op in ops.iter_mut() {
                 if op.position == reset_pos {
                     op.value = reset_val as u32;
@@ -2289,9 +2770,18 @@ fn main() {
     // Verify flash state hasn't been corrupted before main loop
     unsafe {
         let fs = &*(flash_state_buffer.contents() as *const FlashState);
-        clilog::info!("FlashState before main loop: d_i=0x{:02X}, data_width={}, prev_csn={}, in_reset={}",
-            fs.d_i, fs.data_width, fs.prev_csn, fs.in_reset);
-        assert_eq!(fs.d_i, 0x0F, "FlashState.d_i corrupted before main loop: got 0x{:02X}", fs.d_i);
+        clilog::info!(
+            "FlashState before main loop: d_i=0x{:02X}, data_width={}, prev_csn={}, in_reset={}",
+            fs.d_i,
+            fs.data_width,
+            fs.prev_csn,
+            fs.in_reset
+        );
+        assert_eq!(
+            fs.d_i, 0x0F,
+            "FlashState.d_i corrupted before main loop: got 0x{:02X}",
+            fs.d_i
+        );
     }
 
     // UART event collection (CPU-side, populated from channel drain)
@@ -2306,7 +2796,11 @@ fn main() {
     let mut total_batches: u64 = 0;
 
     // Per-tick tracing: run 1 tick at a time for first N ticks after reset
-    let trace_ticks = if std::env::var("FLASH_TRACE").is_ok() { 200 } else { 0 };
+    let trace_ticks = if std::env::var("FLASH_TRACE").is_ok() {
+        200
+    } else {
+        0
+    };
     let deep_diag = std::env::var("GEM_DIAG").is_ok();
     let mut diag_prev_flash_addr: u32 = 0;
     let mut diag_prev_flash_cmd: u8 = 0;
@@ -2332,11 +2826,11 @@ fn main() {
     let mut tick: usize = 0;
     while tick < max_ticks {
         let batch = if args.check_with_cpu && tick < cpu_check_max_ticks {
-            1  // single tick for CPU comparison
+            1 // single tick for CPU comparison
         } else if trace_ticks > 0 && tick < reset_cycles + trace_ticks {
-            1  // single tick for tracing
+            1 // single tick for tracing
         } else if deep_diag {
-            1  // single tick for deep diagnostics
+            1 // single tick for deep diagnostics
         } else {
             BATCH_SIZE.min(max_ticks - tick)
         };
@@ -2350,7 +2844,11 @@ fn main() {
 
         // Update reset value and flash in_reset for this batch
         let in_reset = tick < reset_cycles;
-        let current_reset_val = if in_reset { reset_val_active } else { reset_val_inactive };
+        let current_reset_val = if in_reset {
+            reset_val_active
+        } else {
+            reset_val_inactive
+        };
         update_reset_in_ops(current_reset_val);
 
         // Update flash_state.in_reset on GPU
@@ -2367,7 +2865,10 @@ fn main() {
             };
             cpu_states.copy_from_slice(gpu_states);
             let gpu_sram: &[u32] = unsafe {
-                std::slice::from_raw_parts(sram_data_buffer.contents() as *const u32, script.sram_storage_size as usize)
+                std::slice::from_raw_parts(
+                    sram_data_buffer.contents() as *const u32,
+                    script.sram_storage_size as usize,
+                )
             };
             cpu_sram.copy_from_slice(gpu_sram);
             // Save flash d_i before GPU modifies it (apply_flash_din reads this)
@@ -2384,17 +2885,24 @@ fn main() {
                         fs.bit_count, fs.byte_count, fs.data_width, fs.addr);
                     eprintln!("  FlashState fields: curr_byte=0x{:02X}, command=0x{:02X}, out_buffer=0x{:02X}",
                         fs.curr_byte, fs.command, fs.out_buffer);
-                    eprintln!("  FlashState fields: prev_clk={}, prev_csn={}, d_i=0x{:02X}",
-                        fs.prev_clk, fs.prev_csn, fs.d_i);
+                    eprintln!(
+                        "  FlashState fields: prev_clk={}, prev_csn={}, d_i=0x{:02X}",
+                        fs.prev_clk, fs.prev_csn, fs.d_i
+                    );
                     eprintln!("  FlashState fields: prev_d_out=0x{:02X}, in_reset={}, last_error_cmd={}, model_prev_csn={}",
                         fs.prev_d_out, fs.in_reset, fs.last_error_cmd, fs.model_prev_csn);
-                    eprintln!("  FlashState offsetof d_i = {}",
-                        (&fs.d_i as *const u8 as usize) - (fs as *const FlashState as usize));
+                    eprintln!(
+                        "  FlashState offsetof d_i = {}",
+                        (&fs.d_i as *const u8 as usize) - (fs as *const FlashState as usize)
+                    );
                 }
                 fs.d_i
             };
             if tick == 0 {
-                eprintln!("  saved_flash_d_i = 0x{:02X} (right after assignment)", saved_flash_d_i);
+                eprintln!(
+                    "  saved_flash_d_i = 0x{:02X} (right after assignment)",
+                    saved_flash_d_i
+                );
             }
         } else {
             saved_flash_d_i = 0;
@@ -2442,11 +2950,14 @@ fn main() {
                     state_size,
                 )
             };
-            let fmp = unsafe { &*(flash_model_params_buffer.contents() as *const FlashModelParams) };
+            let fmp =
+                unsafe { &*(flash_model_params_buffer.contents() as *const FlashModelParams) };
             let flash_clk_pos = fmp.clk_out_pos;
             let flash_csn_pos = fmp.csn_out_pos;
-            let flash_clk = (output_state[(flash_clk_pos >> 5) as usize] >> (flash_clk_pos & 31)) & 1;
-            let flash_csn = (output_state[(flash_csn_pos >> 5) as usize] >> (flash_csn_pos & 31)) & 1;
+            let flash_clk =
+                (output_state[(flash_clk_pos >> 5) as usize] >> (flash_clk_pos & 31)) & 1;
+            let flash_csn =
+                (output_state[(flash_csn_pos >> 5) as usize] >> (flash_csn_pos & 31)) & 1;
             let fs = unsafe { &*(flash_state_buffer.contents() as *const FlashState) };
             clilog::debug!("FLASH_TRACE tick {}: clk={} csn={} d_i=0x{:02X} cmd=0x{:02X} addr=0x{:06X} in_reset={}",
                 tick + batch, flash_clk, flash_csn, fs.d_i, fs.command, fs.addr, fs.in_reset);
@@ -2456,7 +2967,7 @@ fn main() {
         if args.check_with_cpu && tick < cpu_check_max_ticks && batch == 1 {
             // CPU state_prep(fall): copy output → input, apply fall_ops
             // Read from the Metal buffer (updated by update_reset_in_ops each tick)
-            cpu_states.copy_within(state_size..2*state_size, 0);
+            cpu_states.copy_within(state_size..2 * state_size, 0);
             let cpu_fall_ops: &[BitOp] = unsafe {
                 std::slice::from_raw_parts(fall_ops_buffer.contents() as *const BitOp, fall_ops_len)
             };
@@ -2474,13 +2985,17 @@ fn main() {
             {
                 let p = unsafe { &*(flash_din_params_buffer.contents() as *const FlashDinParams) };
                 if tick == 0 {
-                    eprintln!("  CPU flash_din: has_flash={}, d_i=0x{:02X}, d_in_pos={:?}",
-                        p.has_flash, saved_flash_d_i, p.d_in_pos);
+                    eprintln!(
+                        "  CPU flash_din: has_flash={}, d_i=0x{:02X}, d_in_pos={:?}",
+                        p.has_flash, saved_flash_d_i, p.d_in_pos
+                    );
                 }
                 if p.has_flash != 0 {
                     for i in 0..4usize {
                         let pos = p.d_in_pos[i];
-                        if pos == 0xFFFFFFFF { continue; }
+                        if pos == 0xFFFFFFFF {
+                            continue;
+                        }
                         let word_idx = (pos >> 5) as usize;
                         let bit_mask = 1u32 << (pos & 31);
                         if (saved_flash_d_i >> i) & 1 != 0 {
@@ -2491,7 +3006,10 @@ fn main() {
                     }
                 }
                 if tick == 0 {
-                    eprintln!("  CPU after flash_din(fall): word[4]=0x{:08X}", cpu_states[4]);
+                    eprintln!(
+                        "  CPU after flash_din(fall): word[4]=0x{:08X}",
+                        cpu_states[4]
+                    );
                 }
             }
 
@@ -2500,7 +3018,9 @@ fn main() {
                 for block_i in 0..num_blocks {
                     let start = script.blocks_start[stage_i * num_blocks + block_i];
                     let end = script.blocks_start[stage_i * num_blocks + block_i + 1];
-                    if start == end { continue; }
+                    if start == end {
+                        continue;
+                    }
                     let (input_half, output_half) = cpu_states.split_at_mut(state_size);
                     simulate_block_v1(
                         &script.blocks_data[start..end],
@@ -2513,7 +3033,7 @@ fn main() {
 
             // CPU state_prep(rise): copy output → input, apply rise_ops
             // Read from the Metal buffer (updated by update_reset_in_ops each tick)
-            cpu_states.copy_within(state_size..2*state_size, 0);
+            cpu_states.copy_within(state_size..2 * state_size, 0);
             let cpu_rise_ops: &[BitOp] = unsafe {
                 std::slice::from_raw_parts(rise_ops_buffer.contents() as *const BitOp, rise_ops_len)
             };
@@ -2533,7 +3053,9 @@ fn main() {
                 if p.has_flash != 0 {
                     for i in 0..4 {
                         let pos = p.d_in_pos[i];
-                        if pos == 0xFFFFFFFF { continue; }
+                        if pos == 0xFFFFFFFF {
+                            continue;
+                        }
                         let word_idx = (pos >> 5) as usize;
                         let bit_mask = 1u32 << (pos & 31);
                         if (saved_flash_d_i >> i) & 1 != 0 {
@@ -2548,18 +3070,34 @@ fn main() {
             // CPU simulate(rise): run all partitions
             let use_diag = tick == reset_cycles; // first tick after reset release
             if use_diag {
-                eprintln!("=== DIAG: Rising-edge simulate at tick {} (first post-reset) ===", tick);
-                eprintln!("  input_state[0]=0x{:08X} (bit0=posedge={})", cpu_states[0], cpu_states[0] & 1);
+                eprintln!(
+                    "=== DIAG: Rising-edge simulate at tick {} (first post-reset) ===",
+                    tick
+                );
+                eprintln!(
+                    "  input_state[0]=0x{:08X} (bit0=posedge={})",
+                    cpu_states[0],
+                    cpu_states[0] & 1
+                );
             }
             for stage_i in 0..num_major_stages {
                 for block_i in 0..num_blocks {
                     let start = script.blocks_start[stage_i * num_blocks + block_i];
                     let end = script.blocks_start[stage_i * num_blocks + block_i + 1];
-                    if start == end { continue; }
+                    if start == end {
+                        continue;
+                    }
                     let (input_half, output_half) = cpu_states.split_at_mut(state_size);
                     if use_diag && block_i < 3 {
-                        eprintln!("  Block {}/{} (stage {}): script range {}..{} ({} words)",
-                            block_i, num_blocks, stage_i, start, end, end - start);
+                        eprintln!(
+                            "  Block {}/{} (stage {}): script range {}..{} ({} words)",
+                            block_i,
+                            num_blocks,
+                            stage_i,
+                            start,
+                            end,
+                            end - start
+                        );
                         simulate_block_v1_diag(
                             &script.blocks_data[start..end],
                             input_half,
@@ -2581,7 +3119,12 @@ fn main() {
             if tick >= reset_cycles && tick <= reset_cycles + 5 {
                 let (input_half, output_half) = cpu_states.split_at(state_size);
                 compare_aig_vs_flattened(
-                    &aig, input_half, output_half, &script, state_size, tick,
+                    &aig,
+                    input_half,
+                    output_half,
+                    &script,
+                    state_size,
+                    tick,
                     Some(&netlistdb),
                 );
             }
@@ -2597,18 +3140,22 @@ fn main() {
                         let diff = gpu_states[i] ^ cpu_states[i];
                         let mut bits = Vec::new();
                         for b in 0..32 {
-                            if (diff >> b) & 1 != 0 { bits.push(i as u32 * 32 + b); }
+                            if (diff >> b) & 1 != 0 {
+                                bits.push(i as u32 * 32 + b);
+                            }
                         }
-                        eprintln!("  INPUT MISMATCH word[{}]: GPU=0x{:08X} CPU=0x{:08X} bits={:?}",
-                            i, gpu_states[i], cpu_states[i], bits);
+                        eprintln!(
+                            "  INPUT MISMATCH word[{}]: GPU=0x{:08X} CPU=0x{:08X} bits={:?}",
+                            i, gpu_states[i], cpu_states[i], bits
+                        );
                     }
                     input_mismatches += 1;
                 }
             }
 
             // Compare GPU output with CPU output
-            let gpu_output = &gpu_states[state_size..2*state_size];
-            let cpu_output = &cpu_states[state_size..2*state_size];
+            let gpu_output = &gpu_states[state_size..2 * state_size];
+            let cpu_output = &cpu_states[state_size..2 * state_size];
             let mut mismatches = 0;
             let mut first_mismatch_word = 0;
             for i in 0..state_size {
@@ -2617,12 +3164,18 @@ fn main() {
                         let diff = gpu_output[i] ^ cpu_output[i];
                         let mut bits = Vec::new();
                         for b in 0..32 {
-                            if (diff >> b) & 1 != 0 { bits.push(i as u32 * 32 + b); }
+                            if (diff >> b) & 1 != 0 {
+                                bits.push(i as u32 * 32 + b);
+                            }
                         }
-                        eprintln!("  OUTPUT MISMATCH word[{}]: GPU=0x{:08X} CPU=0x{:08X} bits={:?}",
-                            i, gpu_output[i], cpu_output[i], bits);
+                        eprintln!(
+                            "  OUTPUT MISMATCH word[{}]: GPU=0x{:08X} CPU=0x{:08X} bits={:?}",
+                            i, gpu_output[i], cpu_output[i], bits
+                        );
                     }
-                    if mismatches == 0 { first_mismatch_word = i; }
+                    if mismatches == 0 {
+                        first_mismatch_word = i;
+                    }
                     mismatches += 1;
                 }
             }
@@ -2637,37 +3190,53 @@ fn main() {
             for i in 0..script.sram_storage_size as usize {
                 if gpu_sram[i] != cpu_sram[i] {
                     if sram_mismatches < 3 {
-                        eprintln!("  SRAM MISMATCH [{}]: GPU=0x{:08X} CPU=0x{:08X}",
-                            i, gpu_sram[i], cpu_sram[i]);
+                        eprintln!(
+                            "  SRAM MISMATCH [{}]: GPU=0x{:08X} CPU=0x{:08X}",
+                            i, gpu_sram[i], cpu_sram[i]
+                        );
                     }
                     sram_mismatches += 1;
                 }
             }
             if input_mismatches > 0 || mismatches > 0 || sram_mismatches > 0 {
-                eprintln!("CHECK-WITH-CPU tick {}: {} input, {} output, {} SRAM mismatches",
-                    tick, input_mismatches, mismatches, sram_mismatches);
+                eprintln!(
+                    "CHECK-WITH-CPU tick {}: {} input, {} output, {} SRAM mismatches",
+                    tick, input_mismatches, mismatches, sram_mismatches
+                );
                 cpu_check_mismatches += mismatches;
                 if cpu_check_mismatches > 200 {
                     eprintln!("Too many mismatches, stopping CPU check");
                 }
             } else if tick <= reset_cycles + 5 || tick % 50 == 0 {
-                eprintln!("CHECK-WITH-CPU tick {}: OK (state_size={}, sram_size={})",
-                    tick, state_size, script.sram_storage_size);
+                eprintln!(
+                    "CHECK-WITH-CPU tick {}: OK (state_size={}, sram_size={})",
+                    tick, state_size, script.sram_storage_size
+                );
             }
 
             // Per-tick output state change tracking
             if tick >= reset_cycles.saturating_sub(2) && tick <= reset_cycles + 15 {
-                let gpu_output = &gpu_states[state_size..2*state_size];
-                let changed_words: usize = gpu_output.iter().zip(cpu_output.iter())
-                    .filter(|(a, b)| a != b).count();
-                let output_bits_set: usize = gpu_output.iter()
-                    .map(|w| w.count_ones() as usize).sum();
+                let gpu_output = &gpu_states[state_size..2 * state_size];
+                let changed_words: usize = gpu_output
+                    .iter()
+                    .zip(cpu_output.iter())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                let output_bits_set: usize =
+                    gpu_output.iter().map(|w| w.count_ones() as usize).sum();
                 let changed_from_prev: usize = if let Some(ref snap) = post_reset_state_snapshot {
-                    gpu_output.iter().zip(snap.iter())
-                        .map(|(a, b)| (a ^ b).count_ones() as usize).sum()
-                } else { 0 };
-                eprintln!("TICK-TRACE {}: output_bits_set={}, changed_from_prev={}",
-                    tick, output_bits_set, changed_from_prev);
+                    gpu_output
+                        .iter()
+                        .zip(snap.iter())
+                        .map(|(a, b)| (a ^ b).count_ones() as usize)
+                        .sum()
+                } else {
+                    0
+                };
+                eprintln!(
+                    "TICK-TRACE {}: output_bits_set={}, changed_from_prev={}",
+                    tick, output_bits_set, changed_from_prev
+                );
                 post_reset_state_snapshot = Some(gpu_output.to_vec());
             }
         }
@@ -2678,7 +3247,11 @@ fn main() {
             let channel = &*(uart_channel_buffer.contents() as *const UartChannel);
             while uart_read_head < channel.write_head {
                 let byte = channel.data[(uart_read_head % channel.capacity) as usize];
-                let ch = if byte >= 32 && byte < 127 { byte as char } else { '.' };
+                let ch = if byte >= 32 && byte < 127 {
+                    byte as char
+                } else {
+                    '.'
+                };
                 clilog::info!("UART TX: 0x{:02X} '{}'", byte, ch);
                 uart_events.push(gem::testbench::UartEvent {
                     timestamp: tick, // approximate tick
@@ -2692,8 +3265,8 @@ fn main() {
         // Drain WB trace channel
         unsafe {
             let ch = &*(wb_trace_channel_buffer.contents() as *const WbTraceChannel);
-            let entries_ptr = (wb_trace_channel_buffer.contents() as *const u8).add(16)
-                as *const WbTraceEntry;
+            let entries_ptr =
+                (wb_trace_channel_buffer.contents() as *const u8).add(16) as *const WbTraceEntry;
             while wb_trace_read_head < ch.write_head {
                 let idx = (wb_trace_read_head % ch.capacity) as usize;
                 let e = &*entries_ptr.add(idx);
@@ -2701,17 +3274,21 @@ fn main() {
                 let ibus_stb = (e.flags >> 1) & 1;
                 let dbus_cyc = (e.flags >> 2) & 1;
                 let dbus_stb = (e.flags >> 3) & 1;
-                let dbus_we  = (e.flags >> 4) & 1;
-                let spi_ack  = (e.flags >> 5) & 1;
+                let dbus_we = (e.flags >> 4) & 1;
+                let spi_ack = (e.flags >> 5) & 1;
                 let sram_ack = (e.flags >> 6) & 1;
                 let _csr_ack = (e.flags >> 7) & 1;
                 if ibus_cyc != 0 && ibus_stb != 0 {
-                    eprintln!("WB T{:>5}: IBUS adr=0x{:08X} rdata=0x{:08X} spi_ack={} sram_ack={}",
-                        e.tick, e.ibus_adr, e.ibus_rdata, spi_ack, sram_ack);
+                    eprintln!(
+                        "WB T{:>5}: IBUS adr=0x{:08X} rdata=0x{:08X} spi_ack={} sram_ack={}",
+                        e.tick, e.ibus_adr, e.ibus_rdata, spi_ack, sram_ack
+                    );
                 }
                 if dbus_cyc != 0 && dbus_stb != 0 {
-                    eprintln!("WB T{:>5}: DBUS adr=0x{:08X} we={} sram_ack={}",
-                        e.tick, e.dbus_adr, dbus_we, sram_ack);
+                    eprintln!(
+                        "WB T{:>5}: DBUS adr=0x{:08X} we={} sram_ack={}",
+                        e.tick, e.dbus_adr, dbus_we, sram_ack
+                    );
                 }
                 if ibus_cyc == 0 && ibus_stb == 0 && dbus_cyc == 0 && dbus_stb == 0 {
                     eprintln!("WB T{:>5}: bus idle (flags=0x{:02X})", e.tick, e.flags);
@@ -2729,7 +3306,10 @@ fn main() {
             unsafe {
                 let fs = &*(flash_state_buffer.contents() as *const FlashState);
                 let fmp = &*(flash_model_params_buffer.contents() as *const FlashModelParams);
-                let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
+                let st = std::slice::from_raw_parts(
+                    states_buffer.contents() as *const u32,
+                    2 * state_size,
+                );
                 let read_out_bit = |pos: u32| -> u32 {
                     let word_idx = state_size + (pos as usize >> 5);
                     let bit_idx = pos & 31;
@@ -2740,8 +3320,10 @@ fn main() {
                 // Detect CSN transitions (transaction boundaries)
                 if csn_val == 1 && diag_prev_csn == 0 {
                     // CSN rising edge = transaction complete
-                    eprintln!("DIAG T{}: Flash transaction end: cmd=0x{:02X} addr=0x{:06X} bytes={}",
-                        tick, fs.command, fs.addr, fs.byte_count);
+                    eprintln!(
+                        "DIAG T{}: Flash transaction end: cmd=0x{:02X} addr=0x{:06X} bytes={}",
+                        tick, fs.command, fs.addr, fs.byte_count
+                    );
                 }
                 if csn_val == 0 && diag_prev_csn == 1 {
                     eprintln!("DIAG T{}: Flash transaction start", tick);
@@ -2766,8 +3348,10 @@ fn main() {
                     );
                     let nonzero = sram.iter().filter(|&&w| w != 0).count();
                     if nonzero != diag_sram_write_count {
-                        eprintln!("DIAG T{}: SRAM non-zero words: {} (was {})",
-                            tick, nonzero, diag_sram_write_count);
+                        eprintln!(
+                            "DIAG T{}: SRAM non-zero words: {} (was {})",
+                            tick, nonzero, diag_sram_write_count
+                        );
                         diag_sram_write_count = nonzero;
                     }
                 }
@@ -2777,7 +3361,10 @@ fn main() {
         // Diagnostic: dump flash-related signals
         if trace_ticks > 0 && tick <= reset_cycles + trace_ticks && tick > reset_cycles {
             unsafe {
-                let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
+                let st = std::slice::from_raw_parts(
+                    states_buffer.contents() as *const u32,
+                    2 * state_size,
+                );
                 let read_out_bit = |pos: u32| -> u32 {
                     let word_idx = state_size + (pos as usize >> 5);
                     let bit_idx = pos & 31;
@@ -2821,7 +3408,10 @@ fn main() {
             // Read UART TX bit and decoder state for diagnostics
             let (uart_tx_val, uart_dec_state, uart_dec_cycle) = unsafe {
                 let up = &*(uart_params_buffer.contents() as *const UartParams);
-                let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
+                let st = std::slice::from_raw_parts(
+                    states_buffer.contents() as *const u32,
+                    2 * state_size,
+                );
                 let tx_word = state_size + (up.tx_out_pos as usize >> 5);
                 let tx_bit = up.tx_out_pos & 31;
                 let tx_val = (st[tx_word] >> tx_bit) & 1;
@@ -2839,9 +3429,12 @@ fn main() {
             // Snapshot output state just after reset for change detection
             if post_reset_state_snapshot.is_none() {
                 let st = unsafe {
-                    std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size)
+                    std::slice::from_raw_parts(
+                        states_buffer.contents() as *const u32,
+                        2 * state_size,
+                    )
                 };
-                post_reset_state_snapshot = Some(st[state_size..2*state_size].to_vec());
+                post_reset_state_snapshot = Some(st[state_size..2 * state_size].to_vec());
             }
         }
     }
@@ -2850,7 +3443,11 @@ fn main() {
     let total_ns = prof_batch_encode + prof_gpu_wait + prof_drain;
     let print_prof = |name: &str, ns: u64| {
         let us = ns as f64 / 1000.0 / max_ticks as f64;
-        let pct = if total_ns > 0 { 100.0 * ns as f64 / total_ns as f64 } else { 0.0 };
+        let pct = if total_ns > 0 {
+            100.0 * ns as f64 / total_ns as f64
+        } else {
+            0.0
+        };
         println!("  {:<32} {:>8.1}μs/tick  {:>5.1}%", name, us, pct);
     };
     println!();
@@ -2858,9 +3455,11 @@ fn main() {
     print_prof("Batch encode + commit", prof_batch_encode);
     print_prof("GPU wait (spin)", prof_gpu_wait);
     print_prof("UART channel drain", prof_drain);
-    println!("  {:<32} {:>8.1}μs/tick  100.0%",
-             "TOTAL (instrumented)",
-             total_ns as f64 / 1000.0 / max_ticks as f64);
+    println!(
+        "  {:<32} {:>8.1}μs/tick  100.0%",
+        "TOTAL (instrumented)",
+        total_ns as f64 / 1000.0 / max_ticks as f64
+    );
     println!();
     println!("  Total batches:                 {}", total_batches);
 
@@ -2872,16 +3471,26 @@ fn main() {
     unsafe {
         let st = std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size);
         let input_state = &st[..state_size];
-        let output_state = &st[state_size..2*state_size];
+        let output_state = &st[state_size..2 * state_size];
         let in_nonzero = input_state.iter().filter(|&&w| w != 0).count();
         let out_nonzero = output_state.iter().filter(|&&w| w != 0).count();
         let in_popcount: u32 = input_state.iter().map(|w| w.count_ones()).sum();
         let out_popcount: u32 = output_state.iter().map(|w| w.count_ones()).sum();
         println!();
         println!("=== State Buffer Diagnostics ===");
-        println!("State size: {} words ({} bits)", state_size, state_size * 32);
-        println!("Input state:  {} non-zero words, {} bits set", in_nonzero, in_popcount);
-        println!("Output state: {} non-zero words, {} bits set", out_nonzero, out_popcount);
+        println!(
+            "State size: {} words ({} bits)",
+            state_size,
+            state_size * 32
+        );
+        println!(
+            "Input state:  {} non-zero words, {} bits set",
+            in_nonzero, in_popcount
+        );
+        println!(
+            "Output state: {} non-zero words, {} bits set",
+            out_nonzero, out_popcount
+        );
         // Compare with post-reset snapshot if available
         if let Some(ref snapshot) = post_reset_state_snapshot {
             let mut changed_words = 0;
@@ -2892,13 +3501,19 @@ fn main() {
                     changed_words += 1;
                     changed_bits += diff.count_ones();
                     if changed_words <= 10 {
-                        println!("  CHANGED output[{}]: 0x{:08X} → 0x{:08X} (diff=0x{:08X})",
-                            i, snap, cur, diff);
+                        println!(
+                            "  CHANGED output[{}]: 0x{:08X} → 0x{:08X} (diff=0x{:08X})",
+                            i, snap, cur, diff
+                        );
                     }
                 }
             }
-            println!("Output state changes since tick {}: {} words, {} bits changed",
-                config.reset_cycles + 1, changed_words, changed_bits);
+            println!(
+                "Output state changes since tick {}: {} words, {} bits changed",
+                config.reset_cycles + 1,
+                changed_words,
+                changed_bits
+            );
         }
     }
 
@@ -2909,7 +3524,10 @@ fn main() {
         fs.last_error_cmd
     };
     if last_error_cmd != 0 {
-        clilog::warn!("GPU flash model encountered unknown command: 0x{:02X}", last_error_cmd);
+        clilog::warn!(
+            "GPU flash model encountered unknown command: 0x{:02X}",
+            last_error_cmd
+        );
     }
 
     // ── Results ──────────────────────────────────────────────────────────
@@ -2921,7 +3539,11 @@ fn main() {
 
     if max_ticks > 0 {
         let us_per_tick = sim_elapsed.as_micros() as f64 / max_ticks as f64;
-        println!("Time per tick: {:.1}μs ({:.1}s total)", us_per_tick, sim_elapsed.as_secs_f64());
+        println!(
+            "Time per tick: {:.1}μs ({:.1}s total)",
+            us_per_tick,
+            sim_elapsed.as_secs_f64()
+        );
     }
 
     // Print UART output as string
@@ -2992,15 +3614,22 @@ fn main() {
         println!("Actual:    {} events", uart_events.len());
 
         if ref_payloads.len() > actual_payloads.len() {
-            println!("FAIL: missing {} events (got {}, expected {})",
+            println!(
+                "FAIL: missing {} events (got {}, expected {})",
                 ref_payloads.len() - actual_payloads.len(),
-                actual_payloads.len(), ref_payloads.len());
-            println!("  Hint: increase --max-cycles (last reference event at timestamp {})",
-                ref_events.last().map(|e| e.timestamp).unwrap_or(0));
+                actual_payloads.len(),
+                ref_payloads.len()
+            );
+            println!(
+                "  Hint: increase --max-cycles (last reference event at timestamp {})",
+                ref_events.last().map(|e| e.timestamp).unwrap_or(0)
+            );
             events_passed = false;
         } else {
             let mut mismatches = 0;
-            for (i, (expected, actual)) in ref_payloads.iter().zip(actual_payloads.iter()).enumerate() {
+            for (i, (expected, actual)) in
+                ref_payloads.iter().zip(actual_payloads.iter()).enumerate()
+            {
                 if expected != actual {
                     if mismatches < 10 {
                         let ref_ts = ref_events[i].timestamp;
@@ -3013,13 +3642,18 @@ fn main() {
             }
 
             if mismatches > 0 {
-                println!("FAIL: {} payload mismatches out of {} events", mismatches, ref_payloads.len());
+                println!(
+                    "FAIL: {} payload mismatches out of {} events",
+                    mismatches,
+                    ref_payloads.len()
+                );
                 events_passed = false;
             } else {
                 // Decode the matched message for display
-                let decoded: String = actual_payloads.iter().map(|&b| {
-                    if b >= 32 && b < 127 { b as char } else { '.' }
-                }).collect();
+                let decoded: String = actual_payloads
+                    .iter()
+                    .map(|&b| if b >= 32 && b < 127 { b as char } else { '.' })
+                    .collect();
                 println!("PASS: all {} event payloads match", ref_payloads.len());
                 println!("  Decoded: \"{}\"", decoded);
             }
@@ -3030,10 +3664,16 @@ fn main() {
 
     if args.check_with_cpu {
         if cpu_check_mismatches == 0 {
-            clilog::info!("CPU verification: PASSED ({} ticks checked)", cpu_check_max_ticks.min(max_ticks));
+            clilog::info!(
+                "CPU verification: PASSED ({} ticks checked)",
+                cpu_check_max_ticks.min(max_ticks)
+            );
         } else {
-            clilog::warn!("CPU verification: {} total mismatches in {} ticks",
-                cpu_check_mismatches, cpu_check_max_ticks.min(max_ticks));
+            clilog::warn!(
+                "CPU verification: {} total mismatches in {} ticks",
+                cpu_check_mismatches,
+                cpu_check_max_ticks.min(max_ticks)
+            );
         }
     }
 

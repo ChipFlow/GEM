@@ -6,7 +6,10 @@
 
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
 use crate::sky130::{extract_cell_type, is_sky130_cell};
-use crate::sky130_pdk::{decompose_with_pdk, is_multi_output_cell, is_sequential_cell, is_tie_cell, CellInputs, PdkModels};
+use crate::sky130_pdk::{
+    decompose_with_pdk, is_multi_output_cell, is_sequential_cell, is_tie_cell, CellInputs,
+    PdkModels,
+};
 use indexmap::{IndexMap, IndexSet};
 use netlistdb::{Direction, GeneralPinName, NetlistDB};
 use smallvec::SmallVec;
@@ -218,7 +221,6 @@ pub struct AIG {
     pub fanouts: Vec<usize>,
 
     // === Timing Analysis Fields ===
-
     /// Arrival times for each AIG pin: (min_ps, max_ps).
     /// Computed during STA traversal. Index 0 is unused (Tie0 has arrival 0).
     /// Empty until `compute_timing()` is called.
@@ -246,7 +248,6 @@ pub struct AIG {
     pub clock_period_ps: u64,
 
     // === SDF Back-Annotation Support ===
-
     /// Maps AIG pin index → list of (netlistdb cell_id, cell_type, output_pin_name).
     /// Accumulated: inverters sharing an AIG pin (via invert-bit reuse) push
     /// their origins rather than overwriting. During SDF loading, delays from
@@ -346,14 +347,23 @@ impl AIG {
             iteration += 1;
             {
                 let pin_name = netlistdb.pinnames[current_pinid].dbg_fmt_pin();
-                let dir = if netlistdb.pindirect[current_pinid] == Direction::I { "I" } else { "O" };
+                let dir = if netlistdb.pindirect[current_pinid] == Direction::I {
+                    "I"
+                } else {
+                    "O"
+                };
                 path.push((current_pinid, format!("{}:{}", pin_name, dir)));
             }
             if visited_pins.contains(&current_pinid) {
                 panic!(
                     "trace_clock_pin cycle detected!\nstart={}, iteration={}\npath:\n{}",
-                    start_pinid, iteration,
-                    path.iter().enumerate().map(|(i, (pid, name))| format!("  {:3}: pin {} - {}", i, pid, name)).collect::<Vec<_>>().join("\n")
+                    start_pinid,
+                    iteration,
+                    path.iter()
+                        .enumerate()
+                        .map(|(i, (pid, name))| format!("  {:3}: pin {} - {}", i, pid, name))
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 );
             }
             visited_pins.insert(current_pinid);
@@ -421,7 +431,8 @@ impl AIG {
                 let mut result = if clksignal != usize::MAX {
                     clksignal << 1
                 } else {
-                    let aigpin = self.add_aigpin(DriverType::InputClockFlag(pinid, is_negedge as u8));
+                    let aigpin =
+                        self.add_aigpin(DriverType::InputClockFlag(pinid, is_negedge as u8));
                     let clkentry = self.clock_pin2aigpins.get_mut(&pinid).unwrap();
                     let clksignal = match is_negedge {
                         false => &mut clkentry.0,
@@ -456,7 +467,8 @@ impl AIG {
                 let mut result = if clksignal != usize::MAX {
                     clksignal << 1
                 } else {
-                    let aigpin = self.add_aigpin(DriverType::InputClockFlag(pinid, is_negedge as u8));
+                    let aigpin =
+                        self.add_aigpin(DriverType::InputClockFlag(pinid, is_negedge as u8));
                     let clkentry = self.clock_pin2aigpins.get_mut(&pinid).unwrap();
                     let clksignal = match is_negedge {
                         false => &mut clkentry.0,
@@ -491,8 +503,11 @@ impl AIG {
             let is_buf = celltype == "BUF"
                 || (is_sky130_cell(celltype) && {
                     let ct = extract_cell_type(celltype);
-                    ct.starts_with("buf") || ct.starts_with("clkbuf") || ct.starts_with("clkdlybuf")
-                        || ct.starts_with("lpflow_isobufsrc") || ct.starts_with("lpflow_inputiso")
+                    ct.starts_with("buf")
+                        || ct.starts_with("clkbuf")
+                        || ct.starts_with("clkdlybuf")
+                        || ct.starts_with("lpflow_isobufsrc")
+                        || ct.starts_with("lpflow_inputiso")
                 });
 
             if !is_inv && !is_buf && celltype != "CKLNQD" {
@@ -510,7 +525,11 @@ impl AIG {
                         "CP" => pin_cp = ipin,
                         "E" => pin_en = ipin,
                         i @ _ => {
-                            clilog::error!("input pin {} unexpected for ck element {}", i, celltype);
+                            clilog::error!(
+                                "input pin {} unexpected for ck element {}",
+                                i,
+                                celltype
+                            );
                             return Err(ipin);
                         }
                     }
@@ -952,7 +971,9 @@ impl AIG {
                 output_pin_name.to_string(),
             ));
             let sram = self.srams.entry(cellid).or_default();
-            let bit_idx = netlistdb.pinnames[pinid].2.expect("DO pin must have bit index") as usize;
+            let bit_idx = netlistdb.pinnames[pinid]
+                .2
+                .expect("DO pin must have bit index") as usize;
             sram.port_r_rd_data[bit_idx] = o;
             return;
         }
@@ -961,11 +982,7 @@ impl AIG {
         if is_sequential_cell(cell_type) {
             let q = self.add_aigpin(DriverType::DFF(cellid));
             // Record cell origin for DFF Q output (for SDF CLK→Q delay)
-            self.aigpin_cell_origins[q].push((
-                cellid,
-                cell_type.to_string(),
-                "Q".to_string(),
-            ));
+            self.aigpin_cell_origins[q].push((cellid, cell_type.to_string(), "Q".to_string()));
             let dff = self.dffs.entry(cellid).or_default();
             dff.q = q;
             return;
@@ -1022,7 +1039,9 @@ impl AIG {
 
         // Multi-output cells (ha, fa, dfbbp)
         if is_multi_output_cell(cell_type) {
-            self.build_sky130_multi_output_postprocess(netlistdb, pinid, cellid, cell_type, pdk_models);
+            self.build_sky130_multi_output_postprocess(
+                netlistdb, pinid, cellid, cell_type, pdk_models,
+            );
             return;
         }
 
@@ -1056,7 +1075,8 @@ impl AIG {
             }
             clilog::warn!(
                 "nand2 cell {} missing A input. Pins: {:?}",
-                cell_name, pins_info
+                cell_name,
+                pins_info
             );
         }
         if input_count == 0 {
@@ -1077,14 +1097,16 @@ impl AIG {
         let output_pin_name = netlistdb.pinnames[pinid].1.as_str();
         let pdk = pdk_models.expect(
             "PDK models required for SKY130 cell decomposition. \
-             Ensure sky130_fd_sc_hd submodule is initialized."
+             Ensure sky130_fd_sc_hd submodule is initialized.",
         );
         let decomp = decompose_with_pdk(cell_type, &inputs, output_pin_name, pdk);
 
         // Use SmallVec for gate outputs - most cells have ≤5 gates
         let mut gate_outputs: SmallVec<[usize; 5]> = SmallVec::new();
         for (i, (a_ref, b_ref)) in decomp.and_gates.iter().enumerate() {
-            let a_iv = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.resolve_decomp_ref(*a_ref, &gate_outputs))) {
+            let a_iv = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.resolve_decomp_ref(*a_ref, &gate_outputs)
+            })) {
                 Ok(v) => v,
                 Err(_) => {
                     use netlistdb::GeneralHierName;
@@ -1095,7 +1117,9 @@ impl AIG {
                     )
                 }
             };
-            let b_iv = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.resolve_decomp_ref(*b_ref, &gate_outputs))) {
+            let b_iv = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.resolve_decomp_ref(*b_ref, &gate_outputs)
+            })) {
                 Ok(v) => v,
                 Err(_) => {
                     use netlistdb::GeneralHierName;
@@ -1191,7 +1215,7 @@ impl AIG {
         // Use PDK models for ha/fa
         let pdk = pdk_models.expect(
             "PDK models required for SKY130 multi-output cell decomposition. \
-             Ensure sky130_fd_sc_hd submodule is initialized."
+             Ensure sky130_fd_sc_hd submodule is initialized.",
         );
         let mut inputs = CellInputs::new();
         for ipin in netlistdb.cell2pin.iter_set(cellid) {
@@ -1215,7 +1239,11 @@ impl AIG {
         } else {
             (decomp.output_idx as usize) << 1
         };
-        let final_iv = if decomp.output_inverted { output_iv ^ 1 } else { output_iv };
+        let final_iv = if decomp.output_inverted {
+            output_iv ^ 1
+        } else {
+            output_iv
+        };
         self.pin2aigpin_iv[output_pinid] = final_iv;
 
         // Record cell origin for SDF back-annotation
@@ -1267,8 +1295,8 @@ impl AIG {
     /// submodule is not initialized.
     pub fn from_netlistdb(netlistdb: &NetlistDB) -> AIG {
         // Check if the design uses SKY130 cells
-        let has_sky130 = (1..netlistdb.num_cells)
-            .any(|cid| is_sky130_cell(netlistdb.celltypes[cid].as_str()));
+        let has_sky130 =
+            (1..netlistdb.num_cells).any(|cid| is_sky130_cell(netlistdb.celltypes[cid].as_str()));
 
         if has_sky130 {
             let pdk_path = std::path::PathBuf::from("sky130_fd_sc_hd/cells");
@@ -1305,7 +1333,10 @@ impl AIG {
             ..Default::default()
         };
 
-        clilog::info!("Starting clock tracing for {} cells...", netlistdb.num_cells);
+        clilog::info!(
+            "Starting clock tracing for {} cells...",
+            netlistdb.num_cells
+        );
         let clock_start = std::time::Instant::now();
         let mut seq_count = 0;
         let mut trace_count = 0;
@@ -1315,7 +1346,8 @@ impl AIG {
 
             // Check if this is a sequential element (AIGPDK or SKY130)
             let is_aigpdk_seq = matches!(celltype, "DFF" | "DFFSR" | "$__RAMGEM_SYNC_");
-            let is_sky130_seq = is_sky130_cell(celltype) && is_sequential_cell(extract_cell_type(celltype));
+            let is_sky130_seq =
+                is_sky130_cell(celltype) && is_sequential_cell(extract_cell_type(celltype));
 
             if !is_aigpdk_seq && !is_sky130_seq {
                 continue;
@@ -1324,9 +1356,19 @@ impl AIG {
             seq_count += 1;
             if seq_count <= 5 {
                 use netlistdb::GeneralHierName;
-                clilog::info!("  Processing seq cell {} ({}): {}", seq_count, celltype, netlistdb.cellnames[cellid].dbg_fmt_hier());
+                clilog::info!(
+                    "  Processing seq cell {} ({}): {}",
+                    seq_count,
+                    celltype,
+                    netlistdb.cellnames[cellid].dbg_fmt_hier()
+                );
             } else if seq_count % 500 == 0 {
-                clilog::info!("  Processed {} sequential cells ({} clock traces) in {:?}...", seq_count, trace_count, clock_start.elapsed());
+                clilog::info!(
+                    "  Processed {} sequential cells ({} clock traces) in {:?}...",
+                    seq_count,
+                    trace_count,
+                    clock_start.elapsed()
+                );
             }
             for pinid in netlistdb.cell2pin.iter_set(cellid) {
                 let pin_name = netlistdb.pinnames[pinid].1.as_str();
@@ -1351,7 +1393,11 @@ impl AIG {
                 }
             }
         }
-        clilog::info!("Clock tracing done in {:?}, {} sequential cells", clock_start.elapsed(), seq_count);
+        clilog::info!(
+            "Clock tracing done in {:?}, {} sequential cells",
+            clock_start.elapsed(),
+            seq_count
+        );
 
         for (&clk, &(flagr, flagf)) in &aig.clock_pin2aigpins {
             clilog::info!(
@@ -1372,10 +1418,20 @@ impl AIG {
         let mut topo_instack = vec![false; netlistdb.num_pins];
 
         for pinid in 0..netlistdb.num_pins {
-            aig.dfs_netlistdb_build_aig(netlistdb, &mut topo_vis, &mut topo_instack, pinid, pdk_models);
+            aig.dfs_netlistdb_build_aig(
+                netlistdb,
+                &mut topo_vis,
+                &mut topo_instack,
+                pinid,
+                pdk_models,
+            );
         }
 
-        clilog::info!("AIG DFS build done in {:?}, {} AIG pins created", dfs_start.elapsed(), aig.num_aigpins);
+        clilog::info!(
+            "AIG DFS build done in {:?}, {} AIG pins created",
+            dfs_start.elapsed(),
+            aig.num_aigpins
+        );
 
         for cellid in 0..netlistdb.num_cells {
             let celltype = netlistdb.celltypes[cellid].as_str();
@@ -1495,7 +1551,7 @@ impl AIG {
                 // Pins: CLKin, EN, R_WB, AD[9:0], BEN[31:0], DI[31:0], DO[31:0]
                 let mut sram = aig.srams.entry(cellid).or_default().clone();
                 let mut clken_iv = 0;
-                let mut r_wb_iv = 0;  // 0=write, 1=read
+                let mut r_wb_iv = 0; // 0=write, 1=read
 
                 for pinid in netlistdb.cell2pin.iter_set(cellid) {
                     let bit = netlistdb.pinnames[pinid].2.map(|i| i as usize);
@@ -1654,12 +1710,24 @@ impl AIG {
             if (dff.d_iv >> 1) > aig.num_aigpins {
                 use netlistdb::GeneralHierName;
                 let cell_name = netlistdb.cellnames[*cellid].dbg_fmt_hier();
-                panic!("AIG validation: DFF {} ({}) has bad d_iv={} (d_iv>>1={})", cellid, cell_name, dff.d_iv, dff.d_iv >> 1);
+                panic!(
+                    "AIG validation: DFF {} ({}) has bad d_iv={} (d_iv>>1={})",
+                    cellid,
+                    cell_name,
+                    dff.d_iv,
+                    dff.d_iv >> 1
+                );
             }
             if (dff.en_iv >> 1) > aig.num_aigpins {
                 use netlistdb::GeneralHierName;
                 let cell_name = netlistdb.cellnames[*cellid].dbg_fmt_hier();
-                panic!("AIG validation: DFF {} ({}) has bad en_iv={} (en_iv>>1={})", cellid, cell_name, dff.en_iv, dff.en_iv >> 1);
+                panic!(
+                    "AIG validation: DFF {} ({}) has bad en_iv={} (en_iv>>1={})",
+                    cellid,
+                    cell_name,
+                    dff.en_iv,
+                    dff.en_iv >> 1
+                );
             }
         }
         // Validate primary_outputs
@@ -1930,7 +1998,8 @@ impl AIG {
 
             // Clock arrival is at time 0 (or clock_period for setup check)
             // Setup check: data must arrive before clock_period - setup_time
-            let setup_slack = (self.clock_period_ps as i64) - (data_max_arrival as i64) - (setup_time as i64);
+            let setup_slack =
+                (self.clock_period_ps as i64) - (data_max_arrival as i64) - (setup_time as i64);
 
             // Hold check: data must be stable for hold_time after clock
             // For hold, we check min arrival vs hold_time
@@ -2218,8 +2287,8 @@ impl std::fmt::Display for TimingReport {
 #[cfg(test)]
 mod sdf_integration_tests {
     use super::*;
+    use crate::sdf_parser::{SdfCorner, SdfFile};
     use crate::sky130::SKY130LeafPins;
-    use crate::sdf_parser::{SdfFile, SdfCorner};
     use std::collections::HashMap;
 
     /// Helper: load inv_chain.v and build AIG.
@@ -2227,11 +2296,8 @@ mod sdf_integration_tests {
         let verilog_path = std::path::PathBuf::from("tests/timing_test/sky130_timing/inv_chain.v");
         assert!(verilog_path.exists(), "inv_chain.v not found");
 
-        let netlistdb = NetlistDB::from_sverilog_file(
-            &verilog_path,
-            None,
-            &SKY130LeafPins,
-        ).expect("Failed to parse inv_chain.v");
+        let netlistdb = NetlistDB::from_sverilog_file(&verilog_path, None, &SKY130LeafPins)
+            .expect("Failed to parse inv_chain.v");
 
         let aig = AIG::from_netlistdb(&netlistdb);
         (netlistdb, aig)
@@ -2241,7 +2307,8 @@ mod sdf_integration_tests {
     fn build_cellid_to_sdf_path(netlistdb: &NetlistDB) -> HashMap<usize, String> {
         let mut map = HashMap::new();
         for cellid in 1..netlistdb.num_cells {
-            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+            let parts: Vec<&str> = netlistdb.cellnames[cellid]
+                .iter()
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>();
             let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
@@ -2280,7 +2347,9 @@ mod sdf_integration_tests {
         // The shared AIG pin (dff_in.Q / inverter chain) accumulates:
         //   1 DFF origin (dff_in CLK→Q) + 16 inverter origins = 17 entries.
         // dff_out.Q gets its own AIG pin with 1 entry.
-        let non_empty_count = aig.aigpin_cell_origins.iter()
+        let non_empty_count = aig
+            .aigpin_cell_origins
+            .iter()
             .filter(|o| !o.is_empty())
             .count();
 
@@ -2292,12 +2361,17 @@ mod sdf_integration_tests {
         );
 
         // The shared pin should have 17 entries (1 DFF + 16 inverters)
-        let chain_pin = aig.aigpin_cell_origins.iter()
+        let chain_pin = aig
+            .aigpin_cell_origins
+            .iter()
             .find(|origins| origins.len() > 1)
             .expect("Should have a pin with multiple origins (the inverter chain)");
-        assert_eq!(chain_pin.len(), 17,
+        assert_eq!(
+            chain_pin.len(),
+            17,
             "Shared chain pin should have 17 origins (1 DFF + 16 inverters), got {}",
-            chain_pin.len());
+            chain_pin.len()
+        );
     }
 
     #[test]
@@ -2305,21 +2379,32 @@ mod sdf_integration_tests {
         let (netlistdb, aig) = load_inv_chain_aig();
 
         // Both DFFs should now be present (dff_in is no longer overwritten)
-        let dff_origins: Vec<_> = aig.aigpin_cell_origins.iter()
+        let dff_origins: Vec<_> = aig
+            .aigpin_cell_origins
+            .iter()
             .enumerate()
-            .flat_map(|(i, origins)| origins.iter().map(move |(cid, ct, pin)| (i, *cid, ct.clone(), pin.clone())))
+            .flat_map(|(i, origins)| {
+                origins
+                    .iter()
+                    .map(move |(cid, ct, pin)| (i, *cid, ct.clone(), pin.clone()))
+            })
             .filter(|(_, _, ct, _)| ct == "dfxtp")
             .collect();
 
-        assert_eq!(dff_origins.len(), 2,
-            "Expected 2 DFF cell origins (dff_in + dff_out), got {}", dff_origins.len());
+        assert_eq!(
+            dff_origins.len(),
+            2,
+            "Expected 2 DFF cell origins (dff_in + dff_out), got {}",
+            dff_origins.len()
+        );
 
         for (ref _aigpin, ref cellid, ref _cell_type, ref output_pin_name) in &dff_origins {
             assert_eq!(output_pin_name, "Q", "DFF output pin must be Q");
             assert!(
                 netlistdb.celltypes[*cellid].contains("dfxtp"),
                 "Cell {} should be dfxtp type, got {}",
-                cellid, netlistdb.celltypes[*cellid]
+                cellid,
+                netlistdb.celltypes[*cellid]
             );
         }
     }
@@ -2329,21 +2414,32 @@ mod sdf_integration_tests {
         let (netlistdb, aig) = load_inv_chain_aig();
 
         // All 16 inverters should now have their origins accumulated (not just the last one)
-        let inv_origins: Vec<_> = aig.aigpin_cell_origins.iter()
+        let inv_origins: Vec<_> = aig
+            .aigpin_cell_origins
+            .iter()
             .enumerate()
-            .flat_map(|(i, origins)| origins.iter().map(move |(cid, ct, pin)| (i, *cid, ct.clone(), pin.clone())))
+            .flat_map(|(i, origins)| {
+                origins
+                    .iter()
+                    .map(move |(cid, ct, pin)| (i, *cid, ct.clone(), pin.clone()))
+            })
             .filter(|(_, _, ct, _)| ct == "inv")
             .collect();
 
-        assert_eq!(inv_origins.len(), 16,
-            "Expected 16 inverter cell origins (all inverters in chain), got {}", inv_origins.len());
+        assert_eq!(
+            inv_origins.len(),
+            16,
+            "Expected 16 inverter cell origins (all inverters in chain), got {}",
+            inv_origins.len()
+        );
 
         for (ref _aigpin, ref cellid, ref _cell_type, ref output_pin_name) in &inv_origins {
             assert_eq!(output_pin_name, "Y", "Inverter output pin must be Y");
             assert!(
                 netlistdb.celltypes[*cellid].contains("inv"),
                 "Cell {} should be inv type, got {}",
-                cellid, netlistdb.celltypes[*cellid]
+                cellid,
+                netlistdb.celltypes[*cellid]
             );
         }
     }
@@ -2358,8 +2454,11 @@ mod sdf_integration_tests {
             .filter(|&ap| matches!(aig.drivers[ap], DriverType::AndGate(_, _)))
             .count();
 
-        assert_eq!(and_gate_count, 0,
-            "Inverter chain should produce 0 AND gates, got {}", and_gate_count);
+        assert_eq!(
+            and_gate_count, 0,
+            "Inverter chain should produce 0 AND gates, got {}",
+            and_gate_count
+        );
     }
 
     // === Test 2: HierName → SDF path matching ===
@@ -2368,8 +2467,7 @@ mod sdf_integration_tests {
     fn test_sdf_path_matching_all_cells() {
         let (netlistdb, _aig) = load_inv_chain_aig();
         let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("Failed to parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
 
         let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
 
@@ -2405,8 +2503,8 @@ mod sdf_integration_tests {
 
         // Verify expected instance names exist
         let expected_names = [
-            "dff_in", "i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7",
-            "i8", "i9", "i10", "i11", "i12", "i13", "i14", "i15", "dff_out",
+            "dff_in", "i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9", "i10", "i11",
+            "i12", "i13", "i14", "i15", "dff_out",
         ];
 
         let paths: Vec<&str> = cellid_to_sdf_path.values().map(|s| s.as_str()).collect();
@@ -2414,7 +2512,8 @@ mod sdf_integration_tests {
             assert!(
                 paths.contains(name),
                 "Expected SDF path '{}' not found. Paths: {:?}",
-                name, paths
+                name,
+                paths
             );
         }
     }

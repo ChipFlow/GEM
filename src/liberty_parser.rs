@@ -115,10 +115,7 @@ impl CellTiming {
         let pin = self.pins.get(output_pin)?;
         for arc in &pin.timing_arcs {
             if arc.timing_type.as_deref() == Some("rising_edge") {
-                return Some((
-                    arc.cell_rise_ps.unwrap_or(0),
-                    arc.cell_fall_ps.unwrap_or(0),
-                ));
+                return Some((arc.cell_rise_ps.unwrap_or(0), arc.cell_fall_ps.unwrap_or(0)));
             }
         }
         None
@@ -301,7 +298,9 @@ impl TimingLibrary {
     /// Get combinational delay for an AND gate variant.
     /// The AIGPDK uses AND2_XY_Z naming where X,Y are inversion flags.
     pub fn and_gate_delay(&self, cell_name: &str) -> Option<(u64, u64)> {
-        self.cells.get(cell_name).map(|c| c.max_combinational_delay())
+        self.cells
+            .get(cell_name)
+            .map(|c| c.max_combinational_delay())
     }
 
     /// Get delay for the inverter cell (INV).
@@ -351,10 +350,7 @@ impl TimingLibrary {
             .and_then(|p| {
                 p.timing_arcs.iter().find_map(|arc| {
                     if arc.timing_type.as_deref() == Some("rising_edge") {
-                        Some((
-                            arc.cell_rise_ps.unwrap_or(0),
-                            arc.cell_fall_ps.unwrap_or(0),
-                        ))
+                        Some((arc.cell_rise_ps.unwrap_or(0), arc.cell_fall_ps.unwrap_or(0)))
                     } else {
                         None
                     }

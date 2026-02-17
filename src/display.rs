@@ -20,18 +20,19 @@ pub struct DisplayCellInfo {
 /// Extract display cell information from a Yosys JSON file.
 /// Returns a map from cell name to DisplayCellInfo.
 pub fn extract_display_info_from_json(
-    json_path: &Path
+    json_path: &Path,
 ) -> Result<IndexMap<String, DisplayCellInfo>, String> {
     let content = std::fs::read_to_string(json_path)
         .map_err(|e| format!("Failed to read JSON file: {}", e))?;
 
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
     let mut result = IndexMap::new();
 
     // Navigate to modules
-    let modules = json.get("modules")
+    let modules = json
+        .get("modules")
         .and_then(|m| m.as_object())
         .ok_or("No modules in JSON")?;
 
@@ -55,21 +56,20 @@ pub fn extract_display_info_from_json(
             };
 
             // Get gem_format attribute
-            let format = attrs.get("gem_format")
+            let format = attrs
+                .get("gem_format")
                 .and_then(|f| f.as_str())
                 .unwrap_or("")
                 .to_string();
 
             // Get gem_args_width attribute (stored as binary string)
-            let args_width = attrs.get("gem_args_width")
+            let args_width = attrs
+                .get("gem_args_width")
                 .and_then(|w| w.as_str())
                 .and_then(|s| u32::from_str_radix(s, 2).ok())
                 .unwrap_or(32);
 
-            result.insert(cell_name.clone(), DisplayCellInfo {
-                format,
-                args_width,
-            });
+            result.insert(cell_name.clone(), DisplayCellInfo { format, args_width });
         }
     }
 
@@ -137,7 +137,9 @@ pub fn parse_format_string(format: &str) -> (Vec<String>, Vec<FormatSpec>) {
                 let mut i = 0;
 
                 // Check for alignment
-                if i < fmt_chars.len() && (fmt_chars[i] == '<' || fmt_chars[i] == '>' || fmt_chars[i] == '^') {
+                if i < fmt_chars.len()
+                    && (fmt_chars[i] == '<' || fmt_chars[i] == '>' || fmt_chars[i] == '^')
+                {
                     align = fmt_chars[i];
                     i += 1;
                 }
@@ -195,9 +197,18 @@ pub fn parse_format_string(format: &str) -> (Vec<String>, Vec<FormatSpec>) {
             // Handle escape sequences
             if let Some(&next) = chars.peek() {
                 match next {
-                    'n' => { chars.next(); current_literal.push('\n'); }
-                    't' => { chars.next(); current_literal.push('\t'); }
-                    '\\' => { chars.next(); current_literal.push('\\'); }
+                    'n' => {
+                        chars.next();
+                        current_literal.push('\n');
+                    }
+                    't' => {
+                        chars.next();
+                        current_literal.push('\t');
+                    }
+                    '\\' => {
+                        chars.next();
+                        current_literal.push('\\');
+                    }
                     _ => current_literal.push(c),
                 }
             } else {
@@ -229,7 +240,11 @@ pub fn format_display_message(format: &str, args: &[u64], arg_widths: &[u32]) ->
             let width = arg_widths.get(arg_idx).copied().unwrap_or(spec.width);
 
             // Mask value to specified width
-            let mask = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+            let mask = if width >= 64 {
+                u64::MAX
+            } else {
+                (1u64 << width) - 1
+            };
             let masked_value = value & mask;
 
             // Handle signed values
@@ -309,18 +324,11 @@ mod tests {
 
     #[test]
     fn test_format_display_message() {
-        let msg = format_display_message(
-            "value = {8:>02h-u}",
-            &[255],
-            &[8]
-        );
+        let msg = format_display_message("value = {8:>02h-u}", &[255], &[8]);
         assert_eq!(msg, "value = ff");
 
-        let msg = format_display_message(
-            "Counter reached 5, data_in = {8:>02h-u}\\n",
-            &[0x42],
-            &[8]
-        );
+        let msg =
+            format_display_message("Counter reached 5, data_in = {8:>02h-u}\\n", &[0x42], &[8]);
         assert_eq!(msg, "Counter reached 5, data_in = 42\n");
     }
 }

@@ -12,14 +12,17 @@ fn main() {
         .include("csrc")
         .compile("spiflash_model");
 
-    #[cfg(feature = "cuda")] {
+    #[cfg(feature = "cuda")]
+    {
         println!("Building CUDA source files for GEM...");
         let csrc_headers = ucc::import_csrc();
         let mut cl_cuda = ucc::cl_cuda();
         cl_cuda.ccbin(false);
         cl_cuda.flag("-lineinfo");
         cl_cuda.flag("-maxrregcount=128");
-        cl_cuda.debug(false).opt_level(3)
+        cl_cuda
+            .debug(false)
+            .opt_level(3)
             .include(&csrc_headers)
             .files(["csrc/kernel_v1.cu"]);
         cl_cuda.compile("gemcu");
@@ -30,7 +33,8 @@ fn main() {
         ucc::make_compile_commands(&[&cl_cuda]);
     }
 
-    #[cfg(feature = "metal")] {
+    #[cfg(feature = "metal")]
+    {
         println!("Building Metal shader for GEM...");
         // Compile Metal shader to metallib
         ucc::cl_metal()

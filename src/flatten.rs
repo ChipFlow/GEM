@@ -190,7 +190,6 @@ pub struct FlattenedScriptV1 {
     pub display_positions: Vec<(usize, u32, String, Vec<u32>, Vec<u32>)>,
 
     // === Timing Analysis Fields ===
-
     /// Per-AIG-pin delays loaded from Liberty library.
     /// Index 0 is unused (Tie0). Indexed by aigpin.
     /// Empty if timing not loaded.
@@ -212,7 +211,6 @@ pub struct FlattenedScriptV1 {
     /// Used by load_timing() / load_timing_from_sdf() to patch the script
     /// with per-thread-position max gate delays.
     pub delay_patch_map: Vec<(usize, Vec<usize>)>,
-
 }
 
 fn map_global_read_to_rounds(inputs_taken: &BTreeMap<u32, u32>) -> Vec<Vec<(u32, u32)>> {
@@ -1078,9 +1076,12 @@ fn build_flattened_script_v1(
         let mut flattening_parts: Vec<FlatteningPart> = vec![Default::default(); init_parts.len()];
 
         // basic index preprocessing for stages (parallel - each is independent)
-        flattening_parts.par_iter_mut().enumerate().for_each(|(i, fp)| {
-            fp.init_afters_writeouts(aig, staged, &init_parts[i]);
-        });
+        flattening_parts
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(i, fp)| {
+                fp.init_afters_writeouts(aig, staged, &init_parts[i]);
+            });
 
         // allocate output state positions for all srams,
         // in the order of block affinity.
@@ -1119,15 +1120,11 @@ fn build_flattened_script_v1(
         .zip(parts_in_stages.into_iter().copied())
     {
         // build script per part in parallel. we will later assemble them to blocks.
-        let parts_results: Vec<(Vec<u32>, Vec<(usize, Vec<usize>)>)> = flattening_parts.par_iter()
+        let parts_results: Vec<(Vec<u32>, Vec<(usize, Vec<usize>)>)> = flattening_parts
+            .par_iter()
             .enumerate()
             .map(|(part_id, fp)| {
-                fp.build_script(
-                    aig,
-                    &init_parts[part_id],
-                    &input_map,
-                    &staged_io_map,
-                )
+                fp.build_script(aig, &init_parts[part_id], &input_map, &staged_io_map)
             })
             .collect();
 
@@ -1297,9 +1294,7 @@ impl FlattenedScriptV1 {
 
         for i in 1..=aig.num_aigpins {
             let delay = match &aig.drivers[i] {
-                DriverType::AndGate(_, _) => {
-                    PackedDelay::from_u64(and_delay.0, and_delay.1)
-                }
+                DriverType::AndGate(_, _) => PackedDelay::from_u64(and_delay.0, and_delay.1),
                 DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
                     PackedDelay::default() // Zero delay for inputs
                 }
@@ -1314,7 +1309,12 @@ impl FlattenedScriptV1 {
                     // SRAM read delay
                     sram_timing
                         .as_ref()
-                        .map(|t| PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps))
+                        .map(|t| {
+                            PackedDelay::from_u64(
+                                t.read_clk_to_data_rise_ps,
+                                t.read_clk_to_data_fall_ps,
+                            )
+                        })
                         .unwrap_or(PackedDelay::new(1, 1))
                 }
             };
@@ -1328,11 +1328,7 @@ impl FlattenedScriptV1 {
 
         for (&cell_id, dff) in &aig.dffs {
             // Find the state position for the D input
-            let data_state_pos = self
-                .output_map
-                .get(&dff.d_iv)
-                .copied()
-                .unwrap_or(u32::MAX);
+            let data_state_pos = self.output_map.get(&dff.d_iv).copied().unwrap_or(u32::MAX);
 
             self.dff_constraints.push(DFFConstraint {
                 setup_ps: setup_time,
@@ -1467,7 +1463,8 @@ impl FlattenedScriptV1 {
         // NetlistDB HierName iterates leaf-first, so we reverse and join with dots.
         let mut cellid_to_sdf_path: HashMap<usize, String> = HashMap::new();
         for cellid in 1..netlistdb.num_cells {
-            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
+            let parts: Vec<&str> = netlistdb.cellnames[cellid]
+                .iter()
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>();
             // parts is leaf-first, reverse to get root-first, then join with '.'
@@ -1492,9 +1489,12 @@ impl FlattenedScriptV1 {
                 if let Some(dot_pos) = ic.dest.rfind('.') {
                     let dest_inst = &ic.dest[..dot_pos];
                     if let Some(&dest_cellid) = sdf_path_to_cellid.get(dest_inst) {
-                        let entry = wire_delays_per_cell
-                            .entry(dest_cellid)
-                            .or_insert(crate::sdf_parser::SdfDelay { rise_ps: 0, fall_ps: 0 });
+                        let entry = wire_delays_per_cell.entry(dest_cellid).or_insert(
+                            crate::sdf_parser::SdfDelay {
+                                rise_ps: 0,
+                                fall_ps: 0,
+                            },
+                        );
                         entry.rise_ps = entry.rise_ps.max(ic.delay.rise_ps);
                         entry.fall_ps = entry.fall_ps.max(ic.delay.fall_ps);
                     }
@@ -1530,7 +1530,9 @@ impl FlattenedScriptV1 {
                 {
                     if let Some(sdf_path) = cellid_to_sdf_path.get(cellid) {
                         if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                            let iopath = sdf_cell.iopaths.iter()
+                            let iopath = sdf_cell
+                                .iopaths
+                                .iter()
                                 .find(|p| p.output_pin == *output_pin_name)
                                 .or_else(|| sdf_cell.iopaths.first());
                             if let Some(iopath) = iopath {
@@ -1555,7 +1557,9 @@ impl FlattenedScriptV1 {
 
                 if any_matched {
                     matched += 1;
-                    if any_unmatched { unmatched += 1; }
+                    if any_unmatched {
+                        unmatched += 1;
+                    }
                     PackedDelay::from_u64(total_rise, total_fall)
                 } else {
                     unmatched += 1;
@@ -1574,27 +1578,23 @@ impl FlattenedScriptV1 {
                         // Internal AND gate from cell decomposition — zero delay.
                         PackedDelay::default()
                     }
-                    DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
-                        PackedDelay::default()
-                    }
-                    DriverType::DFF(_) => {
-                        self.get_liberty_fallback_delay(
-                            &aig.drivers[aigpin],
-                            lib_and_delay,
-                            &lib_dff_timing,
-                            &lib_sram_timing,
-                            &mut fallback_count,
-                        )
-                    }
-                    DriverType::SRAM(_) => {
-                        self.get_liberty_fallback_delay(
-                            &aig.drivers[aigpin],
-                            lib_and_delay,
-                            &lib_dff_timing,
-                            &lib_sram_timing,
-                            &mut fallback_count,
-                        )
-                    }
+                    DriverType::InputPort(_)
+                    | DriverType::InputClockFlag(_, _)
+                    | DriverType::Tie0 => PackedDelay::default(),
+                    DriverType::DFF(_) => self.get_liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        lib_and_delay,
+                        &lib_dff_timing,
+                        &lib_sram_timing,
+                        &mut fallback_count,
+                    ),
+                    DriverType::SRAM(_) => self.get_liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        lib_and_delay,
+                        &lib_dff_timing,
+                        &lib_sram_timing,
+                        &mut fallback_count,
+                    ),
                 }
             };
             self.gate_delays[aigpin] = delay;
@@ -1606,20 +1606,20 @@ impl FlattenedScriptV1 {
         let lib_hold = lib_dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0) as u16;
 
         for (&cell_id, dff) in &aig.dffs {
-            let data_state_pos = self
-                .output_map
-                .get(&dff.d_iv)
-                .copied()
-                .unwrap_or(u32::MAX);
+            let data_state_pos = self.output_map.get(&dff.d_iv).copied().unwrap_or(u32::MAX);
 
             // Try to get setup/hold from SDF timing checks
             let (setup_ps, hold_ps) = if let Some(sdf_path) = cellid_to_sdf_path.get(&cell_id) {
                 if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                    let setup = sdf_cell.timing_checks.iter()
+                    let setup = sdf_cell
+                        .timing_checks
+                        .iter()
                         .find(|c| c.check_type == crate::sdf_parser::TimingCheckType::Setup)
                         .map(|c| c.value_ps.max(0) as u16)
                         .unwrap_or(lib_setup);
-                    let hold = sdf_cell.timing_checks.iter()
+                    let hold = sdf_cell
+                        .timing_checks
+                        .iter()
                         .find(|c| c.check_type == crate::sdf_parser::TimingCheckType::Hold)
                         .map(|c| c.value_ps.max(0) as u16)
                         .unwrap_or(lib_hold);
@@ -1648,7 +1648,10 @@ impl FlattenedScriptV1 {
         );
 
         if debug && !unmatched_instances.is_empty() {
-            clilog::warn!("SDF unmatched instances (first {}):", unmatched_instances.len());
+            clilog::warn!(
+                "SDF unmatched instances (first {}):",
+                unmatched_instances.len()
+            );
             for inst in &unmatched_instances {
                 clilog::warn!("  {}", inst);
             }
@@ -1666,21 +1669,17 @@ impl FlattenedScriptV1 {
     ) -> PackedDelay {
         *fallback_count += 1;
         match driver {
-            DriverType::AndGate(_, _) => {
-                PackedDelay::from_u64(and_delay.0, and_delay.1)
-            }
-            DriverType::DFF(_) => {
-                dff_timing
-                    .as_ref()
-                    .map(|t| PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
-                    .unwrap_or_default()
-            }
-            DriverType::SRAM(_) => {
-                sram_timing
-                    .as_ref()
-                    .map(|t| PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps))
-                    .unwrap_or(PackedDelay::new(1, 1))
-            }
+            DriverType::AndGate(_, _) => PackedDelay::from_u64(and_delay.0, and_delay.1),
+            DriverType::DFF(_) => dff_timing
+                .as_ref()
+                .map(|t| PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
+                .unwrap_or_default(),
+            DriverType::SRAM(_) => sram_timing
+                .as_ref()
+                .map(|t| {
+                    PackedDelay::from_u64(t.read_clk_to_data_rise_ps, t.read_clk_to_data_fall_ps)
+                })
+                .unwrap_or(PackedDelay::new(1, 1)),
             _ => PackedDelay::default(),
         }
     }
@@ -1690,8 +1689,8 @@ impl FlattenedScriptV1 {
 mod sdf_delay_tests {
     use super::*;
     use crate::aig::AIG;
+    use crate::sdf_parser::{SdfCorner, SdfFile};
     use crate::sky130::SKY130LeafPins;
-    use crate::sdf_parser::{SdfFile, SdfCorner};
 
     /// Helper: build a minimal FlattenedScriptV1 suitable for load_timing_from_sdf.
     fn make_minimal_script(_aig: &AIG) -> FlattenedScriptV1 {
@@ -1720,9 +1719,8 @@ mod sdf_delay_tests {
     fn load_inv_chain() -> (netlistdb::NetlistDB, AIG) {
         let path = std::path::PathBuf::from("tests/timing_test/sky130_timing/inv_chain.v");
         assert!(path.exists(), "inv_chain.v not found");
-        let netlistdb = netlistdb::NetlistDB::from_sverilog_file(
-            &path, None, &SKY130LeafPins,
-        ).expect("Failed to parse inv_chain.v");
+        let netlistdb = netlistdb::NetlistDB::from_sverilog_file(&path, None, &SKY130LeafPins)
+            .expect("Failed to parse inv_chain.v");
         let aig = AIG::from_netlistdb(&netlistdb);
         (netlistdb, aig)
     }
@@ -1731,8 +1729,10 @@ mod sdf_delay_tests {
     fn build_cellid_to_sdf_path(netlistdb: &netlistdb::NetlistDB) -> HashMap<usize, String> {
         let mut map = HashMap::new();
         for cellid in 1..netlistdb.num_cells {
-            let parts: Vec<&str> = netlistdb.cellnames[cellid].iter()
-                .map(|s| s.as_str()).collect::<Vec<_>>();
+            let parts: Vec<&str> = netlistdb.cellnames[cellid]
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>();
             let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
             map.insert(cellid, sdf_path);
         }
@@ -1745,14 +1745,16 @@ mod sdf_delay_tests {
     fn test_sdf_delay_application() {
         let (netlistdb, aig) = load_inv_chain();
         let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("Failed to parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
 
         let mut script = make_minimal_script(&aig);
         script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, true);
 
-        assert_eq!(script.gate_delays.len(), aig.num_aigpins + 1,
-            "gate_delays length should match num_aigpins + 1");
+        assert_eq!(
+            script.gate_delays.len(),
+            aig.num_aigpins + 1,
+            "gate_delays length should match num_aigpins + 1"
+        );
 
         // With accumulated origins, delays from all cells sharing an AIG pin are summed.
         // For inv_chain.v:
@@ -1760,29 +1762,43 @@ mod sdf_delay_tests {
         //   - dff_out.Q: standalone DFF with its own AIG pin
 
         let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
-        let sdf_path_to_cellid: HashMap<&str, usize> = cellid_to_sdf_path.iter()
+        let sdf_path_to_cellid: HashMap<&str, usize> = cellid_to_sdf_path
+            .iter()
             .map(|(&cid, path)| (path.as_str(), cid))
             .collect();
 
         // Find the AIG pin that has the dff_out origin
         let dff_out_cellid = *sdf_path_to_cellid.get("dff_out").unwrap();
         let dff_out_aigpin = (1..=aig.num_aigpins)
-            .find(|&ap| aig.aigpin_cell_origins[ap].iter().any(|(cid, _, _)| *cid == dff_out_cellid))
+            .find(|&ap| {
+                aig.aigpin_cell_origins[ap]
+                    .iter()
+                    .any(|(cid, _, _)| *cid == dff_out_cellid)
+            })
             .expect("dff_out should have a cell origin entry");
 
         let dff_out_delay = &script.gate_delays[dff_out_aigpin];
         // dff_out: IOPATH CLK Q rise=360ps, fall=340ps + wire (i15.Y→dff_out.D) rise=15ps, fall=12ps
-        assert_eq!(dff_out_delay.rise_ps, 375,
-            "dff_out rise: expected 375ps (360+15), got {}ps", dff_out_delay.rise_ps);
-        assert_eq!(dff_out_delay.fall_ps, 352,
-            "dff_out fall: expected 352ps (340+12), got {}ps", dff_out_delay.fall_ps);
+        assert_eq!(
+            dff_out_delay.rise_ps, 375,
+            "dff_out rise: expected 375ps (360+15), got {}ps",
+            dff_out_delay.rise_ps
+        );
+        assert_eq!(
+            dff_out_delay.fall_ps, 352,
+            "dff_out fall: expected 352ps (340+12), got {}ps",
+            dff_out_delay.fall_ps
+        );
 
         // With Option<(...)> cell origins, each pin has at most one origin.
         // Multi-origin chain accumulation doesn't apply — each inverter in a chain
         // has its own AIG pin with its own single origin.
 
         // Verify timing is enabled after loading
-        assert!(script.timing_enabled, "timing_enabled should be true after load_timing_from_sdf");
+        assert!(
+            script.timing_enabled,
+            "timing_enabled should be true after load_timing_from_sdf"
+        );
         assert_eq!(script.clock_period_ps, 10000);
     }
 
@@ -1790,8 +1806,7 @@ mod sdf_delay_tests {
     fn test_internal_and_gates_zero_delay() {
         let (netlistdb, aig) = load_inv_chain();
         let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("Failed to parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
 
         let mut script = make_minimal_script(&aig);
         script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
@@ -1853,8 +1868,7 @@ mod sdf_delay_tests {
 
         let (netlistdb, aig) = load_inv_chain();
         let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("Failed to parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
 
         let mut script = make_minimal_script(&aig);
         script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
@@ -1865,12 +1879,16 @@ mod sdf_delay_tests {
             .expect("Should have a pin with 17 origins (1 DFF + 16 inverters)");
 
         let chain_delay = &script.gate_delays[chain_aigpin];
-        assert_eq!(chain_delay.rise_ps, 1323,
+        assert_eq!(
+            chain_delay.rise_ps, 1323,
             "Analytical chain rise: 350 + sum(16 inverter+wire) = 1323ps, got {}ps",
-            chain_delay.rise_ps);
-        assert_eq!(chain_delay.fall_ps, 1125,
+            chain_delay.rise_ps
+        );
+        assert_eq!(
+            chain_delay.fall_ps, 1125,
             "Analytical chain fall: 330 + sum(16 inverter+wire) = 1125ps, got {}ps",
-            chain_delay.fall_ps);
+            chain_delay.fall_ps
+        );
 
         // Verify each inverter's individual contribution by checking origins
         let origins = &aig.aigpin_cell_origins[chain_aigpin];
@@ -1889,19 +1907,30 @@ mod sdf_delay_tests {
 
         // dff_out verification
         let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
-        let dff_out_cellid = cellid_to_sdf_path.iter()
+        let dff_out_cellid = cellid_to_sdf_path
+            .iter()
             .find(|(_, path)| path.as_str() == "dff_out")
             .map(|(&cid, _)| cid)
             .expect("dff_out should exist");
         let dff_out_aigpin = (1..=aig.num_aigpins)
-            .find(|&ap| aig.aigpin_cell_origins[ap].iter().any(|(cid, _, _)| *cid == dff_out_cellid))
+            .find(|&ap| {
+                aig.aigpin_cell_origins[ap]
+                    .iter()
+                    .any(|(cid, _, _)| *cid == dff_out_cellid)
+            })
             .expect("dff_out should have a cell origin");
 
         let dff_out_delay = &script.gate_delays[dff_out_aigpin];
-        assert_eq!(dff_out_delay.rise_ps, 375,
-            "Analytical dff_out rise: 360 + 15 = 375ps, got {}ps", dff_out_delay.rise_ps);
-        assert_eq!(dff_out_delay.fall_ps, 352,
-            "Analytical dff_out fall: 340 + 12 = 352ps, got {}ps", dff_out_delay.fall_ps);
+        assert_eq!(
+            dff_out_delay.rise_ps, 375,
+            "Analytical dff_out rise: 360 + 15 = 375ps, got {}ps",
+            dff_out_delay.rise_ps
+        );
+        assert_eq!(
+            dff_out_delay.fall_ps, 352,
+            "Analytical dff_out fall: 340 + 12 = 352ps, got {}ps",
+            dff_out_delay.fall_ps
+        );
     }
 
     // === Test 4: GPU delay injection quantization ===
@@ -1945,14 +1974,21 @@ mod sdf_delay_tests {
             1,
         );
         script.inject_timing_to_script();
-        assert_eq!(script.blocks_data[0], 100, "100ps stored as raw picoseconds");
+        assert_eq!(
+            script.blocks_data[0], 100,
+            "100ps stored as raw picoseconds"
+        );
     }
 
     #[test]
     fn test_max_of_thread_position() {
         // Two aigpins [350ps, 0ps] → max=350, stored as raw 350
         let mut script = make_delay_injection_script(
-            vec![PackedDelay::default(), PackedDelay::new(350, 350), PackedDelay::new(0, 0)],
+            vec![
+                PackedDelay::default(),
+                PackedDelay::new(350, 350),
+                PackedDelay::new(0, 0),
+            ],
             vec![(0, vec![1, 2])],
             1,
         );
@@ -1975,7 +2011,11 @@ mod sdf_delay_tests {
     fn test_ordering_preserved() {
         // delays 5ps and 15ps → stored as raw 5 and 15
         let mut script = make_delay_injection_script(
-            vec![PackedDelay::default(), PackedDelay::new(5, 5), PackedDelay::new(15, 15)],
+            vec![
+                PackedDelay::default(),
+                PackedDelay::new(5, 5),
+                PackedDelay::new(15, 15),
+            ],
             vec![(0, vec![1]), (1, vec![2])],
             2,
         );
@@ -2009,8 +2049,7 @@ mod sdf_delay_tests {
     )
   )
 )"#;
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("parse SDF");
         let cell = sdf.get_cell("u_inv").expect("u_inv not found");
         let iopath = cell.iopaths.iter().find(|p| p.output_pin == "Y");
         assert!(iopath.is_some(), "Should find exact IOPATH match for Y");
@@ -2037,8 +2076,7 @@ mod sdf_delay_tests {
     )
   )
 )"#;
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("parse SDF");
         let cell = sdf.get_cell("u_dff").expect("u_dff not found");
 
         // Try to match "Q" — won't find it
@@ -2057,21 +2095,27 @@ mod sdf_delay_tests {
     fn test_sdf_dff_constraints_loaded() {
         let (netlistdb, aig) = load_inv_chain();
         let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("Failed to parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
 
         let mut script = make_minimal_script(&aig);
         script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
 
         // inv_chain has 2 DFFs: dff_in and dff_out
-        assert_eq!(script.dff_constraints.len(), 2,
-            "Expected 2 DFF constraints, got {}", script.dff_constraints.len());
+        assert_eq!(
+            script.dff_constraints.len(),
+            2,
+            "Expected 2 DFF constraints, got {}",
+            script.dff_constraints.len()
+        );
 
         // Build a map from cell_id to constraint for easier lookup
         let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
-        let constraint_by_name: Vec<(&str, &DFFConstraint)> = script.dff_constraints.iter()
+        let constraint_by_name: Vec<(&str, &DFFConstraint)> = script
+            .dff_constraints
+            .iter()
             .map(|c| {
-                let name = cellid_to_sdf_path.get(&(c.cell_id as usize))
+                let name = cellid_to_sdf_path
+                    .get(&(c.cell_id as usize))
                     .map(|s| s.as_str())
                     .unwrap_or("unknown");
                 (name, c)
@@ -2079,26 +2123,48 @@ mod sdf_delay_tests {
             .collect();
 
         // dff_in: SETUP 0.080ns=80ps, HOLD -0.030ns → clamped to 0
-        let dff_in = constraint_by_name.iter().find(|(name, _)| *name == "dff_in")
+        let dff_in = constraint_by_name
+            .iter()
+            .find(|(name, _)| *name == "dff_in")
             .expect("dff_in constraint not found");
-        assert_eq!(dff_in.1.setup_ps, 80,
-            "dff_in setup: expected 80ps, got {}ps", dff_in.1.setup_ps);
-        assert_eq!(dff_in.1.hold_ps, 0,
-            "dff_in hold: expected 0ps (negative clamped), got {}ps", dff_in.1.hold_ps);
+        assert_eq!(
+            dff_in.1.setup_ps, 80,
+            "dff_in setup: expected 80ps, got {}ps",
+            dff_in.1.setup_ps
+        );
+        assert_eq!(
+            dff_in.1.hold_ps, 0,
+            "dff_in hold: expected 0ps (negative clamped), got {}ps",
+            dff_in.1.hold_ps
+        );
 
         // dff_out: SETUP 0.085ns=85ps, HOLD -0.028ns → clamped to 0
-        let dff_out = constraint_by_name.iter().find(|(name, _)| *name == "dff_out")
+        let dff_out = constraint_by_name
+            .iter()
+            .find(|(name, _)| *name == "dff_out")
             .expect("dff_out constraint not found");
-        assert_eq!(dff_out.1.setup_ps, 85,
-            "dff_out setup: expected 85ps, got {}ps", dff_out.1.setup_ps);
-        assert_eq!(dff_out.1.hold_ps, 0,
-            "dff_out hold: expected 0ps (negative clamped), got {}ps", dff_out.1.hold_ps);
+        assert_eq!(
+            dff_out.1.setup_ps, 85,
+            "dff_out setup: expected 85ps, got {}ps",
+            dff_out.1.setup_ps
+        );
+        assert_eq!(
+            dff_out.1.hold_ps, 0,
+            "dff_out hold: expected 0ps (negative clamped), got {}ps",
+            dff_out.1.hold_ps
+        );
 
         // data_state_pos should be u32::MAX because make_minimal_script has empty output_map
-        assert_eq!(dff_in.1.data_state_pos, u32::MAX,
-            "dff_in data_state_pos should be u32::MAX with empty output_map");
-        assert_eq!(dff_out.1.data_state_pos, u32::MAX,
-            "dff_out data_state_pos should be u32::MAX with empty output_map");
+        assert_eq!(
+            dff_in.1.data_state_pos,
+            u32::MAX,
+            "dff_in data_state_pos should be u32::MAX with empty output_map"
+        );
+        assert_eq!(
+            dff_out.1.data_state_pos,
+            u32::MAX,
+            "dff_out data_state_pos should be u32::MAX with empty output_map"
+        );
     }
 
     #[test]
@@ -2115,8 +2181,7 @@ mod sdf_delay_tests {
     (INSTANCE u_buf)
   )
 )"#;
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ)
-            .expect("parse SDF");
+        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("parse SDF");
         let cell = sdf.get_cell("u_buf").expect("u_buf not found");
         assert!(cell.iopaths.is_empty(), "Should have no IOPATHs");
         // In load_timing_from_sdf, this case falls through to liberty fallback
@@ -2166,9 +2231,16 @@ mod constraint_buffer_tests {
 
     #[test]
     fn test_single_dff_constraint() {
-        let script = make_script_with_constraints(4, 25000, vec![
-            DFFConstraint { setup_ps: 200, hold_ps: 50, data_state_pos: 35, cell_id: 1 },
-        ]);
+        let script = make_script_with_constraints(
+            4,
+            25000,
+            vec![DFFConstraint {
+                setup_ps: 200,
+                hold_ps: 50,
+                data_state_pos: 35,
+                cell_id: 1,
+            }],
+        );
         let (clock_ps, buf) = script.build_timing_constraint_buffer();
         assert_eq!(clock_ps, 25000);
         // data_state_pos 35 → word_idx 1
@@ -2180,10 +2252,24 @@ mod constraint_buffer_tests {
 
     #[test]
     fn test_multiple_dffs_same_word_takes_min() {
-        let script = make_script_with_constraints(2, 10000, vec![
-            DFFConstraint { setup_ps: 300, hold_ps: 100, data_state_pos: 5, cell_id: 1 },
-            DFFConstraint { setup_ps: 150, hold_ps: 200, data_state_pos: 10, cell_id: 2 },
-        ]);
+        let script = make_script_with_constraints(
+            2,
+            10000,
+            vec![
+                DFFConstraint {
+                    setup_ps: 300,
+                    hold_ps: 100,
+                    data_state_pos: 5,
+                    cell_id: 1,
+                },
+                DFFConstraint {
+                    setup_ps: 150,
+                    hold_ps: 200,
+                    data_state_pos: 10,
+                    cell_id: 2,
+                },
+            ],
+        );
         let (_clock_ps, buf) = script.build_timing_constraint_buffer();
         // Both in word 0 → min(300,150)=150 setup, min(100,200)=100 hold
         assert_eq!(buf[0], (150u32 << 16) | 100);
@@ -2191,18 +2277,32 @@ mod constraint_buffer_tests {
 
     #[test]
     fn test_skip_invalid_data_state_pos() {
-        let script = make_script_with_constraints(2, 10000, vec![
-            DFFConstraint { setup_ps: 200, hold_ps: 50, data_state_pos: u32::MAX, cell_id: 1 },
-        ]);
+        let script = make_script_with_constraints(
+            2,
+            10000,
+            vec![DFFConstraint {
+                setup_ps: 200,
+                hold_ps: 50,
+                data_state_pos: u32::MAX,
+                cell_id: 1,
+            }],
+        );
         let (_clock_ps, buf) = script.build_timing_constraint_buffer();
         assert!(buf.iter().all(|&v| v == 0));
     }
 
     #[test]
     fn test_skip_out_of_range_word() {
-        let script = make_script_with_constraints(2, 10000, vec![
-            DFFConstraint { setup_ps: 200, hold_ps: 50, data_state_pos: 100, cell_id: 1 },
-        ]);
+        let script = make_script_with_constraints(
+            2,
+            10000,
+            vec![DFFConstraint {
+                setup_ps: 200,
+                hold_ps: 50,
+                data_state_pos: 100,
+                cell_id: 1,
+            }],
+        );
         let (_clock_ps, buf) = script.build_timing_constraint_buffer();
         // word_idx = 100/32 = 3, but num_words = 2 → skipped
         assert!(buf.iter().all(|&v| v == 0));
@@ -2253,7 +2353,10 @@ mod constraint_buffer_tests {
 
         // Borderline: arrival=800, setup=200 → 800+200=1000, NOT > 1000 → no violation
         let result = check_setup_violation(800, 200, 1000);
-        assert!(result.is_none(), "No violation when arrival+setup == clock_period");
+        assert!(
+            result.is_none(),
+            "No violation when arrival+setup == clock_period"
+        );
     }
 
     #[test]
@@ -2290,7 +2393,10 @@ mod constraint_buffer_tests {
 
         // arrival=0, hold=50 → 0 < 50 → violation (hold check has no arrival>0 guard)
         let result = check_hold_violation(0, 50);
-        assert!(result.is_some(), "arrival=0 should still trigger hold violation");
+        assert!(
+            result.is_some(),
+            "arrival=0 should still trigger hold violation"
+        );
         assert_eq!(result.unwrap(), -50, "Slack should be -50ps");
     }
 
@@ -2309,23 +2415,40 @@ mod constraint_buffer_tests {
         // Setup: any arrival + 0 > clock_period only if arrival > clock_period (unlikely in u16)
         // Hold: arrival < 0 is impossible for u16
         let result = check_hold_violation(0, hold_ps);
-        assert!(result.is_none(), "Zero hold constraint should never trigger");
+        assert!(
+            result.is_none(),
+            "Zero hold constraint should never trigger"
+        );
 
         let result = check_hold_violation(500, hold_ps);
-        assert!(result.is_none(), "Zero hold constraint should never trigger");
+        assert!(
+            result.is_none(),
+            "Zero hold constraint should never trigger"
+        );
     }
 
     #[test]
     fn test_constraint_buffer_with_tight_clock() {
         // Build constraints with setup=200ps DFF at word 5 (data_state_pos=160..191)
-        let script = make_script_with_constraints(8, 1000, vec![
-            DFFConstraint { setup_ps: 200, hold_ps: 50, data_state_pos: 160, cell_id: 1 },
-        ]);
+        let script = make_script_with_constraints(
+            8,
+            1000,
+            vec![DFFConstraint {
+                setup_ps: 200,
+                hold_ps: 50,
+                data_state_pos: 160,
+                cell_id: 1,
+            }],
+        );
         let (clock_ps, buf) = script.build_timing_constraint_buffer();
         assert_eq!(clock_ps, 1000);
 
         // Verify constraint is at word 5 (160/32 = 5)
-        assert_eq!(buf[5], (200u32 << 16) | 50, "Word 5 should have packed constraint");
+        assert_eq!(
+            buf[5],
+            (200u32 << 16) | 50,
+            "Word 5 should have packed constraint"
+        );
         // Other words should be zero
         for i in [0, 1, 2, 3, 4, 6, 7] {
             assert_eq!(buf[i], 0, "Word {} should have no constraint", i);
@@ -2334,7 +2457,10 @@ mod constraint_buffer_tests {
         // Now simulate arrival=850ps at this word → setup violation
         let setup_ps = (buf[5] >> 16) as u16;
         let result = check_setup_violation(850, setup_ps, clock_ps);
-        assert!(result.is_some(), "arrival=850 + setup=200 = 1050 > 1000 → violation");
+        assert!(
+            result.is_some(),
+            "arrival=850 + setup=200 = 1050 > 1000 → violation"
+        );
         assert_eq!(result.unwrap(), -50, "Slack should be -50ps");
     }
 
@@ -2346,18 +2472,24 @@ mod constraint_buffer_tests {
         // Even with a tight clock where arrival + setup > clock_period,
         // the check must NOT fire when arrival == 0.
         let result = check_setup_violation(0, 200, 100);
-        assert!(result.is_none(),
-            "arrival=0 must skip setup check even when 0+200=200 > 100");
+        assert!(
+            result.is_none(),
+            "arrival=0 must skip setup check even when 0+200=200 > 100"
+        );
 
         // Confirm a non-zero arrival with same parameters DOES fire
         let result = check_setup_violation(1, 200, 100);
-        assert!(result.is_some(),
-            "arrival=1 should trigger: 1+200=201 > 100");
+        assert!(
+            result.is_some(),
+            "arrival=1 should trigger: 1+200=201 > 100"
+        );
 
         // Also verify arrival=0 with a very large setup still doesn't fire
         let result = check_setup_violation(0, u16::MAX, 1);
-        assert!(result.is_none(),
-            "arrival=0 must always skip, regardless of setup or clock_period");
+        assert!(
+            result.is_none(),
+            "arrival=0 must always skip, regardless of setup or clock_period"
+        );
     }
 
     #[test]
@@ -2369,27 +2501,35 @@ mod constraint_buffer_tests {
 
         // arrival=65000, setup=1000 → (u32)66000 > 60000 → violation
         let result = check_setup_violation(65000, 1000, 60000);
-        assert!(result.is_some(),
-            "65000+1000=66000 > 60000 → violation");
-        assert_eq!(result.unwrap(), 60000 - 65000 - 1000,
-            "Slack should be -6000ps");
+        assert!(result.is_some(), "65000+1000=66000 > 60000 → violation");
+        assert_eq!(
+            result.unwrap(),
+            60000 - 65000 - 1000,
+            "Slack should be -6000ps"
+        );
 
         // arrival=65000, setup=1000 → (u32)66000 > 70000 → no violation
         let result = check_setup_violation(65000, 1000, 70000);
-        assert!(result.is_none(),
-            "65000+1000=66000 <= 70000 → no violation");
+        assert!(result.is_none(), "65000+1000=66000 <= 70000 → no violation");
 
         // Extreme: both at u16::MAX
         // arrival=65535, setup=65535 → (u32)131070 > 131069 → violation
         let result = check_setup_violation(u16::MAX, u16::MAX, 131069);
-        assert!(result.is_some(),
-            "u16::MAX + u16::MAX = 131070 > 131069 → violation");
-        assert_eq!(result.unwrap(), 131069 - 65535 - 65535,
-            "Slack should be -1ps");
+        assert!(
+            result.is_some(),
+            "u16::MAX + u16::MAX = 131070 > 131069 → violation"
+        );
+        assert_eq!(
+            result.unwrap(),
+            131069 - 65535 - 65535,
+            "Slack should be -1ps"
+        );
 
         // Same extreme but clock_period accommodates it
         let result = check_setup_violation(u16::MAX, u16::MAX, 131070);
-        assert!(result.is_none(),
-            "u16::MAX + u16::MAX = 131070 <= 131070 → no violation");
+        assert!(
+            result.is_none(),
+            "u16::MAX + u16::MAX = 131070 <= 131070 → no violation"
+        );
     }
 }

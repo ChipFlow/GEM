@@ -131,7 +131,10 @@ impl SdfFile {
         let num_timing_checks: usize = self.cells.iter().map(|c| c.timing_checks.len()).sum();
         format!(
             "SDF: {} cells, {} IOPATH delays, {} INTERCONNECT delays, {} timing checks",
-            self.cells.len(), num_iopaths, num_interconnects, num_timing_checks
+            self.cells.len(),
+            num_iopaths,
+            num_interconnects,
+            num_timing_checks
         )
     }
 }
@@ -147,7 +150,9 @@ impl std::fmt::Display for SdfParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SdfParseError::Io(msg) => write!(f, "SDF I/O error: {}", msg),
-            SdfParseError::Syntax(msg, pos) => write!(f, "SDF syntax error at byte {}: {}", pos, msg),
+            SdfParseError::Syntax(msg, pos) => {
+                write!(f, "SDF syntax error at byte {}: {}", pos, msg)
+            }
             SdfParseError::UnexpectedEof => write!(f, "SDF unexpected end of file"),
         }
     }
@@ -171,7 +176,10 @@ struct Tokenizer<'a> {
 
 impl<'a> Tokenizer<'a> {
     fn new(input: &'a str) -> Self {
-        Self { input: input.as_bytes(), pos: 0 }
+        Self {
+            input: input.as_bytes(),
+            pos: 0,
+        }
     }
 
     fn skip_whitespace_and_comments(&mut self) {
@@ -226,7 +234,9 @@ impl<'a> Tokenizer<'a> {
                 while self.pos < self.input.len() && self.input[self.pos] != b'"' {
                     self.pos += 1;
                 }
-                let s = std::str::from_utf8(&self.input[start..self.pos]).unwrap_or("").to_string();
+                let s = std::str::from_utf8(&self.input[start..self.pos])
+                    .unwrap_or("")
+                    .to_string();
                 if self.pos < self.input.len() {
                     self.pos += 1; // skip closing quote
                 }
@@ -280,7 +290,10 @@ impl<'a> SdfParser<'a> {
     fn expect_lparen(&mut self) -> Result<(), SdfParseError> {
         match self.tokenizer.next_token() {
             Some(Token::LParen) => Ok(()),
-            Some(t) => Err(SdfParseError::Syntax(format!("expected '(', got {:?}", t), self.tokenizer.pos)),
+            Some(t) => Err(SdfParseError::Syntax(
+                format!("expected '(', got {:?}", t),
+                self.tokenizer.pos,
+            )),
             None => Err(SdfParseError::UnexpectedEof),
         }
     }
@@ -288,7 +301,10 @@ impl<'a> SdfParser<'a> {
     fn expect_rparen(&mut self) -> Result<(), SdfParseError> {
         match self.tokenizer.next_token() {
             Some(Token::RParen) => Ok(()),
-            Some(t) => Err(SdfParseError::Syntax(format!("expected ')', got {:?}", t), self.tokenizer.pos)),
+            Some(t) => Err(SdfParseError::Syntax(
+                format!("expected ')', got {:?}", t),
+                self.tokenizer.pos,
+            )),
             None => Err(SdfParseError::UnexpectedEof),
         }
     }
@@ -296,7 +312,10 @@ impl<'a> SdfParser<'a> {
     fn expect_keyword(&mut self, kw: &str) -> Result<(), SdfParseError> {
         match self.tokenizer.next_token() {
             Some(Token::Str(s)) if s.eq_ignore_ascii_case(kw) => Ok(()),
-            Some(t) => Err(SdfParseError::Syntax(format!("expected '{}', got {:?}", kw, t), self.tokenizer.pos)),
+            Some(t) => Err(SdfParseError::Syntax(
+                format!("expected '{}', got {:?}", kw, t),
+                self.tokenizer.pos,
+            )),
             None => Err(SdfParseError::UnexpectedEof),
         }
     }
@@ -304,7 +323,10 @@ impl<'a> SdfParser<'a> {
     fn read_str(&mut self) -> Result<String, SdfParseError> {
         match self.tokenizer.next_token() {
             Some(Token::Str(s)) => Ok(s),
-            Some(t) => Err(SdfParseError::Syntax(format!("expected string, got {:?}", t), self.tokenizer.pos)),
+            Some(t) => Err(SdfParseError::Syntax(
+                format!("expected string, got {:?}", t),
+                self.tokenizer.pos,
+            )),
             None => Err(SdfParseError::UnexpectedEof),
         }
     }
@@ -346,8 +368,8 @@ impl<'a> SdfParser<'a> {
                     self.tokenizer.next_token();
                     let keyword = self.read_str()?;
                     match keyword.to_uppercase().as_str() {
-                        "SDFVERSION" | "DATE" | "VENDOR" | "PROGRAM" | "VERSION"
-                        | "DIVIDER" | "VOLTAGE" | "PROCESS" | "TEMPERATURE" => {
+                        "SDFVERSION" | "DATE" | "VENDOR" | "PROGRAM" | "VERSION" | "DIVIDER"
+                        | "VOLTAGE" | "PROCESS" | "TEMPERATURE" => {
                             // Read and discard value(s) until matching ')'
                             self.skip_balanced()?;
                         }
@@ -619,7 +641,10 @@ impl<'a> SdfParser<'a> {
                     self.parse_triple(&s, timescale_ps)
                 } else {
                     let val: f64 = s.parse().map_err(|_| {
-                        SdfParseError::Syntax(format!("invalid delay number '{}'", s), self.tokenizer.pos)
+                        SdfParseError::Syntax(
+                            format!("invalid delay number '{}'", s),
+                            self.tokenizer.pos,
+                        )
                     })?;
                     Ok((val * timescale_ps).round() as u64)
                 }
@@ -641,12 +666,13 @@ impl<'a> SdfParser<'a> {
             if val_str.is_empty() {
                 // Empty slot in triple — common in OpenSTA output (min::max with no typ).
                 // Fall back to any non-empty slot: try all three positions.
-                let fallback = parts.iter()
-                    .map(|p| p.trim())
-                    .find(|p| !p.is_empty());
+                let fallback = parts.iter().map(|p| p.trim()).find(|p| !p.is_empty());
                 if let Some(fb) = fallback {
                     let val: f64 = fb.parse().map_err(|_| {
-                        SdfParseError::Syntax(format!("invalid delay triple '{}'", s), self.tokenizer.pos)
+                        SdfParseError::Syntax(
+                            format!("invalid delay triple '{}'", s),
+                            self.tokenizer.pos,
+                        )
                     })?;
                     return Ok((val * timescale_ps).round() as u64);
                 } else {
@@ -654,7 +680,10 @@ impl<'a> SdfParser<'a> {
                 }
             }
             let val: f64 = val_str.parse().map_err(|_| {
-                SdfParseError::Syntax(format!("invalid delay number '{}' in triple '{}'", val_str, s), self.tokenizer.pos)
+                SdfParseError::Syntax(
+                    format!("invalid delay number '{}' in triple '{}'", val_str, s),
+                    self.tokenizer.pos,
+                )
             })?;
             Ok((val * timescale_ps).round() as u64)
         } else if parts.len() == 1 {
@@ -663,7 +692,10 @@ impl<'a> SdfParser<'a> {
             })?;
             Ok((val * timescale_ps).round() as u64)
         } else {
-            Err(SdfParseError::Syntax(format!("invalid delay triple '{}'", s), self.tokenizer.pos))
+            Err(SdfParseError::Syntax(
+                format!("invalid delay triple '{}'", s),
+                self.tokenizer.pos,
+            ))
         }
     }
 
@@ -683,11 +715,13 @@ impl<'a> SdfParser<'a> {
                     let keyword = self.read_str()?;
                     match keyword.to_uppercase().as_str() {
                         "SETUP" => {
-                            let check = self.parse_timing_check_entry(TimingCheckType::Setup, timescale_ps)?;
+                            let check = self
+                                .parse_timing_check_entry(TimingCheckType::Setup, timescale_ps)?;
                             checks.push(check);
                         }
                         "HOLD" => {
-                            let check = self.parse_timing_check_entry(TimingCheckType::Hold, timescale_ps)?;
+                            let check =
+                                self.parse_timing_check_entry(TimingCheckType::Hold, timescale_ps)?;
                             checks.push(check);
                         }
                         _ => {
@@ -743,7 +777,10 @@ impl<'a> SdfParser<'a> {
                     self.parse_signed_triple(&s, timescale_ps)
                 } else {
                     let val: f64 = s.parse().map_err(|_| {
-                        SdfParseError::Syntax(format!("invalid delay number '{}'", s), self.tokenizer.pos)
+                        SdfParseError::Syntax(
+                            format!("invalid delay number '{}'", s),
+                            self.tokenizer.pos,
+                        )
                     })?;
                     Ok((val * timescale_ps).round() as i64)
                 }
@@ -763,12 +800,13 @@ impl<'a> SdfParser<'a> {
             let val_str = parts[idx].trim();
             if val_str.is_empty() {
                 // Empty slot — fall back to any non-empty slot (OpenSTA min::max format)
-                let fallback = parts.iter()
-                    .map(|p| p.trim())
-                    .find(|p| !p.is_empty());
+                let fallback = parts.iter().map(|p| p.trim()).find(|p| !p.is_empty());
                 if let Some(fb) = fallback {
                     let val: f64 = fb.parse().map_err(|_| {
-                        SdfParseError::Syntax(format!("invalid delay triple '{}'", s), self.tokenizer.pos)
+                        SdfParseError::Syntax(
+                            format!("invalid delay triple '{}'", s),
+                            self.tokenizer.pos,
+                        )
                     })?;
                     return Ok((val * timescale_ps).round() as i64);
                 } else {
@@ -776,7 +814,10 @@ impl<'a> SdfParser<'a> {
                 }
             }
             let val: f64 = val_str.parse().map_err(|_| {
-                SdfParseError::Syntax(format!("invalid number '{}' in triple '{}'", val_str, s), self.tokenizer.pos)
+                SdfParseError::Syntax(
+                    format!("invalid number '{}' in triple '{}'", val_str, s),
+                    self.tokenizer.pos,
+                )
             })?;
             Ok((val * timescale_ps).round() as i64)
         } else if parts.len() == 1 {
@@ -785,7 +826,10 @@ impl<'a> SdfParser<'a> {
             })?;
             Ok((val * timescale_ps).round() as i64)
         } else {
-            Err(SdfParseError::Syntax(format!("invalid delay triple '{}'", s), self.tokenizer.pos))
+            Err(SdfParseError::Syntax(
+                format!("invalid delay triple '{}'", s),
+                self.tokenizer.pos,
+            ))
         }
     }
 }
@@ -794,7 +838,9 @@ impl<'a> SdfParser<'a> {
 fn parse_timescale(ts: &str) -> Result<f64, SdfParseError> {
     let ts = ts.trim();
     // Find where unit starts
-    let num_end = ts.find(|c: char| c.is_ascii_alphabetic()).unwrap_or(ts.len());
+    let num_end = ts
+        .find(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(ts.len());
     let num_str = ts[..num_end].trim();
     let unit_str = ts[num_end..].trim().to_lowercase();
 
@@ -813,7 +859,12 @@ fn parse_timescale(ts: &str) -> Result<f64, SdfParseError> {
         "ns" => 1e3,
         "ps" => 1.0,
         "fs" => 1e-3,
-        _ => return Err(SdfParseError::Syntax(format!("unknown timescale unit '{}'", unit_str), 0)),
+        _ => {
+            return Err(SdfParseError::Syntax(
+                format!("unknown timescale unit '{}'", unit_str),
+                0,
+            ))
+        }
     };
 
     Ok(multiplier * unit_ps)
@@ -852,9 +903,17 @@ mod tests {
 
         // Check timing checks
         assert_eq!(dff_in.timing_checks.len(), 2);
-        let setup = dff_in.timing_checks.iter().find(|c| c.check_type == TimingCheckType::Setup).unwrap();
+        let setup = dff_in
+            .timing_checks
+            .iter()
+            .find(|c| c.check_type == TimingCheckType::Setup)
+            .unwrap();
         assert_eq!(setup.value_ps, 80); // 0.080ns = 80ps
-        let hold = dff_in.timing_checks.iter().find(|c| c.check_type == TimingCheckType::Hold).unwrap();
+        let hold = dff_in
+            .timing_checks
+            .iter()
+            .find(|c| c.check_type == TimingCheckType::Hold)
+            .unwrap();
         assert_eq!(hold.value_ps, -30); // -0.030ns = -30ps
 
         // Check inverter i0
@@ -917,7 +976,9 @@ mod tests {
         assert_eq!(cell.timing_checks.len(), 4);
 
         // Verify edge-qualified data pins are parsed correctly
-        let setups: Vec<_> = cell.timing_checks.iter()
+        let setups: Vec<_> = cell
+            .timing_checks
+            .iter()
             .filter(|c| c.check_type == TimingCheckType::Setup)
             .collect();
         assert_eq!(setups.len(), 2);
