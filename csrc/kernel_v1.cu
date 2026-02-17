@@ -53,7 +53,7 @@ void simulate_v1_noninteractive_timed_cuda(
   usize state_size,
   u32 *states_noninteractive,
   const u32 *timing_constraints,
-  void *event_buffer
+  u8 *event_buffer
   )
 {
   void *arg_ptrs[10] = {
