@@ -310,9 +310,7 @@ jobs:
 
       - name: Install CF_SRAM IP via ipm
         run: |
-          uv tool install cf-ipm
-          cd ${{ github.workspace }}
-          ipm install CF_SRAM_1024x32
+          uv run --with cf-ipm -- ipm install CF_SRAM_1024x32
           ls -la ip/CF_SRAM_1024x32/gds/ ip/CF_SRAM_1024x32/lef/ ip/CF_SRAM_1024x32/lib/
 
       - name: Generate RTLIL and firmware from design source

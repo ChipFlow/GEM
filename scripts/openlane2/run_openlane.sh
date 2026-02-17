@@ -25,6 +25,15 @@ CONFIG="${2:-$SCRIPT_DIR/config.json}"
 OPENLANE_IMAGE="ghcr.io/efabless/openlane2:2.4.0.dev1"
 PDK_VOLUME="openlane-pdk"
 
+# Ensure CF_SRAM IP is installed (idempotent)
+SRAM_IP_DIR="$GEM_ROOT/ip/CF_SRAM_1024x32"
+if [ ! -d "$SRAM_IP_DIR" ]; then
+  echo "=== Installing CF_SRAM_1024x32 IP via ipm ==="
+  cd "$GEM_ROOT"
+  uv run --with cf-ipm -- ipm install CF_SRAM_1024x32
+  cd "$OLDPWD"
+fi
+
 echo "=== OpenLane2 P&R ==="
 echo "Design: $DESIGN_DIR"
 echo "Config: $CONFIG"
@@ -34,6 +43,8 @@ echo "Image:  $OPENLANE_IMAGE"
 docker run --rm \
   -v "$PDK_VOLUME:/root/.volare" \
   -v "$DESIGN_DIR:/design" \
+  -v "$GEM_ROOT/sram:/sram:ro" \
+  -v "$SRAM_IP_DIR:/sram_ip:ro" \
   -v "$CONFIG:/design/config.json:ro" \
   -w /design \
   "$OPENLANE_IMAGE" \

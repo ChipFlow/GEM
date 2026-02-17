@@ -33,3 +33,6 @@ tests/*/build/
 
 # uv lock file
 uv.lock
+
+# IP fetched via cf-ipm at build time
+/ip/
