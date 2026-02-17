@@ -18,5 +18,6 @@ abc -liberty /root/.volare/sky130A/libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd_
 opt_clean -purge
 splitnets
 opt_clean -purge
+insbuf -buf sky130_fd_sc_hd__buf_1 A X
 stat -liberty /root/.volare/sky130A/libs.ref/sky130_fd_sc_hd/lib/sky130_fd_sc_hd__tt_025C_1v80.lib
 write_verilog -noattr -noexpr -nohex -nodec /design/top_synth.v
