@@ -26,6 +26,8 @@ pub struct CosimOpts {
     pub check_with_cpu: bool,
     pub gpu_profile: bool,
     pub clock_period: Option<u64>,
+    /// Clock uncertainty in picoseconds (added to setup/hold constraints to model jitter).
+    pub clock_uncertainty_ps: u64,
 }
 
 /// Result of a co-simulation run.
@@ -2614,6 +2616,10 @@ pub fn run_cosim(
     let mut uart_read_head: u32 = 0;
     let mut wb_trace_read_head: u32 = 0;
 
+    // Timing violation statistics (accumulated from event buffer)
+    let assert_config = crate::event_buffer::AssertConfig::default();
+    let mut sim_stats = crate::event_buffer::SimStats::default();
+
     // Profiling accumulators
     let mut prof_batch_encode: u64 = 0;
     let mut prof_gpu_wait: u64 = 0;
@@ -3121,6 +3127,21 @@ pub fn run_cosim(
                 wb_trace_read_head += 1;
             }
         }
+        // Drain event buffer for timing violations + sim control events
+        {
+            let eb = unsafe { &*(event_buffer_ptr as *const crate::event_buffer::EventBuffer) };
+            let control = crate::event_buffer::process_events(
+                eb,
+                &assert_config,
+                &mut sim_stats,
+                |_, _, _| {},
+            );
+            eb.reset();
+            if control == crate::event_buffer::SimControl::Terminate {
+                clilog::warn!("Simulation terminated by event at tick {}", tick);
+                break;
+            }
+        }
         prof_drain += t_drain.elapsed().as_nanos() as u64;
 
         total_batches += 1;
@@ -3353,6 +3374,46 @@ pub fn run_cosim(
             "GPU flash model encountered unknown command: 0x{:02X}",
             last_error_cmd
         );
+    }
+
+    // ── Timing Analysis Summary ──────────────────────────────────────────
+
+    if script.timing_enabled {
+        println!();
+        println!("=== Timing Analysis ===");
+        println!("Clock period: {}ps", script.clock_period_ps);
+        if opts.clock_uncertainty_ps > 0 {
+            println!("Clock uncertainty: {}ps", opts.clock_uncertainty_ps);
+        }
+        println!(
+            "Setup violations: {} ({} unique endpoints)",
+            sim_stats.setup_violations,
+            sim_stats.setup_violating_endpoints.len()
+        );
+        println!(
+            "Hold violations:  {} ({} unique endpoints)",
+            sim_stats.hold_violations,
+            sim_stats.hold_violating_endpoints.len()
+        );
+        if sim_stats.setup_violations > 0 {
+            println!("WNS (setup): {}ps", sim_stats.worst_setup_slack_ps);
+            println!("TNS (setup): {}ps", sim_stats.total_setup_slack_ps);
+        }
+        if sim_stats.hold_violations > 0 {
+            println!("WHS (hold):  {}ps", sim_stats.worst_hold_slack_ps);
+            println!("THS (hold):  {}ps", sim_stats.total_hold_slack_ps);
+        }
+        if sim_stats.setup_violations == 0 && sim_stats.hold_violations == 0 {
+            println!("TIMING: PASSED");
+        } else {
+            println!("TIMING: VIOLATIONS DETECTED");
+        }
+        if sim_stats.events_dropped > 0 {
+            println!(
+                "WARNING: {} events were dropped (buffer overflow), slack metrics may be approximate",
+                sim_stats.events_dropped
+            );
+        }
     }
 
     // ── Results ──────────────────────────────────────────────────────────

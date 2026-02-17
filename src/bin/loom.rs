@@ -209,6 +209,10 @@ struct CosimArgs {
     /// Enable SDF debug output.
     #[clap(long)]
     sdf_debug: bool,
+
+    /// Clock uncertainty in picoseconds (added to setup/hold constraints to model jitter).
+    #[clap(long, default_value = "0")]
+    clock_uncertainty_ps: u64,
 }
 
 /// Invoke the mt-kahypar partitioner.
@@ -365,7 +369,7 @@ fn cmd_sim(args: SimArgs) {
 
     #[allow(unused_mut)]
     let mut design = setup::load_design(&design_args);
-    let timing_constraints = setup::build_timing_constraints(&design.script);
+    let timing_constraints = setup::build_timing_constraints(&design.script, 0);
 
     // Parse input VCD
     let input_vcd = std::fs::File::open(&args.input_vcd).unwrap();
@@ -1086,7 +1090,8 @@ fn cmd_cosim(args: CosimArgs) {
         };
 
         let mut design = setup::load_design(&design_args);
-        let timing_constraints = setup::build_timing_constraints(&design.script);
+        let timing_constraints =
+            setup::build_timing_constraints(&design.script, args.clock_uncertainty_ps as u16);
 
         let opts = CosimOpts {
             max_cycles: args.max_cycles,
@@ -1095,6 +1100,7 @@ fn cmd_cosim(args: CosimArgs) {
             check_with_cpu: args.check_with_cpu,
             gpu_profile: args.gpu_profile,
             clock_period: args.clock_period,
+            clock_uncertainty_ps: args.clock_uncertainty_ps,
         };
 
         let result =
