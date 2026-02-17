@@ -51,7 +51,8 @@ Setup and hold violations occur when data arrives too late (setup) or too early 
        design.gv design.gemparts \
        --config testbench.json \
        --sdf design.sdf \
-       --sdf-corner typ
+       --sdf-corner typ \
+       --clock-uncertainty-ps 500
    ```
 
 ### CLI Flags Reference
@@ -61,6 +62,7 @@ Setup and hold violations occur when data arrives too late (setup) or too early 
 | `--sdf <path>` | all | Path to SDF file with back-annotated delays |
 | `--sdf-corner <min\|typ\|max>` | all | Which SDF corner to use (default: `typ`) |
 | `--sdf-debug` | all | Print unmatched SDF instances for debugging |
+| `--clock-uncertainty-ps <ps>` | `gpu_sim` | Clock uncertainty/jitter margin in picoseconds (default: 0). Added to both setup and hold constraints, tightening the timing window. |
 | `--enable-timing` | `cuda_test` | Enable timing analysis (arrival + violation checks) |
 | `--timing-clock-period <ps>` | `cuda_test` | Clock period in picoseconds (default: 1000) |
 | `--timing-report-violations` | `cuda_test` | Report all violations, not just summary |
@@ -113,13 +115,51 @@ cargo run -r --features metal --bin metal_test -- \
 | **hold** | DFF hold time constraint from SDF/Liberty (picoseconds) |
 | **slack** | `arrival - hold`. Negative = violation amount |
 
-### Summary Statistics
+### Timing Analysis Summary
 
-At the end of simulation, GEM prints totals:
+At the end of simulation, `gpu_sim` prints a timing analysis summary with standard signoff metrics:
 
 ```
-Simulation complete: 1000 cycles, 5 setup violations, 0 hold violations
+=== Timing Analysis ===
+Clock period: 1200ps
+Clock uncertainty: 500ps
+Setup violations: 12 (8 unique endpoints)
+Hold violations:  3 (2 unique endpoints)
+WNS (setup): -450ps
+TNS (setup): -2340ps
+WHS (hold):  -120ps
+THS (hold):  -280ps
+TIMING: VIOLATIONS DETECTED
 ```
+
+| Metric | Meaning |
+|--------|---------|
+| **WNS** (Worst Negative Slack) | The most negative setup slack across the entire simulation. Indicates the single worst timing path. |
+| **TNS** (Total Negative Slack) | Sum of all negative setup slacks. Indicates overall timing health — a large TNS means many paths are failing. |
+| **WHS** (Worst Hold Slack) | The most negative hold slack. |
+| **THS** (Total Hold Slack) | Sum of all negative hold slacks. |
+| **Unique endpoints** | Number of distinct state words (each covering 32 DFF data inputs) that had at least one violation. |
+
+If no violations are detected, the summary shows:
+
+```
+=== Timing Analysis ===
+Clock period: 1200ps
+Setup violations: 0 (0 unique endpoints)
+Hold violations:  0 (0 unique endpoints)
+TIMING: PASSED
+```
+
+**Event buffer overflow**: The GPU-side event buffer holds up to 1024 events per batch. If a design has very many violations per batch, some events may be dropped. When this happens, a warning is printed and WNS/TNS metrics may be approximate (but never optimistic — missed events only mean the true TNS is worse).
+
+### Clock Uncertainty
+
+The `--clock-uncertainty-ps` flag models clock jitter and skew by adding a margin to both setup and hold constraints. This effectively tightens the timing window:
+
+- **Setup check**: `arrival + (setup + uncertainty) > clock_period` triggers a violation
+- **Hold check**: `arrival < (hold + uncertainty)` triggers a violation
+
+Use this when your design has known clock tree uncertainty from P&R reports. A typical value for SKY130 is 100-500ps depending on clock tree quality.
 
 ## Tracing Violations to Source Signals
 
@@ -185,6 +225,35 @@ If a violation is reported but you suspect it's a false positive from the approx
 
 1. **Use `timing_sim_cpu`** for per-signal accuracy (see [Detailed CPU Timing Analysis](#4-detailed-cpu-timing-analysis) above).
 2. **Timing-aware bit packing** groups signals with similar arrival times into the same thread, reducing the approximation error. See `docs/timing-simulation.md` § "Timing-Aware Bit Packing" for details.
+
+## Multi-Corner Analysis
+
+A single SDF corner only catches one class of violations: the **max** (slow) corner reveals setup violations, while the **min** (fast) corner reveals hold violations. For complete timing signoff, run both corners:
+
+```bash
+# Max corner: catches setup violations (slow paths)
+cargo run -r --features metal --bin gpu_sim -- \
+    design.gv design.gemparts \
+    --config testbench.json \
+    --sdf design.sdf --sdf-corner max \
+    --clock-uncertainty-ps 500
+
+# Min corner: catches hold violations (fast paths)
+cargo run -r --features metal --bin gpu_sim -- \
+    design.gv design.gemparts \
+    --config testbench.json \
+    --sdf design.sdf --sdf-corner min \
+    --clock-uncertainty-ps 500
+```
+
+Both runs use the same `.gemparts` file (compilation is cached), so the overhead is just the simulation time. In CI, add both as separate steps:
+
+```yaml
+- name: Timing check (max corner - setup)
+  run: cargo run -r --features metal --bin gpu_sim -- ... --sdf-corner max
+- name: Timing check (min corner - hold)
+  run: cargo run -r --features metal --bin gpu_sim -- ... --sdf-corner min
+```
 
 ## Common Scenarios
 
