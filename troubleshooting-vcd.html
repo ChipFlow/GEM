@@ -1,0 +1,593 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Troubleshooting VCD - Loom Documentation</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc.js"></script>
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Loom Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/ChipFlow/Loom" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="troubleshooting-vcd-input-issues"><a class="header" href="#troubleshooting-vcd-input-issues">Troubleshooting VCD Input Issues</a></h1>
+<p>This guide helps debug VCD input problems where GEM simulations produce incorrect results or warn about missing signals.</p>
+<h2 id="vcd-scope-auto-detection-recommended"><a class="header" href="#vcd-scope-auto-detection-recommended">VCD Scope Auto-Detection (Recommended)</a></h2>
+<p><strong>NEW</strong>: GEM now automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code> manually.</p>
+<h3 id="how-auto-detection-works"><a class="header" href="#how-auto-detection-works">How Auto-Detection Works</a></h3>
+<p>When you run <code>metal_test</code> or <code>cuda_test</code> without specifying <code>--input-vcd-scope</code>, GEM:</p>
+<ol>
+<li>Extracts the list of required input ports from your synthesized design</li>
+<li>Searches the VCD file for scopes containing all required ports</li>
+<li>Tries common DUT scope names first: <code>dut</code>, <code>uut</code>, <code>DUT</code>, <code>UUT</code>, or your module name</li>
+<li>Falls back to any scope that contains all required ports</li>
+<li>Logs which scope was selected for transparency</li>
+</ol>
+<h3 id="example-output"><a class="header" href="#example-output">Example Output</a></h3>
+<pre><code>INFO No VCD scope specified - attempting auto-detection
+DEBUG Searching for VCD scope containing 4 input ports
+DEBUG Required ports: {"din_valid", "clk", "reset", "din"}
+INFO Auto-detected VCD scope: safe_tb/uut (matched common pattern 'uut')
+</code></pre>
+<h3 id="manual-override"><a class="header" href="#manual-override">Manual Override</a></h3>
+<p>If auto-detection fails or selects the wrong scope, use <code>--input-vcd-scope</code> to specify manually:</p>
+<pre><code class="language-bash"># Slash-separated path to the DUT scope
+metal_test design.gv design.gemparts input.vcd output.vcd 8 \
+    --input-vcd-scope "testbench/dut"
+
+# For nested hierarchies
+metal_test design.gv design.gemparts input.vcd output.vcd 8 \
+    --input-vcd-scope "top_tb/subsystem/my_module"
+</code></pre>
+<p><strong>Note</strong>: Use slash separators (<code>/</code>), not dots (<code>.</code>).</p>
+<hr />
+<h2 id="symptom-missing-primary-input-warnings"><a class="header" href="#symptom-missing-primary-input-warnings">Symptom: Missing Primary Input Warnings</a></h2>
+<pre><code>WARN (GATESIM_VCDI_MISSING_PI) Primary input port (HierName(), "reset", None) not present in the VCD input
+WARN (GATESIM_VCDI_MISSING_PI) Primary input port (HierName(), "din", Some(3)) not present in the VCD input
+</code></pre>
+<h3 id="root-cause"><a class="header" href="#root-cause">Root Cause</a></h3>
+<p>GEM expects VCD signals at <strong>absolute top-level</strong> with no module hierarchy prefix. The signal names must exactly match the synthesized module's port names.</p>
+<h3 id="how-to-check"><a class="header" href="#how-to-check">How to Check</a></h3>
+<ol>
+<li><strong>Inspect your VCD file</strong>:</li>
+</ol>
+<pre><code class="language-bash">grep '\$var' your_input.vcd | head -20
+</code></pre>
+<ol start="2">
+<li><strong>Look for module scopes</strong>:</li>
+</ol>
+<pre><code class="language-bash">grep '\$scope module' your_input.vcd
+</code></pre>
+<ol start="3">
+<li><strong>Check synthesized module ports</strong>:</li>
+</ol>
+<pre><code class="language-bash">head -20 your_design_synth.gv
+</code></pre>
+<h3 id="what-gem-expects"><a class="header" href="#what-gem-expects">What GEM Expects</a></h3>
+<p><strong>Correct</strong> - Signals at top level:</p>
+<pre><code class="language-vcd">$timescale 1ns/1ns
+$var reg 1 ! clk $end
+$var reg 1 " reset $end
+$var reg 4 # din [3:0] $end
+$var reg 1 $ din_valid $end
+$var wire 1 % unlocked $end
+$enddefinitions $end
+$dumpvars
+0"
+0$
+0%
+1!
+#10
+1"
+#20
+b1100 #
+1$
+</code></pre>
+<p><strong>Incorrect</strong> - Signals scoped under module:</p>
+<pre><code class="language-vcd">$scope module testbench $end
+  $scope module dut $end
+    $var wire 1 ! clk $end
+    $var wire 1 " reset $end
+    $var wire 4 # din [3:0] $end
+    ...
+  $upscope $end
+$upscope $end
+</code></pre>
+<h2 id="solution-1-flat-vcd-generation"><a class="header" href="#solution-1-flat-vcd-generation">Solution 1: Flat VCD Generation</a></h2>
+<p>Create a testbench that dumps signals at absolute top level:</p>
+<pre><code class="language-verilog">module testbench;
+
+reg clk = 0;
+reg reset;
+reg [3:0] din;
+reg din_valid = 0;
+wire unlocked;
+
+// DUT instantiation
+your_module dut (
+    .clk(clk),
+    .reset(reset),
+    .din(din),
+    .din_valid(din_valid),
+    .unlocked(unlocked)
+);
+
+always #10 clk = !clk;
+
+initial begin
+    // CRITICAL: Dump signals at top level (depth 1)
+    // NOT inside module hierarchy!
+    $dumpfile("output.vcd");
+    $dumpvars(1, clk, reset, din, din_valid, unlocked);
+
+    // Test sequence
+    reset = 1;
+    #60;
+    reset = 0;
+
+    // ... your test stimulus ...
+
+    #200;
+    $finish;
+end
+
+endmodule
+</code></pre>
+<p><strong>Key Point</strong>: <code>$dumpvars(1, signal1, signal2, ...)</code> dumps individual signals at the current scope level, <strong>not</strong> inside child modules.</p>
+<h3 id="compile-and-run"><a class="header" href="#compile-and-run">Compile and Run</a></h3>
+<pre><code class="language-bash"># For synthesis-compatible testbench
+iverilog -DSYNTHESIS -o sim your_design.v testbench.v
+./sim
+
+# Check VCD structure
+grep '\$scope' output.vcd  # Should be minimal or none
+grep '\$var' output.vcd | head -10
+</code></pre>
+<h2 id="solution-2-post-process-vcd-advanced"><a class="header" href="#solution-2-post-process-vcd-advanced">Solution 2: Post-Process VCD (Advanced)</a></h2>
+<p>If you can't change the testbench, post-process the VCD to flatten hierarchy:</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+"""Flatten VCD hierarchy to top level"""
+
+import sys
+
+def flatten_vcd(input_vcd, output_vcd):
+    with open(input_vcd) as inf, open(output_vcd, 'w') as outf:
+        in_scope = False
+        scope_depth = 0
+
+        for line in inf:
+            # Track scope depth
+            if line.strip().startswith('$scope'):
+                scope_depth += 1
+                if scope_depth == 1:
+                    continue  # Keep root scope
+                in_scope = True
+                continue
+            elif line.strip().startswith('$upscope'):
+                scope_depth -= 1
+                if in_scope and scope_depth == 0:
+                    in_scope = False
+                continue
+
+            # Skip signals inside nested scopes, keep only top-level
+            if in_scope and line.strip().startswith('$var'):
+                continue  # Skip nested module signals
+
+            outf.write(line)
+
+if __name__ == '__main__':
+    flatten_vcd(sys.argv[1], sys.argv[2])
+</code></pre>
+<p><strong>Usage</strong>:</p>
+<pre><code class="language-bash">python3 flatten_vcd.py hierarchical.vcd flat.vcd
+</code></pre>
+<h2 id="solution-3-vcd-scope-option-experimental"><a class="header" href="#solution-3-vcd-scope-option-experimental">Solution 3: VCD Scope Option (Experimental)</a></h2>
+<p>GEM provides <code>--input-vcd-scope</code> to specify which module hierarchy to read:</p>
+<pre><code class="language-bash">cargo run -r --features metal --bin metal_test -- \
+    design.gv parts.gemparts input.vcd output.vcd 48 \
+    --input-vcd-scope module_name
+</code></pre>
+<p><strong>Known Issue</strong>: Currently, signal matching still fails even with correct scope specified. This is under investigation.</p>
+<h2 id="diagnostic-checklist"><a class="header" href="#diagnostic-checklist">Diagnostic Checklist</a></h2>
+<h3 id="1-verify-signal-names-match"><a class="header" href="#1-verify-signal-names-match">1. Verify Signal Names Match</a></h3>
+<p><strong>Synthesized Module</strong>:</p>
+<pre><code class="language-bash">grep "^module\|input\|output" design_synth.gv
+</code></pre>
+<p>Output:</p>
+<pre><code class="language-verilog">module safe(clk, reset, din, din_valid, unlocked);
+  input clk;
+  input reset;
+  input [3:0] din;
+  input din_valid;
+  output unlocked;
+</code></pre>
+<p><strong>VCD Signals</strong>:</p>
+<pre><code class="language-bash">grep '\$var.*\(clk\|reset\|din\|unlocked\)' input.vcd
+</code></pre>
+<p>Output should match synthesized port names exactly.</p>
+<h3 id="2-check-signal-bit-widths"><a class="header" href="#2-check-signal-bit-widths">2. Check Signal Bit Widths</a></h3>
+<p>Multi-bit signals must have correct indices:</p>
+<p><strong>Synthesized</strong>: <code>input [3:0] din;</code></p>
+<p><strong>VCD</strong>:</p>
+<pre><code class="language-vcd">$var reg 4 # din [3:0] $end
+</code></pre>
+<p>GEM expects separate indices: <code>din[3]</code>, <code>din[2]</code>, <code>din[1]</code>, <code>din[0]</code></p>
+<h3 id="3-verify-timestamp-format"><a class="header" href="#3-verify-timestamp-format">3. Verify Timestamp Format</a></h3>
+<p>GEM expects integer timestamps (not real numbers):</p>
+<p><strong>Correct</strong>:</p>
+<pre><code class="language-vcd">#0
+#10
+#20
+</code></pre>
+<p><strong>Incorrect</strong>:</p>
+<pre><code class="language-vcd">#0.0
+#10.5
+#20.25
+</code></pre>
+<h3 id="4-check-timescale"><a class="header" href="#4-check-timescale">4. Check Timescale</a></h3>
+<p>Ensure VCD timescale matches simulation expectations:</p>
+<pre><code class="language-vcd">$timescale 1ns $end
+</code></pre>
+<p>or</p>
+<pre><code class="language-vcd">$timescale 1ps $end
+</code></pre>
+<p>Clock periods in testbench should use same time unit.</p>
+<h2 id="validation-steps"><a class="header" href="#validation-steps">Validation Steps</a></h2>
+<p>After fixing VCD issues, validate GEM is reading inputs correctly:</p>
+<h3 id="1-run-with-cpu-verification"><a class="header" href="#1-run-with-cpu-verification">1. Run with CPU Verification</a></h3>
+<pre><code class="language-bash">cargo run -r --features metal --bin metal_test -- \
+    design.gv parts.gemparts input.vcd output.vcd 48 \
+    --check-with-cpu
+</code></pre>
+<p>This compares GPU results against CPU gate-level simulation. Should print:</p>
+<pre><code>[INFO] sanity test passed!
+</code></pre>
+<h3 id="2-compare-output-vcd-with-reference"><a class="header" href="#2-compare-output-vcd-with-reference">2. Compare Output VCD with Reference</a></h3>
+<p>Run same design with iverilog:</p>
+<pre><code class="language-bash">iverilog -o reference_sim design.v testbench.v
+./reference_sim  # Generates reference.vcd
+</code></pre>
+<p>Compare outputs:</p>
+<pre><code class="language-bash"># Check if unlocked signal toggles the same in both
+grep '^[01]!' gem_output.vcd
+grep '^[01]!' reference.vcd
+</code></pre>
+<h3 id="3-check-cycle-count"><a class="header" href="#3-check-cycle-count">3. Check Cycle Count</a></h3>
+<pre><code class="language-bash">cargo run -r --features metal --bin metal_test -- \
+    design.gv parts.gemparts input.vcd output.vcd 48 \
+    2&gt;&amp;1 | grep "total number of cycles"
+</code></pre>
+<p>Should match your testbench's simulation time / clock period.</p>
+<h2 id="common-pitfalls"><a class="header" href="#common-pitfalls">Common Pitfalls</a></h2>
+<h3 id="1-testbench-inside-ifndef-synthesis"><a class="header" href="#1-testbench-inside-ifndef-synthesis">1. Testbench Inside `ifndef SYNTHESIS</a></h3>
+<p>If testbench is only compiled when <code>SYNTHESIS</code> is not defined:</p>
+<pre><code class="language-verilog">`ifndef SYNTHESIS
+module testbench;
+  // ...
+endmodule
+`endif
+</code></pre>
+<p>You must compile <strong>without</strong> <code>-DSYNTHESIS</code> for VCD generation:</p>
+<pre><code class="language-bash">iverilog -o sim design.v testbench.v  # No -DSYNTHESIS!
+</code></pre>
+<p>But the DUT must be compiled <strong>with</strong> <code>-DSYNTHESIS</code> if it has non-synthesizable constructs:</p>
+<pre><code class="language-bash"># Separate compilation
+iverilog -DSYNTHESIS -c design.v
+iverilog -o sim design.v testbench.v
+</code></pre>
+<h3 id="2-xz-values-in-vcd"><a class="header" href="#2-xz-values-in-vcd">2. X/Z Values in VCD</a></h3>
+<p>GEM may not handle unknown (X) or high-impedance (Z) values correctly:</p>
+<pre><code class="language-vcd">$dumpvars
+x"  # reset = X
+bxxxx #  # din = XXXX
+</code></pre>
+<p><strong>Solution</strong>: Initialize all inputs in testbench:</p>
+<pre><code class="language-verilog">initial begin
+    reset = 0;  // Don't leave uninitialized
+    din = 4'h0;
+    din_valid = 0;
+end
+</code></pre>
+<h3 id="3-missing-clock-signal"><a class="header" href="#3-missing-clock-signal">3. Missing Clock Signal</a></h3>
+<p>If VCD doesn't include clock:</p>
+<pre><code>WARN (GATESIM_VCDI_MISSING_PI) Primary input port (HierName(), "clk", None) not present
+</code></pre>
+<p><strong>Ensure</strong>:</p>
+<ul>
+<li>Clock is generated in testbench</li>
+<li>Clock is included in <code>$dumpvars</code></li>
+<li>Clock signal name matches synthesized netlist exactly</li>
+</ul>
+<h2 id="example-working-flat-vcd-testbench"><a class="header" href="#example-working-flat-vcd-testbench">Example: Working Flat VCD Testbench</a></h2>
+<pre><code class="language-verilog">// testbench_flat.v - Generates GEM-compatible VCD
+module testbench_flat;
+
+// Declare all signals at top level
+reg clk = 0;
+reg reset = 1;
+reg [3:0] din = 4'h0;
+reg din_valid = 0;
+wire unlocked;
+
+// DUT instantiation
+safe dut (
+    .clk(clk),
+    .reset(reset),
+    .din(din),
+    .din_valid(din_valid),
+    .unlocked(unlocked)
+);
+
+// Clock generation
+always #10 clk = !clk;  // 20ns period = 50MHz
+
+// Test sequence
+initial begin
+    // CRITICAL: Dump at top level (depth 1)
+    $dumpfile("safe_flat.vcd");
+    $dumpvars(1, clk, reset, din, din_valid, unlocked);
+
+    // Reset phase
+    reset = 1;
+    #60;  // 3 clock cycles
+    reset = 0;
+    #11;  // Small offset from clock edge
+
+    // Apply test stimulus
+    din = 4'hc;
+    din_valid = 1;
+    #20;
+
+    din = 4'h0;
+    #20;
+
+    din = 4'hd;
+    #20;
+
+    din = 4'he;
+    #20;
+
+    din_valid = 0;
+    #40;
+
+    $finish;
+end
+
+endmodule
+</code></pre>
+<p><strong>Compile and test</strong>:</p>
+<pre><code class="language-bash"># Compile (DUT must be SYNTHESIS-compatible)
+iverilog -DSYNTHESIS -o sim safe.v testbench_flat.v
+
+# Run simulation
+./sim
+
+# Verify VCD structure
+echo "=== VCD Scopes ==="
+grep '\$scope' safe_flat.vcd
+
+echo -e "\n=== VCD Signals ==="
+grep '\$var' safe_flat.vcd
+
+# Should show signals at top level, no nested $scope modules
+</code></pre>
+<h2 id="still-having-issues"><a class="header" href="#still-having-issues">Still Having Issues?</a></h2>
+<ol>
+<li>
+<p><strong>Enable debug logging</strong>:</p>
+<pre><code class="language-bash">RUST_LOG=debug,vcd_ng=trace cargo run -r --features metal --bin metal_test -- &lt;args&gt; 2&gt;&amp;1 | tee debug.log
+</code></pre>
+</li>
+<li>
+<p><strong>Check with minimal test</strong>:</p>
+<ul>
+<li>Create simplest possible design (single DFF)</li>
+<li>Generate flat VCD</li>
+<li>Verify GEM can read it correctly</li>
+</ul>
+</li>
+<li>
+<p><strong>Report issue</strong> with:</p>
+<ul>
+<li>Synthesized <code>.gv</code> file</li>
+<li>Input VCD file</li>
+<li>GEM command line</li>
+<li>Error messages or unexpected output</li>
+</ul>
+</li>
+</ol>
+<hr />
+<p><strong>Document Version</strong>: 1.0
+<strong>Last Updated</strong>: 2025-01-08
+<strong>Related</strong>: simulation-architecture.md</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="timing-violations.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="timing-violations.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

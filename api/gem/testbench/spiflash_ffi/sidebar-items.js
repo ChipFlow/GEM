@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["spiflash_free","spiflash_get_byte_count","spiflash_get_command","spiflash_get_negedge_count","spiflash_get_posedge_count","spiflash_get_step_count","spiflash_load","spiflash_new","spiflash_set_verbose","spiflash_step"],"struct":["SpiFlashModel"]};

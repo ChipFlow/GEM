@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BOOMERANG_NUM_STAGES"],"fn":["process_partitions","process_partitions_from_hgr_parts_file"],"struct":["BoomerangStage","Partition"]};
