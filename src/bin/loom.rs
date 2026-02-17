@@ -793,7 +793,6 @@ fn sim_cuda(
     use ulib::{AsUPtrMut, Device, UVec};
 
     mod ucci {
-        use gem::event_buffer::EventBuffer;
         include!(concat!(env!("OUT_DIR"), "/uccbind/kernel_v1.rs"));
     }
 
