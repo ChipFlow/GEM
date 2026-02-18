@@ -355,6 +355,7 @@ jobs:
             -v "$PWD/sram:/sram:ro" \
             -v "$PWD/ip/CF_SRAM_1024x32:/sram_ip:ro" \
             -v "$PWD/scripts/openlane2/mcu_soc_config.json:/design/config.json:ro" \
+            -v "$PWD/scripts/openlane2/pdn_cfg.tcl:/design/pdn_cfg.tcl:ro" \
             -w /design \
             ghcr.io/efabless/openlane2:2.4.0.dev1 \
             openlane /design/config.json

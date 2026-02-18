@@ -9,6 +9,7 @@
     "FP_CORE_UTIL": 25,
     "PL_TARGET_DENSITY_PCT": 30,
     "GRT_ADJUSTMENT": 0.25,
+    "FP_PDN_CFG": "/design/pdn_cfg.tcl",
     "RUN_POST_CTS_RESIZER_TIMING": false,
     "PDN_MACRO_CONNECTIONS": [
         "soc.sram.mem.0.0 VPWR VGND vpwrp vgnd",
