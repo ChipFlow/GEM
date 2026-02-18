@@ -22,7 +22,7 @@
         "CF_SRAM_1024x32": {
             "instances": {
                 "soc.sram.mem.0.0": {
-                    "location": [100, 100],
+                    "location": [1500, 1500],
                     "orientation": "N"
                 }
             },
