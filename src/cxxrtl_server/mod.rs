@@ -66,6 +66,9 @@ pub struct Session {
     states: Arc<std::sync::RwLock<Vec<u32>>>,
     /// State size per cycle in u32 words.
     state_size: u32,
+    /// Assertion and display positions for diagnostic extraction.
+    assertion_positions: Vec<(usize, u32, u32, Option<crate::aig::SimControlType>)>,
+    display_positions: Vec<(usize, u32, String, Vec<u32>, Vec<u32>)>,
     /// Cycle timestamps.
     offsets_timestamps: Arc<Vec<(usize, u64)>>,
     /// Timescale in femtoseconds.
@@ -98,6 +101,8 @@ impl Session {
             sim_ctrl,
             states,
             state_size: script.reg_io_state_size,
+            assertion_positions: script.assertion_positions.clone(),
+            display_positions: script.display_positions.clone(),
             offsets_timestamps,
             timescale_fs,
             pending_events: Vec::new(),
@@ -208,11 +213,20 @@ impl Session {
                 collapse,
                 items,
                 item_values_encoding: _,
-                diagnostics: _,
+                diagnostics: include_diagnostics,
             } => {
                 let begin = TimePoint(interval.0);
                 let end = TimePoint(interval.1);
                 let bound_ref = items.as_ref().and_then(|r| self.registry.get_reference(r));
+
+                let diag_sources = if include_diagnostics {
+                    Some(waveform::DiagnosticSources {
+                        assertion_positions: self.assertion_positions.clone(),
+                        display_positions: self.display_positions.clone(),
+                    })
+                } else {
+                    None
+                };
 
                 let states = self.states.read().unwrap();
                 let samples = query_interval(
@@ -224,6 +238,8 @@ impl Session {
                     &begin,
                     &end,
                     collapse,
+                    diag_sources.as_ref(),
+                    include_diagnostics,
                 );
                 response_query_interval(samples)
             }

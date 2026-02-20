@@ -6,7 +6,9 @@
 //! Reads signal values from the simulation state buffer and encodes them
 //! as base64(u32) per the protocol specification.
 
-use super::protocol::{Sample, TimePoint};
+use crate::aig::SimControlType;
+
+use super::protocol::{Diagnostic, Sample, TimePoint};
 use super::signals::BoundReference;
 
 /// Extract a single bit from the state buffer.
@@ -101,6 +103,85 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+/// Diagnostic source data extracted from the script.
+pub struct DiagnosticSources {
+    pub assertion_positions: Vec<(usize, u32, u32, Option<SimControlType>)>,
+    pub display_positions: Vec<(usize, u32, String, Vec<u32>, Vec<u32>)>,
+}
+
+/// Extract diagnostics for a given cycle from the state buffer.
+///
+/// Checks assertion_positions and display_positions against the state
+/// at the given cycle offset, returning CXXRTL-compatible diagnostics.
+fn extract_diagnostics(
+    sources: &DiagnosticSources,
+    states: &[u32],
+    cycle_state_offset: usize,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // Check assertions and sim control ($stop/$finish)
+    for &(_cell_id, pos, message_id, ref control_type) in &sources.assertion_positions {
+        let word_idx = (pos >> 5) as usize;
+        let bit_idx = pos & 31;
+        let abs_word_idx = cycle_state_offset + word_idx;
+        if abs_word_idx < states.len() {
+            let condition = (states[abs_word_idx] >> bit_idx) & 1;
+            if condition == 1 {
+                let (diag_type, text) = match control_type {
+                    None => (
+                        "assert",
+                        format!("assertion failure (message_id={})", message_id),
+                    ),
+                    Some(SimControlType::Stop) => (
+                        "break",
+                        format!("$stop (message_id={})", message_id),
+                    ),
+                    Some(SimControlType::Finish) => (
+                        "break",
+                        format!("$finish (message_id={})", message_id),
+                    ),
+                };
+                diagnostics.push(Diagnostic {
+                    diag_type: diag_type.to_string(),
+                    text,
+                    src: None,
+                });
+            }
+        }
+    }
+
+    // Check display conditions
+    for (_cell_id, enable_pos, format, arg_positions, arg_widths) in &sources.display_positions {
+        let word_idx = (*enable_pos >> 5) as usize;
+        let bit_idx = *enable_pos & 31;
+        let abs_word_idx = cycle_state_offset + word_idx;
+        if abs_word_idx < states.len() {
+            let enable = (states[abs_word_idx] >> bit_idx) & 1;
+            if enable == 1 {
+                let mut display_args: Vec<u64> = Vec::new();
+                for &arg_pos in arg_positions {
+                    let arg_word_idx = (arg_pos >> 5) as usize;
+                    let arg_bit_idx = arg_pos & 31;
+                    let abs_arg_idx = cycle_state_offset + arg_word_idx;
+                    if abs_arg_idx < states.len() {
+                        let val = ((states[abs_arg_idx] >> arg_bit_idx) & 1) as u64;
+                        display_args.push(val);
+                    }
+                }
+                // Use the format string directly as the diagnostic text
+                diagnostics.push(Diagnostic {
+                    diag_type: "print".to_string(),
+                    text: crate::display::format_display_message(format, &display_args, arg_widths),
+                    src: None,
+                });
+            }
+        }
+    }
+
+    diagnostics
+}
+
 /// Query waveform data for a time interval.
 ///
 /// - `states`: the full state buffer (all cycles concatenated)
@@ -110,6 +191,8 @@ fn base64_encode(data: &[u8]) -> String {
 /// - `bound_ref`: the signal reference to query
 /// - `begin`/`end`: the requested time interval
 /// - `collapse`: if true, emit one sample per distinct timestamp
+/// - `diag_sources`: diagnostic extraction data (assertions, displays)
+/// - `include_diagnostics`: whether to include diagnostics in samples
 ///
 /// Returns a list of samples within the interval.
 pub fn query_interval(
@@ -121,6 +204,8 @@ pub fn query_interval(
     begin: &TimePoint,
     end: &TimePoint,
     collapse: bool,
+    diag_sources: Option<&DiagnosticSources>,
+    include_diagnostics: bool,
 ) -> Vec<Sample> {
     let begin_fs = begin.to_femtoseconds().unwrap_or(0);
     let end_fs = end.to_femtoseconds().unwrap_or(u64::MAX);
@@ -156,21 +241,40 @@ pub fn query_interval(
             timescale_fs,
         );
 
+        let state_offset = cycle_i * state_size as usize;
+        let state_end = state_offset + state_size as usize;
+
         let item_values = bound_ref.map(|br| {
-            let state_offset = cycle_i * state_size as usize;
-            let state_end = state_offset + state_size as usize;
             if state_end <= states.len() {
                 encode_item_values(br, &states[state_offset..state_end])
             } else {
-                // Out of range: return zeros
                 encode_item_values(br, &[])
             }
         });
 
+        let diagnostics = if include_diagnostics {
+            if let Some(ds) = diag_sources {
+                if state_end <= states.len() && cycle_i > 0 {
+                    let diags = extract_diagnostics(ds, states, state_offset);
+                    if diags.is_empty() {
+                        Some(Vec::new())
+                    } else {
+                        Some(diags)
+                    }
+                } else {
+                    Some(Vec::new())
+                }
+            } else {
+                Some(Vec::new())
+            }
+        } else {
+            None
+        };
+
         samples.push(Sample {
             time: time.0,
             item_values,
-            diagnostics: None, // Diagnostics handled separately in Phase 4
+            diagnostics,
         });
     }
 

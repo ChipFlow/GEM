@@ -9,25 +9,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use netlistdb::{Direction, GeneralHierName, GeneralPinName, NetlistDB};
+use netlistdb::{Direction, NetlistDB};
 
-use crate::aig::{DriverType, AIG};
+use crate::aig::AIG;
 use crate::flatten::FlattenedScriptV1;
 
 use super::protocol::{ItemInfo, ScopeDefinition, ScopeInfo, ScopeInstantiation};
 
 /// Scope separator used in CXXRTL protocol (U+0020 space).
 const SCOPE_SEP: char = ' ';
-
-/// Convert a NetlistDB HierName to a CXXRTL scope path.
-///
-/// HierName iterates bottom-up, so we reverse to get top-down order,
-/// then join with spaces per the CXXRTL spec.
-fn hiername_to_scope_path(hier: &dyn GeneralHierName) -> String {
-    let parts: Vec<&str> = hier.ident_iter().collect();
-    // ident_iter yields bottom-up; reverse to get top-down
-    parts.into_iter().rev().collect::<Vec<_>>().join(&SCOPE_SEP.to_string())
-}
 
 /// Extract all unique scope paths from the netlist cell hierarchy.
 ///
@@ -358,12 +348,6 @@ pub fn get_child_scopes(
     parent: Option<&str>,
 ) -> HashMap<String, ScopeInfo> {
     let parent_path = parent.unwrap_or("");
-    let parent_depth = if parent_path.is_empty() {
-        0
-    } else {
-        parent_path.split(SCOPE_SEP).count()
-    };
-
     all_scopes
         .iter()
         .filter(|(path, _)| {

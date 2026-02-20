@@ -1125,11 +1125,10 @@ fn cmd_cosim(args: CosimArgs) {
     }
 }
 
+#[allow(unused_variables)]
 fn cmd_serve(args: ServeArgs) {
-    use gem::cxxrtl_server;
     use gem::sim::setup;
     use gem::sim::vcd_io;
-    use std::sync::{Arc, RwLock};
 
     let design_args = DesignArgs {
         netlist_verilog: args.netlist_verilog.clone(),
@@ -1191,16 +1190,6 @@ fn cmd_serve(args: ServeArgs) {
         args.max_cycles,
     );
 
-    let offsets_timestamps = Arc::new(parsed.offsets_timestamps);
-    let input_states = parsed.input_states;
-    let num_cycles = offsets_timestamps.len();
-
-    // Run GPU simulation to populate state buffer with output values.
-    // Without this, only input values are in the buffer.
-    let timing_constraints = setup::build_timing_constraints(&design.script);
-
-    clilog::info!("Running GPU simulation for {} cycles...", num_cycles);
-
     #[cfg(not(any(feature = "metal", feature = "cuda")))]
     {
         eprintln!(
@@ -1211,16 +1200,30 @@ fn cmd_serve(args: ServeArgs) {
         std::process::exit(1);
     }
 
-    #[cfg(feature = "metal")]
-    let gpu_states = sim_metal(&design, &input_states, &offsets_timestamps, &timing_constraints);
-
-    #[cfg(all(feature = "cuda", not(feature = "metal")))]
-    let gpu_states = sim_cuda(&design, &input_states, &offsets_timestamps, &timing_constraints);
-
-    // The simulation is complete. Now serve the pre-computed results
-    // via the CXXRTL protocol (replay buffer model).
     #[cfg(any(feature = "metal", feature = "cuda"))]
     {
+        use gem::cxxrtl_server;
+        use std::sync::{Arc, RwLock};
+
+        let offsets_timestamps = Arc::new(parsed.offsets_timestamps);
+        let input_states = parsed.input_states;
+        let num_cycles = offsets_timestamps.len();
+
+        // Run GPU simulation to populate state buffer with output values.
+        let timing_constraints = setup::build_timing_constraints(&design.script);
+
+        clilog::info!("Running GPU simulation for {} cycles...", num_cycles);
+
+        #[cfg(feature = "metal")]
+        let gpu_states =
+            sim_metal(&design, &input_states, &offsets_timestamps, &timing_constraints);
+
+        #[cfg(all(feature = "cuda", not(feature = "metal")))]
+        let gpu_states =
+            sim_cuda(&design, &input_states, &offsets_timestamps, &timing_constraints);
+
+        // The simulation is complete. Now serve the pre-computed results
+        // via the CXXRTL protocol (replay buffer model).
         let sim_ctrl = cxxrtl_server::sim_control::SimControl::new();
         // Mark simulation as finished with all cycles completed
         sim_ctrl.report_finished(num_cycles as u64);
