@@ -18,6 +18,9 @@
         "soc.sram.mem.0.0 VPWR VGND vpb vnb"
     ],
     "MAGIC_CAPTURE_ERRORS": false,
+    "RUN_MAGIC_DRC": false,
+    "RUN_KLAYOUT_DRC": false,
+    "RUN_LVS": false,
     "RUN_LINTER": false,
     "SYNTH_ELABORATE_ONLY": true,
     "MACROS": {

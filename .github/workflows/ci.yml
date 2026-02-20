@@ -372,11 +372,11 @@ jobs:
             exit 1
           fi
           echo "Using run directory: $LATEST"
-          # OpenLane2 stores the final powered netlist in the fill insertion step
-          NETLIST=$(find "$LATEST" -path "*fillinsertion/top.pnl.v" | head -1)
+          # OpenLane2 stores the final unpowered netlist in the fill insertion step
+          # Use .nl.v (not .pnl.v) — the unpowered netlist without VPWR/VGND pins
+          NETLIST=$(find "$LATEST" -path "*fillinsertion/top.nl.v" | head -1)
           if [ -z "$NETLIST" ]; then
-            # Fall back to detailed routing step netlist
-            NETLIST=$(find "$LATEST" -path "*detailedrouting/top.pnl.v" | head -1)
+            NETLIST=$(find "$LATEST" -path "*detailedrouting/top.nl.v" | head -1)
           fi
           if [ -n "$NETLIST" ]; then
             cp "$NETLIST" build_artifacts/6_final.v
