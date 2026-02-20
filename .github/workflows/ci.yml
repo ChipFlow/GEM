@@ -393,6 +393,8 @@ jobs:
             echo "WARNING: SDF file not found"
           fi
           cp designs/mcu_soc_sky130/build/software/software.bin build_artifacts/ 2>/dev/null || echo "WARNING: software.bin not found"
+          # Also save pre-P&R synthesis netlist for debugging
+          cp designs/mcu_soc_sky130/build/top_synth.v build_artifacts/ 2>/dev/null || echo "WARNING: top_synth.v not found"
           ls -la build_artifacts/
 
       - name: Upload synth artifacts
@@ -403,6 +405,7 @@ jobs:
           path: |
             build_artifacts/6_final.v
             build_artifacts/6_final.sdf
+            build_artifacts/top_synth.v
             build_artifacts/software.bin
 
   # Run GPU simulation on macOS with post-P&R netlist and SDF timing
@@ -457,7 +460,27 @@ jobs:
             --firmware build_artifacts/software.bin \
             --port-mapping
 
-      - name: Compile gemparts
+      - name: Compile gemparts (pre-P&R)
+        if: hashFiles('build_artifacts/top_synth.v') != ''
+        timeout-minutes: 10
+        run: |
+          cargo run --release --features metal --bin cut_map_interactive -- \
+            build_artifacts/top_synth.v build_artifacts/pre_pnr.gemparts \
+            --top-module top
+
+      - name: Test pre-P&R netlist (diagnostic)
+        if: hashFiles('build_artifacts/top_synth.v') != ''
+        timeout-minutes: 10
+        run: |
+          cargo run --release --features metal --bin gpu_sim -- \
+            --config tests/mcu_soc/sim_config.json --top-module top \
+            --max-cycles 100000 \
+            build_artifacts/top_synth.v build_artifacts/pre_pnr.gemparts \
+            2>&1 | tee pre_pnr_sim_output.txt
+          echo "--- Pre-P&R simulation summary ---"
+          tail -30 pre_pnr_sim_output.txt
+
+      - name: Compile gemparts (post-P&R)
         timeout-minutes: 10
         run: |
           cargo run --release --features metal --bin cut_map_interactive -- \
@@ -484,6 +507,12 @@ jobs:
             echo "ERROR: Expected UART output 'nyaa' not found"
             echo "--- Last 50 lines of simulation output ---"
             tail -50 gpu_sim_output.txt
+            echo ""
+            # Show pre-P&R result for comparison
+            if [ -f pre_pnr_sim_output.txt ]; then
+              echo "--- Pre-P&R simulation comparison ---"
+              grep -E "UART bytes|flash.*command|Tick.*100000" pre_pnr_sim_output.txt || true
+            fi
             exit 1
           fi
 
@@ -504,6 +533,7 @@ jobs:
           name: mcu-soc-results
           path: |
             gpu_sim_output.txt
+            pre_pnr_sim_output.txt
             tests/mcu_soc/sim_config.json
 
   # Build documentation (cargo doc + mdbook) and deploy to GitHub Pages
