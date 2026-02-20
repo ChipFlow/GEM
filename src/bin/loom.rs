@@ -43,6 +43,14 @@ enum Commands {
     /// a cycle-accurate co-simulation with GPU-side SPI flash and UART models.
     /// Requires building with `--features metal`.
     Cosim(CosimArgs),
+
+    /// Start a CXXRTL debug server for interactive waveform viewing.
+    ///
+    /// Loads a design and input VCD, then exposes the simulation via the
+    /// CXXRTL debug protocol over TCP. Connect with a compatible waveform
+    /// viewer (e.g. Surfer) to browse hierarchy, run/pause simulation,
+    /// and query signal waveforms interactively.
+    Serve(ServeArgs),
 }
 
 #[derive(Parser)]
@@ -209,6 +217,60 @@ struct CosimArgs {
     /// Enable SDF debug output.
     #[clap(long)]
     sdf_debug: bool,
+}
+
+#[derive(Parser)]
+struct ServeArgs {
+    /// Gate-level Verilog path synthesized with AIGPDK or SKY130 library.
+    netlist_verilog: PathBuf,
+
+    /// Pre-compiled partition mapping (.gemparts file).
+    gemparts: PathBuf,
+
+    /// VCD input signal path.
+    input_vcd: String,
+
+    /// Number of GPU blocks to use.
+    ///
+    /// For CUDA: set to 2x the number of GPU SMs.
+    /// For Metal: set to 1.
+    num_blocks: usize,
+
+    /// TCP address to bind the CXXRTL server to.
+    #[clap(long, default_value = "127.0.0.1:9000")]
+    bind: String,
+
+    /// Top module name in the netlist.
+    #[clap(long)]
+    top_module: Option<String>,
+
+    /// Level split thresholds (must match values used during mapping).
+    #[clap(long, value_delimiter = ',')]
+    level_split: Vec<usize>,
+
+    /// The scope path of top module in the input VCD.
+    #[clap(long)]
+    input_vcd_scope: Option<String>,
+
+    /// JSON file path for extracting display format strings.
+    #[clap(long)]
+    json_path: Option<PathBuf>,
+
+    /// Path to SDF file for per-instance back-annotated delays.
+    #[clap(long)]
+    sdf: Option<PathBuf>,
+
+    /// SDF corner selection: min, typ, or max.
+    #[clap(long, default_value = "typ")]
+    sdf_corner: String,
+
+    /// Enable SDF debug output.
+    #[clap(long)]
+    sdf_debug: bool,
+
+    /// Limit the number of simulated cycles.
+    #[clap(long)]
+    max_cycles: Option<usize>,
 }
 
 /// Invoke the mt-kahypar partitioner.
@@ -1022,6 +1084,7 @@ fn main() {
         Commands::Map(args) => cmd_map(args),
         Commands::Sim(args) => cmd_sim(args),
         Commands::Cosim(args) => cmd_cosim(args),
+        Commands::Serve(args) => cmd_serve(args),
     }
 }
 
@@ -1060,4 +1123,97 @@ fn cmd_cosim(args: CosimArgs) {
         );
         std::process::exit(1);
     }
+}
+
+fn cmd_serve(args: ServeArgs) {
+    use gem::cxxrtl_server;
+    use gem::sim::setup;
+    use gem::sim::vcd_io;
+    use std::sync::{Arc, RwLock};
+
+    let design_args = DesignArgs {
+        netlist_verilog: args.netlist_verilog.clone(),
+        top_module: args.top_module.clone(),
+        level_split: args.level_split.clone(),
+        gemparts: args.gemparts.clone(),
+        num_blocks: args.num_blocks,
+        json_path: args.json_path.clone(),
+        sdf: args.sdf.clone(),
+        sdf_corner: args.sdf_corner.clone(),
+        sdf_debug: args.sdf_debug,
+    };
+
+    let design = setup::load_design(&design_args);
+
+    // Parse input VCD
+    let input_vcd = std::fs::File::open(&args.input_vcd).unwrap();
+    let mut bufrd = std::io::BufReader::with_capacity(65536, input_vcd);
+    let mut vcd_parser = vcd_ng::Parser::new(&mut bufrd);
+    let header = vcd_parser.parse_header().unwrap();
+
+    // Detect timescale
+    let timescale_fs = match header.timescale {
+        Some((ratio, unit)) => {
+            let unit_fs: u64 = match unit {
+                vcd_ng::TimescaleUnit::S => 1_000_000_000_000_000,
+                vcd_ng::TimescaleUnit::MS => 1_000_000_000_000,
+                vcd_ng::TimescaleUnit::US => 1_000_000_000,
+                vcd_ng::TimescaleUnit::NS => 1_000_000,
+                vcd_ng::TimescaleUnit::PS => 1_000,
+                vcd_ng::TimescaleUnit::FS => 1,
+            };
+            (ratio as u64) * unit_fs
+        }
+        None => 1_000, // default: 1ps
+    };
+
+    drop(vcd_parser);
+    use std::io::{Seek, SeekFrom};
+    let mut vcd_file = bufrd.into_inner();
+    vcd_file.seek(SeekFrom::Start(0)).unwrap();
+    let mut vcdflow = vcd_ng::FastFlow::new(vcd_file, 65536);
+
+    let top_scope = vcd_io::resolve_vcd_scope(
+        &header.items[..],
+        args.input_vcd_scope.as_deref(),
+        &design.netlistdb,
+        args.top_module.as_deref(),
+    );
+
+    let (vcd2inp, _) = vcd_io::match_vcd_inputs(top_scope, &design.netlistdb);
+
+    let parsed = vcd_io::parse_input_vcd(
+        &mut vcdflow,
+        &vcd2inp,
+        &design.aig,
+        &design.script,
+        &design.netlistdb,
+        args.max_cycles,
+    );
+
+    let offsets_timestamps = Arc::new(parsed.offsets_timestamps);
+    let states = Arc::new(RwLock::new(parsed.input_states));
+    let sim_ctrl = cxxrtl_server::sim_control::SimControl::new();
+
+    let config = cxxrtl_server::ServerConfig {
+        bind_addr: args.bind.clone(),
+        timescale_fs,
+    };
+
+    clilog::info!(
+        "Starting CXXRTL server on {} ({} input cycles loaded)",
+        args.bind,
+        offsets_timestamps.len()
+    );
+
+    cxxrtl_server::serve(
+        &config,
+        &design.netlistdb,
+        &design.aig,
+        &design.script,
+        sim_ctrl,
+        states,
+        offsets_timestamps,
+    )
+    .unwrap();
 }

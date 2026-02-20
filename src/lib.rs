@@ -61,3 +61,5 @@ pub mod testbench;
 pub mod sdf_parser;
 
 pub mod sim;
+
+pub mod cxxrtl_server;
