@@ -238,9 +238,9 @@ ret_x = (a_x | b_eff_x) & (a_eff | a_x) & (b_eff | b_eff_x)
 Wait -- row for `a=X, b=*, orb=1` (pass-through): `a_x=1, a_eff=0, b_eff=1, b_eff_x=0`.
 `ret_x = (1|0) & (0|1) & (1|0) = 1 & 1 & 1 = 1`. Correct.
 
-The X-mask computation adds **4 extra bitwise operations** per boomerang level
-(2 OR, 1 AND-NOT, 1 AND -- plus loading the X mask values). This is roughly
-2-3x the ALU work per gate, but only within X-capable partitions.
+The X-mask computation adds **5 extra bitwise operations** per boomerang level
+(2 OR, 2 AND, 1 AND-NOT -- plus loading the X mask values). This is roughly
+1.5-1.6x the CPU ALU work per gate, but only within X-capable partitions.
 
 #### GPU Resource Impact
 
@@ -318,46 +318,55 @@ The overall impact on a full simulation run is estimated at **5-15% throughput
 reduction** compared to current two-state, in exchange for catching
 initialisation bugs that would otherwise escape to silicon.
 
-## Implementation Plan
+## Implementation Status
 
-### Stage 1: Static Analysis Infrastructure
+All stages are implemented. Enable with `--xprop` on both `loom map` and `loom sim`.
 
-Add to `aig.rs`:
-- `compute_x_sources() -> BitVec` -- identifies X-source aigpins
-- `compute_x_capable_pins() -> BitVec` -- forward cone + fixpoint
+### Stage 1: Static X-Source Analysis (`src/aig.rs`)
 
-This is self-contained and testable: given a netlist, verify that the expected
-pins are marked X-capable.
+- `compute_x_sources() -> Vec<bool>` -- identifies DFF Q outputs and SRAM read data ports
+- `compute_x_capable_pins() -> (Vec<bool>, XPropStats)` -- forward cone + fixpoint iteration
 
-### Stage 2: Partition Classification
+### Stage 2: Partition Classification (`src/flatten.rs`)
 
-Add to `pe.rs` / `flatten.rs`:
-- Per-partition X-capable flag in `FlattenedScriptV1` metadata
-- State buffer layout adjustment (sideband section for X-mask words)
-- Boundary crossing validation
+- `FlattenedScriptV1` fields: `xprop_enabled`, `partition_x_capable`, `xprop_state_offset`
+- `effective_state_size()` returns `2 * reg_io_state_size` when xprop enabled
+- Metadata words 8 (is_x_capable) and 9 (xmask_state_offset) encode per-partition xprop info
+- Backward compatible: old `.gemparts` files deserialize with `xprop_enabled = false`
 
-### Stage 3: X-Aware CPU Reference Kernel
+### Stage 3: X-Aware CPU Reference Kernel (`src/sim/cpu_reference.rs`)
 
-Modify `cpu_reference.rs`:
-- Add `simulate_block_v1_xprop()` that computes both value and X-mask
-- Validate against known-correct X-propagation test cases
-- Use as reference for GPU kernel validation (`--check-with-cpu`)
+- `simulate_block_v1_xprop()` -- dual-lane value + X-mask computation
+- `sanity_check_cpu_xprop()` -- CPU vs GPU comparison for both lanes
+- Non-X-capable partitions delegate to `simulate_block_v1` (zero overhead)
 
-### Stage 4: X-Aware GPU Kernels
+### Stage 4: CLI and VCD Integration (`src/bin/loom.rs`, `src/sim/vcd_io.rs`)
 
-Modify `kernel_v1.metal` and `kernel_v1.cu`:
-- New kernel entry point or branch for X-capable partitions
-- Parallel X-mask computation in the boomerang tree
-- X-mask communication through state buffer sideband
+- `loom map --xprop` runs static analysis and logs X-capable pin/partition stats
+- `loom sim --xprop` enables X-aware simulation with doubled state buffer
+- `write_output_vcd_xprop()` emits `Value::X` for X-masked primary outputs
+- `expand_states_for_xprop()` / `split_xprop_states()` for state buffer management
 
-### Stage 5: Reporting and Diagnostics
+### Stage 5: GPU Kernels (`csrc/kernel_v1.metal`, `csrc/kernel_v1_impl.cuh`)
 
-- Report X-capable partition count and percentage at compile time
-- Warn when X values reach primary outputs
-- Optional: dump X-mask state to VCD (using `x` values in output)
-- Optional: X-to-known-zero event logging for debugging
+- Dual-lane X-mask tracking through all kernel phases (global read, boomerang, SRAM, DFF writeout)
+- `is_x_capable` branch is uniform per threadgroup (zero warp/SIMD divergence)
+- Shared memory: `shared_state_x[256]` + `shared_writeouts_x[256]` (+2KB, within 32KB limit)
+- SRAM X-mask shadow via `sram_xmask` buffer (buffer slot 7 on Metal)
 
-### Stage 6: Dynamic Narrowing (Optional)
+### Stage 6: Diagnostics
+
+- Compile-time: X-source count, X-capable pin %, X-capable partition %
+- Runtime: first-cycle-X-free detection, final-cycle X warning
+- CPU sanity check uses xprop variant when enabled
+
+### Stage 7: Benchmarks (`benches/xprop.rs`)
+
+- Criterion micro-benchmarks: two_state vs xprop_xfree vs xprop_xcapable
+- X-free partitions: zero overhead confirmed
+- X-capable partitions: ~1.5-1.6x CPU overhead (well within 2x budget)
+
+### Dynamic Narrowing (Future Enhancement)
 
 - Periodic X-mask scan on CPU between GPU batches
 - Partition kernel hot-swapping from X-aware to fast mode
@@ -395,27 +404,39 @@ Modify `kernel_v1.metal` and `kernel_v1.cu`:
 - **Strength modelling**: No weak/strong drive strength tracking. All known
   values are "strong."
 
-## Open Questions
+## Design Decisions
 
-1. **SRAM X granularity**: Should we track X per SRAM address (a full shadow
-   memory tracking which addresses have been written), or conservatively mark
-   all SRAM reads as X until the entire memory is initialised? Per-address
-   tracking is more precise but requires `8192 x 32` bits of shadow state per
-   SRAM block.
+1. **SRAM X granularity**: Conservative whole-SRAM approach -- all reads return
+   X until any write occurs. This is pessimistic but correct and simple.
+   Per-address tracking (requiring `8192 x 32` bits of shadow state per SRAM
+   block) is a potential follow-up for reduced pessimism.
 
-2. **Reset-aware analysis**: Should the static analysis attempt to identify
-   DFFs with async reset (by tracing the enable/clock logic back to a reset
-   primary input) and exclude them from X sources? This would reduce the
-   X-capable cone but adds complexity to the analysis.
+2. **Reset-aware analysis**: Skipped for v1 -- all DFF Q outputs start as X
+   regardless of whether they have async reset. Identifying reset nets is
+   fragile (varies by synthesis tool and coding style), and the fixpoint
+   iteration naturally resolves DFFs that become non-X after reset propagates.
 
-3. **VCD X output**: Should Loom write `x` values in the output VCD when a
-   primary output is X? This would change the VCD format from pure binary to
-   Verilog-standard four-state, which some downstream tools may not expect.
+3. **VCD X output**: Yes -- `write_output_vcd_xprop()` emits `Value::X` when
+   the X-mask bit is set for a primary output. This is the primary user-visible
+   benefit. The `vcd-ng` crate already supports `Value::X`. Downstream tools
+   that only handle two-state VCD would need updating, but Verilog-standard
+   four-state VCD is widely supported.
 
-4. **Partition granularity vs. signal granularity**: The current design applies
-   X-awareness at partition granularity (entire partition runs X-aware kernel
-   or not). An alternative is per-signal X-mask tracking within otherwise
-   two-state partitions, using mask words that happen to be all-zero. This is
-   simpler to implement (single kernel, unconditional X-mask logic) but pays
-   a uniform ~2x overhead. The partition-level approach is more complex but
-   offers better performance when most partitions are X-free.
+4. **Partition-level granularity**: X-awareness is applied at partition
+   granularity (entire partition runs X-aware kernel or not). This provides
+   better steady-state performance than per-signal tracking when most
+   partitions are X-free (~95% typical), at the cost of slightly more
+   pessimism at partition boundaries.
+
+5. **Runtime CLI flag**: X-propagation is controlled by `--xprop` on both
+   `loom map` and sim binaries, rather than a compile-time feature flag.
+   No new Cargo dependencies are needed. The `.gemparts` file carries the
+   `xprop_enabled` metadata, with `#[serde(default)]` ensuring backward
+   compatibility with old files (they deserialize with `xprop_enabled = false`).
+
+6. **State buffer layout**: When xprop is enabled, the state buffer doubles.
+   Value words occupy `[0 .. reg_io_state_size)` and X-mask words occupy
+   `[reg_io_state_size .. 2*reg_io_state_size)` per cycle. Per-partition
+   metadata word 8 stores the `is_x_capable` flag, and word 9 stores the
+   `xmask_state_offset` (equal to `reg_io_state_size` for X-capable
+   partitions). X-free partitions ignore both fields and run unchanged.
