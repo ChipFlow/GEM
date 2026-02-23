@@ -1375,245 +1375,246 @@
 <a href=#1375 id=1375 data-nosnippet>1375</a>
 <a href=#1376 id=1376 data-nosnippet>1376</a>    <span class="attr">#[test]
 <a href=#1377 id=1377 data-nosnippet>1377</a>    </span><span class="kw">fn </span>test_parse_ha() {
-<a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="kw">let </span>src =
-<a href=#1379 id=1379 data-nosnippet>1379</a>            std::fs::read_to_string(<span class="string">"vendor/sky130_fd_sc_hd/cells/ha/sky130_fd_sc_hd__ha.functional.v"</span>)
-<a href=#1380 id=1380 data-nosnippet>1380</a>                .unwrap();
-<a href=#1381 id=1381 data-nosnippet>1381</a>        <span class="kw">let </span>model = parse_functional_model(<span class="kw-2">&amp;</span>src).unwrap();
-<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="macro">assert_eq!</span>(model.module_name, <span class="string">"sky130_fd_sc_hd__ha"</span>);
-<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="macro">assert_eq!</span>(model.inputs, <span class="macro">vec!</span>[<span class="string">"A"</span>, <span class="string">"B"</span>]);
-<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="macro">assert_eq!</span>(model.outputs, <span class="macro">vec!</span>[<span class="string">"COUT"</span>, <span class="string">"SUM"</span>]);
-<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="macro">assert_eq!</span>(model.gates.len(), <span class="number">4</span>); <span class="comment">// and, buf, xor, buf
-<a href=#1386 id=1386 data-nosnippet>1386</a>    </span>}
-<a href=#1387 id=1387 data-nosnippet>1387</a>
-<a href=#1388 id=1388 data-nosnippet>1388</a>    <span class="attr">#[test]
-<a href=#1389 id=1389 data-nosnippet>1389</a>    </span><span class="kw">fn </span>test_parse_mux2i_udp() {
-<a href=#1390 id=1390 data-nosnippet>1390</a>        <span class="kw">let </span>src = std::fs::read_to_string(
-<a href=#1391 id=1391 data-nosnippet>1391</a>            <span class="string">"vendor/sky130_fd_sc_hd/cells/mux2i/sky130_fd_sc_hd__mux2i.functional.v"</span>,
-<a href=#1392 id=1392 data-nosnippet>1392</a>        )
-<a href=#1393 id=1393 data-nosnippet>1393</a>        .unwrap();
-<a href=#1394 id=1394 data-nosnippet>1394</a>        <span class="kw">let </span>model = parse_functional_model(<span class="kw-2">&amp;</span>src).unwrap();
-<a href=#1395 id=1395 data-nosnippet>1395</a>        <span class="macro">assert_eq!</span>(model.module_name, <span class="string">"sky130_fd_sc_hd__mux2i"</span>);
-<a href=#1396 id=1396 data-nosnippet>1396</a>        <span class="macro">assert_eq!</span>(model.inputs, <span class="macro">vec!</span>[<span class="string">"A0"</span>, <span class="string">"A1"</span>, <span class="string">"S"</span>]);
-<a href=#1397 id=1397 data-nosnippet>1397</a>        <span class="macro">assert_eq!</span>(model.outputs, <span class="macro">vec!</span>[<span class="string">"Y"</span>]);
-<a href=#1398 id=1398 data-nosnippet>1398</a>        <span class="comment">// Should have UDP instantiation + buf
-<a href=#1399 id=1399 data-nosnippet>1399</a>        </span><span class="macro">assert_eq!</span>(model.gates.len(), <span class="number">2</span>);
-<a href=#1400 id=1400 data-nosnippet>1400</a>        <span class="macro">assert!</span>(model.gates[<span class="number">0</span>]
-<a href=#1401 id=1401 data-nosnippet>1401</a>            .gate_type
-<a href=#1402 id=1402 data-nosnippet>1402</a>            .starts_with(<span class="string">"sky130_fd_sc_hd__udp_mux_2to1"</span>));
-<a href=#1403 id=1403 data-nosnippet>1403</a>    }
-<a href=#1404 id=1404 data-nosnippet>1404</a>
-<a href=#1405 id=1405 data-nosnippet>1405</a>    <span class="attr">#[test]
-<a href=#1406 id=1406 data-nosnippet>1406</a>    </span><span class="kw">fn </span>test_parse_udp_mux_2to1_n() {
-<a href=#1407 id=1407 data-nosnippet>1407</a>        <span class="kw">let </span>src = std::fs::read_to_string(
-<a href=#1408 id=1408 data-nosnippet>1408</a>            <span class="string">"vendor/sky130_fd_sc_hd/models/udp_mux_2to1_n/sky130_fd_sc_hd__udp_mux_2to1_n.v"</span>,
-<a href=#1409 id=1409 data-nosnippet>1409</a>        )
-<a href=#1410 id=1410 data-nosnippet>1410</a>        .unwrap();
-<a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span>udp = parse_udp(<span class="kw-2">&amp;</span>src).unwrap();
-<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="macro">assert_eq!</span>(udp.inputs, <span class="macro">vec!</span>[<span class="string">"A0"</span>, <span class="string">"A1"</span>, <span class="string">"S"</span>]);
-<a href=#1413 id=1413 data-nosnippet>1413</a>        <span class="macro">assert_eq!</span>(udp.output, <span class="string">"Y"</span>);
-<a href=#1414 id=1414 data-nosnippet>1414</a>        <span class="macro">assert_eq!</span>(udp.rows.len(), <span class="number">6</span>);
-<a href=#1415 id=1415 data-nosnippet>1415</a>
-<a href=#1416 id=1416 data-nosnippet>1416</a>        <span class="comment">// Verify: A0=0, S=0 -&gt; Y=1 (inverted mux)
-<a href=#1417 id=1417 data-nosnippet>1417</a>        </span><span class="macro">assert!</span>(eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>]));
-<a href=#1418 id=1418 data-nosnippet>1418</a>        <span class="comment">// A0=1, S=0 -&gt; Y=0
-<a href=#1419 id=1419 data-nosnippet>1419</a>        </span><span class="macro">assert!</span>(!eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>]));
-<a href=#1420 id=1420 data-nosnippet>1420</a>        <span class="comment">// A1=0, S=1 -&gt; Y=1
-<a href=#1421 id=1421 data-nosnippet>1421</a>        </span><span class="macro">assert!</span>(eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]));
-<a href=#1422 id=1422 data-nosnippet>1422</a>        <span class="comment">// A1=1, S=1 -&gt; Y=0
-<a href=#1423 id=1423 data-nosnippet>1423</a>        </span><span class="macro">assert!</span>(!eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>]));
-<a href=#1424 id=1424 data-nosnippet>1424</a>    }
-<a href=#1425 id=1425 data-nosnippet>1425</a>
-<a href=#1426 id=1426 data-nosnippet>1426</a>    <span class="doccomment">/// Helper: set up CellInputs and a bool-&gt;aigpin mapping for testing.
-<a href=#1427 id=1427 data-nosnippet>1427</a>    /// Returns (CellInputs, input_name_to_bool_map) for the given model.
-<a href=#1428 id=1428 data-nosnippet>1428</a>    </span><span class="kw">fn </span>setup_test_inputs(
-<a href=#1429 id=1429 data-nosnippet>1429</a>        model: <span class="kw-2">&amp;</span>BehavioralModel,
-<a href=#1430 id=1430 data-nosnippet>1430</a>        values: <span class="kw-2">&amp;</span>[bool],
-<a href=#1431 id=1431 data-nosnippet>1431</a>    ) -&gt; (CellInputs, HashMap&lt;String, bool&gt;) {
-<a href=#1432 id=1432 data-nosnippet>1432</a>        <span class="macro">assert_eq!</span>(model.inputs.len(), values.len());
-<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="kw">let </span><span class="kw-2">mut </span>cell_inputs = CellInputs::new();
-<a href=#1434 id=1434 data-nosnippet>1434</a>        <span class="kw">let </span><span class="kw-2">mut </span>bool_map = HashMap::new();
-<a href=#1435 id=1435 data-nosnippet>1435</a>
-<a href=#1436 id=1436 data-nosnippet>1436</a>        <span class="kw">for </span>(i, (name, <span class="kw-2">&amp;</span>val)) <span class="kw">in </span>model.inputs.iter().zip(values.iter()).enumerate() {
-<a href=#1437 id=1437 data-nosnippet>1437</a>            <span class="comment">// Assign aigpin (i+1) to each input
-<a href=#1438 id=1438 data-nosnippet>1438</a>            // aigpin_iv = ((i+1) &lt;&lt; 1) | 0  for non-inverted
-<a href=#1439 id=1439 data-nosnippet>1439</a>            </span><span class="kw">let </span>aigpin_iv = (i + <span class="number">1</span>) &lt;&lt; <span class="number">1</span>;
-<a href=#1440 id=1440 data-nosnippet>1440</a>            cell_inputs.set_pin(name, aigpin_iv);
-<a href=#1441 id=1441 data-nosnippet>1441</a>            bool_map.insert(name.clone(), val);
-<a href=#1442 id=1442 data-nosnippet>1442</a>        }
-<a href=#1443 id=1443 data-nosnippet>1443</a>
-<a href=#1444 id=1444 data-nosnippet>1444</a>        (cell_inputs, bool_map)
-<a href=#1445 id=1445 data-nosnippet>1445</a>    }
-<a href=#1446 id=1446 data-nosnippet>1446</a>
-<a href=#1447 id=1447 data-nosnippet>1447</a>    <span class="doccomment">/// Evaluate a DecompResult with concrete boolean inputs.
-<a href=#1448 id=1448 data-nosnippet>1448</a>    /// `pin_values` maps aigpin (not aigpin_iv) to bool.
-<a href=#1449 id=1449 data-nosnippet>1449</a>    </span><span class="kw">fn </span>eval_decomp_bool(decomp: <span class="kw-2">&amp;</span>DecompResult, pin_values: <span class="kw-2">&amp;</span>HashMap&lt;usize, bool&gt;) -&gt; bool {
-<a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="kw">let </span><span class="kw-2">mut </span>gate_outputs: Vec&lt;bool&gt; = Vec::new();
-<a href=#1451 id=1451 data-nosnippet>1451</a>
-<a href=#1452 id=1452 data-nosnippet>1452</a>        <span class="kw">for </span>(a_ref, b_ref) <span class="kw">in </span><span class="kw-2">&amp;</span>decomp.and_gates {
-<a href=#1453 id=1453 data-nosnippet>1453</a>            <span class="kw">let </span>a_val = resolve_decomp_ref_bool(<span class="kw-2">*</span>a_ref, pin_values, <span class="kw-2">&amp;</span>gate_outputs);
-<a href=#1454 id=1454 data-nosnippet>1454</a>            <span class="kw">let </span>b_val = resolve_decomp_ref_bool(<span class="kw-2">*</span>b_ref, pin_values, <span class="kw-2">&amp;</span>gate_outputs);
-<a href=#1455 id=1455 data-nosnippet>1455</a>            gate_outputs.push(a_val &amp;&amp; b_val);
-<a href=#1456 id=1456 data-nosnippet>1456</a>        }
-<a href=#1457 id=1457 data-nosnippet>1457</a>
-<a href=#1458 id=1458 data-nosnippet>1458</a>        <span class="kw">let </span>output = <span class="kw">if </span>decomp.output_idx &lt; <span class="number">0 </span>{
-<a href=#1459 id=1459 data-nosnippet>1459</a>            <span class="kw">let </span>gate_idx = (-decomp.output_idx - <span class="number">1</span>) <span class="kw">as </span>usize;
-<a href=#1460 id=1460 data-nosnippet>1460</a>            gate_outputs[gate_idx]
-<a href=#1461 id=1461 data-nosnippet>1461</a>        } <span class="kw">else </span>{
-<a href=#1462 id=1462 data-nosnippet>1462</a>            <span class="kw">let </span>aigpin = decomp.output_idx <span class="kw">as </span>usize;
-<a href=#1463 id=1463 data-nosnippet>1463</a>            <span class="kw-2">*</span>pin_values
-<a href=#1464 id=1464 data-nosnippet>1464</a>                .get(<span class="kw-2">&amp;</span>aigpin)
-<a href=#1465 id=1465 data-nosnippet>1465</a>                .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"Pin {} not found in values map"</span>, aigpin))
-<a href=#1466 id=1466 data-nosnippet>1466</a>        };
-<a href=#1467 id=1467 data-nosnippet>1467</a>
-<a href=#1468 id=1468 data-nosnippet>1468</a>        <span class="kw">if </span>decomp.output_inverted {
-<a href=#1469 id=1469 data-nosnippet>1469</a>            !output
-<a href=#1470 id=1470 data-nosnippet>1470</a>        } <span class="kw">else </span>{
-<a href=#1471 id=1471 data-nosnippet>1471</a>            output
-<a href=#1472 id=1472 data-nosnippet>1472</a>        }
-<a href=#1473 id=1473 data-nosnippet>1473</a>    }
-<a href=#1474 id=1474 data-nosnippet>1474</a>
-<a href=#1475 id=1475 data-nosnippet>1475</a>    <span class="kw">fn </span>resolve_decomp_ref_bool(
-<a href=#1476 id=1476 data-nosnippet>1476</a>        ref_val: i64,
-<a href=#1477 id=1477 data-nosnippet>1477</a>        pin_values: <span class="kw-2">&amp;</span>HashMap&lt;usize, bool&gt;,
-<a href=#1478 id=1478 data-nosnippet>1478</a>        gate_outputs: <span class="kw-2">&amp;</span>[bool],
-<a href=#1479 id=1479 data-nosnippet>1479</a>    ) -&gt; bool {
-<a href=#1480 id=1480 data-nosnippet>1480</a>        <span class="kw">if </span>ref_val &lt; <span class="number">0 </span>{
-<a href=#1481 id=1481 data-nosnippet>1481</a>            <span class="kw">let </span>abs_ref = -ref_val;
-<a href=#1482 id=1482 data-nosnippet>1482</a>            <span class="kw">let </span>gate_idx = ((abs_ref - <span class="number">1</span>) / <span class="number">2</span>) <span class="kw">as </span>usize;
-<a href=#1483 id=1483 data-nosnippet>1483</a>            <span class="kw">let </span>inverted = (abs_ref % <span class="number">2</span>) == <span class="number">0</span>;
-<a href=#1484 id=1484 data-nosnippet>1484</a>            <span class="kw">let </span>val = gate_outputs[gate_idx];
-<a href=#1485 id=1485 data-nosnippet>1485</a>            <span class="kw">if </span>inverted {
-<a href=#1486 id=1486 data-nosnippet>1486</a>                !val
-<a href=#1487 id=1487 data-nosnippet>1487</a>            } <span class="kw">else </span>{
-<a href=#1488 id=1488 data-nosnippet>1488</a>                val
-<a href=#1489 id=1489 data-nosnippet>1489</a>            }
-<a href=#1490 id=1490 data-nosnippet>1490</a>        } <span class="kw">else </span>{
-<a href=#1491 id=1491 data-nosnippet>1491</a>            <span class="comment">// ref_val is aigpin_iv: pin = ref_val &gt;&gt; 1, inverted = ref_val &amp; 1
-<a href=#1492 id=1492 data-nosnippet>1492</a>            </span><span class="kw">let </span>aigpin = (ref_val &gt;&gt; <span class="number">1</span>) <span class="kw">as </span>usize;
-<a href=#1493 id=1493 data-nosnippet>1493</a>            <span class="kw">let </span>inverted = (ref_val &amp; <span class="number">1</span>) != <span class="number">0</span>;
-<a href=#1494 id=1494 data-nosnippet>1494</a>            <span class="kw">let </span>val = <span class="kw-2">*</span>pin_values.get(<span class="kw-2">&amp;</span>aigpin).unwrap_or_else(|| {
-<a href=#1495 id=1495 data-nosnippet>1495</a>                <span class="macro">panic!</span>(
-<a href=#1496 id=1496 data-nosnippet>1496</a>                    <span class="string">"Pin {} not found in values map (ref_val={})"</span>,
-<a href=#1497 id=1497 data-nosnippet>1497</a>                    aigpin, ref_val
-<a href=#1498 id=1498 data-nosnippet>1498</a>                )
-<a href=#1499 id=1499 data-nosnippet>1499</a>            });
-<a href=#1500 id=1500 data-nosnippet>1500</a>            <span class="kw">if </span>inverted {
-<a href=#1501 id=1501 data-nosnippet>1501</a>                !val
-<a href=#1502 id=1502 data-nosnippet>1502</a>            } <span class="kw">else </span>{
-<a href=#1503 id=1503 data-nosnippet>1503</a>                val
-<a href=#1504 id=1504 data-nosnippet>1504</a>            }
-<a href=#1505 id=1505 data-nosnippet>1505</a>        }
-<a href=#1506 id=1506 data-nosnippet>1506</a>    }
-<a href=#1507 id=1507 data-nosnippet>1507</a>
-<a href=#1508 id=1508 data-nosnippet>1508</a>    <span class="doccomment">/// Load all PDK models and UDPs from the submodule.
-<a href=#1509 id=1509 data-nosnippet>1509</a>    </span><span class="kw">fn </span>load_test_pdk() -&gt; PdkModels {
-<a href=#1510 id=1510 data-nosnippet>1510</a>        <span class="kw">let </span>pdk_path = Path::new(<span class="string">"vendor/sky130_fd_sc_hd/cells"</span>);
-<a href=#1511 id=1511 data-nosnippet>1511</a>        <span class="kw">if </span>!pdk_path.exists() {
-<a href=#1512 id=1512 data-nosnippet>1512</a>            <span class="macro">panic!</span>(<span class="string">"sky130_fd_sc_hd submodule not initialized. Run: git submodule update --init"</span>);
-<a href=#1513 id=1513 data-nosnippet>1513</a>        }
-<a href=#1514 id=1514 data-nosnippet>1514</a>
-<a href=#1515 id=1515 data-nosnippet>1515</a>        <span class="comment">// Get all cell types
-<a href=#1516 id=1516 data-nosnippet>1516</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>cell_types: Vec&lt;String&gt; = Vec::new();
-<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="kw">for </span>entry <span class="kw">in </span>std::fs::read_dir(pdk_path).unwrap() {
-<a href=#1518 id=1518 data-nosnippet>1518</a>            <span class="kw">let </span>entry = entry.unwrap();
-<a href=#1519 id=1519 data-nosnippet>1519</a>            <span class="kw">if </span>entry.file_type().unwrap().is_dir() {
-<a href=#1520 id=1520 data-nosnippet>1520</a>                cell_types.push(entry.file_name().to_string_lossy().to_string());
-<a href=#1521 id=1521 data-nosnippet>1521</a>            }
-<a href=#1522 id=1522 data-nosnippet>1522</a>        }
-<a href=#1523 id=1523 data-nosnippet>1523</a>        cell_types.sort();
-<a href=#1524 id=1524 data-nosnippet>1524</a>
-<a href=#1525 id=1525 data-nosnippet>1525</a>        load_pdk_models(pdk_path, <span class="kw-2">&amp;</span>cell_types)
-<a href=#1526 id=1526 data-nosnippet>1526</a>    }
-<a href=#1527 id=1527 data-nosnippet>1527</a>
-<a href=#1528 id=1528 data-nosnippet>1528</a>    <span class="doccomment">/// Check if all input pins of a model are recognized by CellInputs.
-<a href=#1529 id=1529 data-nosnippet>1529</a>    </span><span class="kw">fn </span>all_inputs_supported(model: <span class="kw-2">&amp;</span>BehavioralModel) -&gt; bool {
-<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="kw">let </span>supported = [
-<a href=#1531 id=1531 data-nosnippet>1531</a>            <span class="string">"A"</span>, <span class="string">"A_N"</span>, <span class="string">"A0"</span>, <span class="string">"A1"</span>, <span class="string">"A1_N"</span>, <span class="string">"A2"</span>, <span class="string">"A2_N"</span>, <span class="string">"A3"</span>, <span class="string">"A4"</span>, <span class="string">"B"</span>, <span class="string">"B_N"</span>, <span class="string">"B1"</span>, <span class="string">"B1_N"</span>,
-<a href=#1532 id=1532 data-nosnippet>1532</a>            <span class="string">"B2"</span>, <span class="string">"C"</span>, <span class="string">"C_N"</span>, <span class="string">"C1"</span>, <span class="string">"C2"</span>, <span class="string">"D"</span>, <span class="string">"D_N"</span>, <span class="string">"D1"</span>, <span class="string">"S"</span>, <span class="string">"S0"</span>, <span class="string">"S1"</span>, <span class="string">"CIN"</span>, <span class="string">"SET_B"</span>,
-<a href=#1533 id=1533 data-nosnippet>1533</a>            <span class="string">"RESET_B"</span>, <span class="string">"SLEEP"</span>, <span class="string">"SLEEP_B"</span>,
-<a href=#1534 id=1534 data-nosnippet>1534</a>        ];
-<a href=#1535 id=1535 data-nosnippet>1535</a>        model
-<a href=#1536 id=1536 data-nosnippet>1536</a>            .inputs
-<a href=#1537 id=1537 data-nosnippet>1537</a>            .iter()
-<a href=#1538 id=1538 data-nosnippet>1538</a>            .all(|name| supported.contains(<span class="kw-2">&amp;</span>name.as_str()))
-<a href=#1539 id=1539 data-nosnippet>1539</a>    }
-<a href=#1540 id=1540 data-nosnippet>1540</a>
-<a href=#1541 id=1541 data-nosnippet>1541</a>    <span class="doccomment">/// Exhaustive truth-table test for all combinational cells with supported pins.
-<a href=#1542 id=1542 data-nosnippet>1542</a>    /// For each cell: evaluate all 2^N input combinations through both
-<a href=#1543 id=1543 data-nosnippet>1543</a>    /// the AIG decomposition and the direct gate evaluator, verify they match.
-<a href=#1544 id=1544 data-nosnippet>1544</a>    </span><span class="attr">#[test]
-<a href=#1545 id=1545 data-nosnippet>1545</a>    </span><span class="kw">fn </span>test_all_cells_vs_pdk() {
-<a href=#1546 id=1546 data-nosnippet>1546</a>        <span class="kw">let </span>pdk = load_test_pdk();
-<a href=#1547 id=1547 data-nosnippet>1547</a>
-<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="kw">let </span><span class="kw-2">mut </span>tested = <span class="number">0</span>;
-<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="kw">let </span><span class="kw-2">mut </span>skipped_inputs = <span class="number">0</span>;
-<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="kw">let </span><span class="kw-2">mut </span>skipped_size = <span class="number">0</span>;
-<a href=#1551 id=1551 data-nosnippet>1551</a>
-<a href=#1552 id=1552 data-nosnippet>1552</a>        <span class="comment">// Sort keys for deterministic output
-<a href=#1553 id=1553 data-nosnippet>1553</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>cell_types: Vec&lt;<span class="kw-2">&amp;</span>String&gt; = pdk.models.keys().collect();
-<a href=#1554 id=1554 data-nosnippet>1554</a>        cell_types.sort();
-<a href=#1555 id=1555 data-nosnippet>1555</a>
-<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="kw">for </span>cell_type <span class="kw">in </span>cell_types {
-<a href=#1557 id=1557 data-nosnippet>1557</a>            <span class="kw">let </span>model = <span class="kw-2">&amp;</span>pdk.models[cell_type];
-<a href=#1558 id=1558 data-nosnippet>1558</a>            <span class="kw">let </span>num_inputs = model.inputs.len();
-<a href=#1559 id=1559 data-nosnippet>1559</a>
-<a href=#1560 id=1560 data-nosnippet>1560</a>            <span class="comment">// Skip cells with unsupported input pin names
-<a href=#1561 id=1561 data-nosnippet>1561</a>            </span><span class="kw">if </span>!all_inputs_supported(model) {
-<a href=#1562 id=1562 data-nosnippet>1562</a>                skipped_inputs += <span class="number">1</span>;
-<a href=#1563 id=1563 data-nosnippet>1563</a>                <span class="kw">continue</span>;
-<a href=#1564 id=1564 data-nosnippet>1564</a>            }
-<a href=#1565 id=1565 data-nosnippet>1565</a>
-<a href=#1566 id=1566 data-nosnippet>1566</a>            <span class="comment">// Skip cells with too many inputs for exhaustive testing (&gt; 8 inputs)
-<a href=#1567 id=1567 data-nosnippet>1567</a>            </span><span class="kw">if </span>num_inputs &gt; <span class="number">8 </span>{
-<a href=#1568 id=1568 data-nosnippet>1568</a>                skipped_size += <span class="number">1</span>;
-<a href=#1569 id=1569 data-nosnippet>1569</a>                <span class="kw">continue</span>;
-<a href=#1570 id=1570 data-nosnippet>1570</a>            }
-<a href=#1571 id=1571 data-nosnippet>1571</a>
-<a href=#1572 id=1572 data-nosnippet>1572</a>            <span class="kw">let </span>num_combos = <span class="number">1u32 </span>&lt;&lt; num_inputs;
-<a href=#1573 id=1573 data-nosnippet>1573</a>
-<a href=#1574 id=1574 data-nosnippet>1574</a>            <span class="kw">for </span>output_pin <span class="kw">in </span><span class="kw-2">&amp;</span>model.outputs {
-<a href=#1575 id=1575 data-nosnippet>1575</a>                <span class="kw">for </span>combo <span class="kw">in </span><span class="number">0</span>..num_combos {
-<a href=#1576 id=1576 data-nosnippet>1576</a>                    <span class="comment">// Convert combo to input booleans
-<a href=#1577 id=1577 data-nosnippet>1577</a>                    </span><span class="kw">let </span>input_bools: Vec&lt;bool&gt; =
-<a href=#1578 id=1578 data-nosnippet>1578</a>                        (<span class="number">0</span>..num_inputs).map(|i| ((combo &gt;&gt; i) &amp; <span class="number">1</span>) != <span class="number">0</span>).collect();
-<a href=#1579 id=1579 data-nosnippet>1579</a>
-<a href=#1580 id=1580 data-nosnippet>1580</a>                    <span class="comment">// Set up CellInputs
-<a href=#1581 id=1581 data-nosnippet>1581</a>                    </span><span class="kw">let </span>(cell_inputs, bool_map) = setup_test_inputs(model, <span class="kw-2">&amp;</span>input_bools);
-<a href=#1582 id=1582 data-nosnippet>1582</a>
-<a href=#1583 id=1583 data-nosnippet>1583</a>                    <span class="comment">// Evaluate via direct gate interpretation (reference)
-<a href=#1584 id=1584 data-nosnippet>1584</a>                    </span><span class="kw">let </span>expected = eval_behavioral_model(model, <span class="kw-2">&amp;</span>bool_map, output_pin, <span class="kw-2">&amp;</span>pdk.udps);
-<a href=#1585 id=1585 data-nosnippet>1585</a>
-<a href=#1586 id=1586 data-nosnippet>1586</a>                    <span class="comment">// Evaluate via AIG decomposition
-<a href=#1587 id=1587 data-nosnippet>1587</a>                    </span><span class="kw">let </span>decomp = decompose_with_pdk(cell_type, <span class="kw-2">&amp;</span>cell_inputs, output_pin, <span class="kw-2">&amp;</span>pdk);
-<a href=#1588 id=1588 data-nosnippet>1588</a>
-<a href=#1589 id=1589 data-nosnippet>1589</a>                    <span class="comment">// Build pin_values map for decomp evaluator
-<a href=#1590 id=1590 data-nosnippet>1590</a>                    </span><span class="kw">let </span><span class="kw-2">mut </span>pin_values: HashMap&lt;usize, bool&gt; = HashMap::new();
-<a href=#1591 id=1591 data-nosnippet>1591</a>                    pin_values.insert(<span class="number">0</span>, <span class="bool-val">false</span>); <span class="comment">// const-0
-<a href=#1592 id=1592 data-nosnippet>1592</a>                    </span><span class="kw">for </span>(i, <span class="kw-2">&amp;</span>val) <span class="kw">in </span>input_bools.iter().enumerate() {
-<a href=#1593 id=1593 data-nosnippet>1593</a>                        pin_values.insert(i + <span class="number">1</span>, val);
-<a href=#1594 id=1594 data-nosnippet>1594</a>                    }
-<a href=#1595 id=1595 data-nosnippet>1595</a>
-<a href=#1596 id=1596 data-nosnippet>1596</a>                    <span class="kw">let </span>actual = eval_decomp_bool(<span class="kw-2">&amp;</span>decomp, <span class="kw-2">&amp;</span>pin_values);
-<a href=#1597 id=1597 data-nosnippet>1597</a>
-<a href=#1598 id=1598 data-nosnippet>1598</a>                    <span class="macro">assert_eq!</span>(
-<a href=#1599 id=1599 data-nosnippet>1599</a>                        actual, expected,
-<a href=#1600 id=1600 data-nosnippet>1600</a>                        <span class="string">"Mismatch for cell '{}' output '{}' with inputs {:?}: AIG={}, expected={}"</span>,
-<a href=#1601 id=1601 data-nosnippet>1601</a>                        cell_type, output_pin, input_bools, actual, expected
-<a href=#1602 id=1602 data-nosnippet>1602</a>                    );
-<a href=#1603 id=1603 data-nosnippet>1603</a>                }
-<a href=#1604 id=1604 data-nosnippet>1604</a>            }
-<a href=#1605 id=1605 data-nosnippet>1605</a>            tested += <span class="number">1</span>;
-<a href=#1606 id=1606 data-nosnippet>1606</a>        }
-<a href=#1607 id=1607 data-nosnippet>1607</a>
-<a href=#1608 id=1608 data-nosnippet>1608</a>        <span class="macro">println!</span>(
-<a href=#1609 id=1609 data-nosnippet>1609</a>            <span class="string">"Tested {} cell types exhaustively, skipped {} (unsupported pins), {} (too many inputs)"</span>,
-<a href=#1610 id=1610 data-nosnippet>1610</a>            tested, skipped_inputs, skipped_size
-<a href=#1611 id=1611 data-nosnippet>1611</a>        );
-<a href=#1612 id=1612 data-nosnippet>1612</a>        <span class="macro">assert!</span>(
-<a href=#1613 id=1613 data-nosnippet>1613</a>            tested &gt; <span class="number">50</span>,
-<a href=#1614 id=1614 data-nosnippet>1614</a>            <span class="string">"Expected to test at least 50 cell types, but only tested {}"</span>,
-<a href=#1615 id=1615 data-nosnippet>1615</a>            tested
-<a href=#1616 id=1616 data-nosnippet>1616</a>        );
-<a href=#1617 id=1617 data-nosnippet>1617</a>    }
-<a href=#1618 id=1618 data-nosnippet>1618</a>}
+<a href=#1378 id=1378 data-nosnippet>1378</a>        <span class="kw">let </span>src = std::fs::read_to_string(
+<a href=#1379 id=1379 data-nosnippet>1379</a>            <span class="string">"vendor/sky130_fd_sc_hd/cells/ha/sky130_fd_sc_hd__ha.functional.v"</span>,
+<a href=#1380 id=1380 data-nosnippet>1380</a>        )
+<a href=#1381 id=1381 data-nosnippet>1381</a>        .unwrap();
+<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="kw">let </span>model = parse_functional_model(<span class="kw-2">&amp;</span>src).unwrap();
+<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="macro">assert_eq!</span>(model.module_name, <span class="string">"sky130_fd_sc_hd__ha"</span>);
+<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="macro">assert_eq!</span>(model.inputs, <span class="macro">vec!</span>[<span class="string">"A"</span>, <span class="string">"B"</span>]);
+<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="macro">assert_eq!</span>(model.outputs, <span class="macro">vec!</span>[<span class="string">"COUT"</span>, <span class="string">"SUM"</span>]);
+<a href=#1386 id=1386 data-nosnippet>1386</a>        <span class="macro">assert_eq!</span>(model.gates.len(), <span class="number">4</span>); <span class="comment">// and, buf, xor, buf
+<a href=#1387 id=1387 data-nosnippet>1387</a>    </span>}
+<a href=#1388 id=1388 data-nosnippet>1388</a>
+<a href=#1389 id=1389 data-nosnippet>1389</a>    <span class="attr">#[test]
+<a href=#1390 id=1390 data-nosnippet>1390</a>    </span><span class="kw">fn </span>test_parse_mux2i_udp() {
+<a href=#1391 id=1391 data-nosnippet>1391</a>        <span class="kw">let </span>src = std::fs::read_to_string(
+<a href=#1392 id=1392 data-nosnippet>1392</a>            <span class="string">"vendor/sky130_fd_sc_hd/cells/mux2i/sky130_fd_sc_hd__mux2i.functional.v"</span>,
+<a href=#1393 id=1393 data-nosnippet>1393</a>        )
+<a href=#1394 id=1394 data-nosnippet>1394</a>        .unwrap();
+<a href=#1395 id=1395 data-nosnippet>1395</a>        <span class="kw">let </span>model = parse_functional_model(<span class="kw-2">&amp;</span>src).unwrap();
+<a href=#1396 id=1396 data-nosnippet>1396</a>        <span class="macro">assert_eq!</span>(model.module_name, <span class="string">"sky130_fd_sc_hd__mux2i"</span>);
+<a href=#1397 id=1397 data-nosnippet>1397</a>        <span class="macro">assert_eq!</span>(model.inputs, <span class="macro">vec!</span>[<span class="string">"A0"</span>, <span class="string">"A1"</span>, <span class="string">"S"</span>]);
+<a href=#1398 id=1398 data-nosnippet>1398</a>        <span class="macro">assert_eq!</span>(model.outputs, <span class="macro">vec!</span>[<span class="string">"Y"</span>]);
+<a href=#1399 id=1399 data-nosnippet>1399</a>        <span class="comment">// Should have UDP instantiation + buf
+<a href=#1400 id=1400 data-nosnippet>1400</a>        </span><span class="macro">assert_eq!</span>(model.gates.len(), <span class="number">2</span>);
+<a href=#1401 id=1401 data-nosnippet>1401</a>        <span class="macro">assert!</span>(model.gates[<span class="number">0</span>]
+<a href=#1402 id=1402 data-nosnippet>1402</a>            .gate_type
+<a href=#1403 id=1403 data-nosnippet>1403</a>            .starts_with(<span class="string">"sky130_fd_sc_hd__udp_mux_2to1"</span>));
+<a href=#1404 id=1404 data-nosnippet>1404</a>    }
+<a href=#1405 id=1405 data-nosnippet>1405</a>
+<a href=#1406 id=1406 data-nosnippet>1406</a>    <span class="attr">#[test]
+<a href=#1407 id=1407 data-nosnippet>1407</a>    </span><span class="kw">fn </span>test_parse_udp_mux_2to1_n() {
+<a href=#1408 id=1408 data-nosnippet>1408</a>        <span class="kw">let </span>src = std::fs::read_to_string(
+<a href=#1409 id=1409 data-nosnippet>1409</a>            <span class="string">"vendor/sky130_fd_sc_hd/models/udp_mux_2to1_n/sky130_fd_sc_hd__udp_mux_2to1_n.v"</span>,
+<a href=#1410 id=1410 data-nosnippet>1410</a>        )
+<a href=#1411 id=1411 data-nosnippet>1411</a>        .unwrap();
+<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">let </span>udp = parse_udp(<span class="kw-2">&amp;</span>src).unwrap();
+<a href=#1413 id=1413 data-nosnippet>1413</a>        <span class="macro">assert_eq!</span>(udp.inputs, <span class="macro">vec!</span>[<span class="string">"A0"</span>, <span class="string">"A1"</span>, <span class="string">"S"</span>]);
+<a href=#1414 id=1414 data-nosnippet>1414</a>        <span class="macro">assert_eq!</span>(udp.output, <span class="string">"Y"</span>);
+<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="macro">assert_eq!</span>(udp.rows.len(), <span class="number">6</span>);
+<a href=#1416 id=1416 data-nosnippet>1416</a>
+<a href=#1417 id=1417 data-nosnippet>1417</a>        <span class="comment">// Verify: A0=0, S=0 -&gt; Y=1 (inverted mux)
+<a href=#1418 id=1418 data-nosnippet>1418</a>        </span><span class="macro">assert!</span>(eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>]));
+<a href=#1419 id=1419 data-nosnippet>1419</a>        <span class="comment">// A0=1, S=0 -&gt; Y=0
+<a href=#1420 id=1420 data-nosnippet>1420</a>        </span><span class="macro">assert!</span>(!eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>]));
+<a href=#1421 id=1421 data-nosnippet>1421</a>        <span class="comment">// A1=0, S=1 -&gt; Y=1
+<a href=#1422 id=1422 data-nosnippet>1422</a>        </span><span class="macro">assert!</span>(eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]));
+<a href=#1423 id=1423 data-nosnippet>1423</a>        <span class="comment">// A1=1, S=1 -&gt; Y=0
+<a href=#1424 id=1424 data-nosnippet>1424</a>        </span><span class="macro">assert!</span>(!eval_udp_for_inputs(<span class="kw-2">&amp;</span>udp, <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>]));
+<a href=#1425 id=1425 data-nosnippet>1425</a>    }
+<a href=#1426 id=1426 data-nosnippet>1426</a>
+<a href=#1427 id=1427 data-nosnippet>1427</a>    <span class="doccomment">/// Helper: set up CellInputs and a bool-&gt;aigpin mapping for testing.
+<a href=#1428 id=1428 data-nosnippet>1428</a>    /// Returns (CellInputs, input_name_to_bool_map) for the given model.
+<a href=#1429 id=1429 data-nosnippet>1429</a>    </span><span class="kw">fn </span>setup_test_inputs(
+<a href=#1430 id=1430 data-nosnippet>1430</a>        model: <span class="kw-2">&amp;</span>BehavioralModel,
+<a href=#1431 id=1431 data-nosnippet>1431</a>        values: <span class="kw-2">&amp;</span>[bool],
+<a href=#1432 id=1432 data-nosnippet>1432</a>    ) -&gt; (CellInputs, HashMap&lt;String, bool&gt;) {
+<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="macro">assert_eq!</span>(model.inputs.len(), values.len());
+<a href=#1434 id=1434 data-nosnippet>1434</a>        <span class="kw">let </span><span class="kw-2">mut </span>cell_inputs = CellInputs::new();
+<a href=#1435 id=1435 data-nosnippet>1435</a>        <span class="kw">let </span><span class="kw-2">mut </span>bool_map = HashMap::new();
+<a href=#1436 id=1436 data-nosnippet>1436</a>
+<a href=#1437 id=1437 data-nosnippet>1437</a>        <span class="kw">for </span>(i, (name, <span class="kw-2">&amp;</span>val)) <span class="kw">in </span>model.inputs.iter().zip(values.iter()).enumerate() {
+<a href=#1438 id=1438 data-nosnippet>1438</a>            <span class="comment">// Assign aigpin (i+1) to each input
+<a href=#1439 id=1439 data-nosnippet>1439</a>            // aigpin_iv = ((i+1) &lt;&lt; 1) | 0  for non-inverted
+<a href=#1440 id=1440 data-nosnippet>1440</a>            </span><span class="kw">let </span>aigpin_iv = (i + <span class="number">1</span>) &lt;&lt; <span class="number">1</span>;
+<a href=#1441 id=1441 data-nosnippet>1441</a>            cell_inputs.set_pin(name, aigpin_iv);
+<a href=#1442 id=1442 data-nosnippet>1442</a>            bool_map.insert(name.clone(), val);
+<a href=#1443 id=1443 data-nosnippet>1443</a>        }
+<a href=#1444 id=1444 data-nosnippet>1444</a>
+<a href=#1445 id=1445 data-nosnippet>1445</a>        (cell_inputs, bool_map)
+<a href=#1446 id=1446 data-nosnippet>1446</a>    }
+<a href=#1447 id=1447 data-nosnippet>1447</a>
+<a href=#1448 id=1448 data-nosnippet>1448</a>    <span class="doccomment">/// Evaluate a DecompResult with concrete boolean inputs.
+<a href=#1449 id=1449 data-nosnippet>1449</a>    /// `pin_values` maps aigpin (not aigpin_iv) to bool.
+<a href=#1450 id=1450 data-nosnippet>1450</a>    </span><span class="kw">fn </span>eval_decomp_bool(decomp: <span class="kw-2">&amp;</span>DecompResult, pin_values: <span class="kw-2">&amp;</span>HashMap&lt;usize, bool&gt;) -&gt; bool {
+<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="kw">let </span><span class="kw-2">mut </span>gate_outputs: Vec&lt;bool&gt; = Vec::new();
+<a href=#1452 id=1452 data-nosnippet>1452</a>
+<a href=#1453 id=1453 data-nosnippet>1453</a>        <span class="kw">for </span>(a_ref, b_ref) <span class="kw">in </span><span class="kw-2">&amp;</span>decomp.and_gates {
+<a href=#1454 id=1454 data-nosnippet>1454</a>            <span class="kw">let </span>a_val = resolve_decomp_ref_bool(<span class="kw-2">*</span>a_ref, pin_values, <span class="kw-2">&amp;</span>gate_outputs);
+<a href=#1455 id=1455 data-nosnippet>1455</a>            <span class="kw">let </span>b_val = resolve_decomp_ref_bool(<span class="kw-2">*</span>b_ref, pin_values, <span class="kw-2">&amp;</span>gate_outputs);
+<a href=#1456 id=1456 data-nosnippet>1456</a>            gate_outputs.push(a_val &amp;&amp; b_val);
+<a href=#1457 id=1457 data-nosnippet>1457</a>        }
+<a href=#1458 id=1458 data-nosnippet>1458</a>
+<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="kw">let </span>output = <span class="kw">if </span>decomp.output_idx &lt; <span class="number">0 </span>{
+<a href=#1460 id=1460 data-nosnippet>1460</a>            <span class="kw">let </span>gate_idx = (-decomp.output_idx - <span class="number">1</span>) <span class="kw">as </span>usize;
+<a href=#1461 id=1461 data-nosnippet>1461</a>            gate_outputs[gate_idx]
+<a href=#1462 id=1462 data-nosnippet>1462</a>        } <span class="kw">else </span>{
+<a href=#1463 id=1463 data-nosnippet>1463</a>            <span class="kw">let </span>aigpin = decomp.output_idx <span class="kw">as </span>usize;
+<a href=#1464 id=1464 data-nosnippet>1464</a>            <span class="kw-2">*</span>pin_values
+<a href=#1465 id=1465 data-nosnippet>1465</a>                .get(<span class="kw-2">&amp;</span>aigpin)
+<a href=#1466 id=1466 data-nosnippet>1466</a>                .unwrap_or_else(|| <span class="macro">panic!</span>(<span class="string">"Pin {} not found in values map"</span>, aigpin))
+<a href=#1467 id=1467 data-nosnippet>1467</a>        };
+<a href=#1468 id=1468 data-nosnippet>1468</a>
+<a href=#1469 id=1469 data-nosnippet>1469</a>        <span class="kw">if </span>decomp.output_inverted {
+<a href=#1470 id=1470 data-nosnippet>1470</a>            !output
+<a href=#1471 id=1471 data-nosnippet>1471</a>        } <span class="kw">else </span>{
+<a href=#1472 id=1472 data-nosnippet>1472</a>            output
+<a href=#1473 id=1473 data-nosnippet>1473</a>        }
+<a href=#1474 id=1474 data-nosnippet>1474</a>    }
+<a href=#1475 id=1475 data-nosnippet>1475</a>
+<a href=#1476 id=1476 data-nosnippet>1476</a>    <span class="kw">fn </span>resolve_decomp_ref_bool(
+<a href=#1477 id=1477 data-nosnippet>1477</a>        ref_val: i64,
+<a href=#1478 id=1478 data-nosnippet>1478</a>        pin_values: <span class="kw-2">&amp;</span>HashMap&lt;usize, bool&gt;,
+<a href=#1479 id=1479 data-nosnippet>1479</a>        gate_outputs: <span class="kw-2">&amp;</span>[bool],
+<a href=#1480 id=1480 data-nosnippet>1480</a>    ) -&gt; bool {
+<a href=#1481 id=1481 data-nosnippet>1481</a>        <span class="kw">if </span>ref_val &lt; <span class="number">0 </span>{
+<a href=#1482 id=1482 data-nosnippet>1482</a>            <span class="kw">let </span>abs_ref = -ref_val;
+<a href=#1483 id=1483 data-nosnippet>1483</a>            <span class="kw">let </span>gate_idx = ((abs_ref - <span class="number">1</span>) / <span class="number">2</span>) <span class="kw">as </span>usize;
+<a href=#1484 id=1484 data-nosnippet>1484</a>            <span class="kw">let </span>inverted = (abs_ref % <span class="number">2</span>) == <span class="number">0</span>;
+<a href=#1485 id=1485 data-nosnippet>1485</a>            <span class="kw">let </span>val = gate_outputs[gate_idx];
+<a href=#1486 id=1486 data-nosnippet>1486</a>            <span class="kw">if </span>inverted {
+<a href=#1487 id=1487 data-nosnippet>1487</a>                !val
+<a href=#1488 id=1488 data-nosnippet>1488</a>            } <span class="kw">else </span>{
+<a href=#1489 id=1489 data-nosnippet>1489</a>                val
+<a href=#1490 id=1490 data-nosnippet>1490</a>            }
+<a href=#1491 id=1491 data-nosnippet>1491</a>        } <span class="kw">else </span>{
+<a href=#1492 id=1492 data-nosnippet>1492</a>            <span class="comment">// ref_val is aigpin_iv: pin = ref_val &gt;&gt; 1, inverted = ref_val &amp; 1
+<a href=#1493 id=1493 data-nosnippet>1493</a>            </span><span class="kw">let </span>aigpin = (ref_val &gt;&gt; <span class="number">1</span>) <span class="kw">as </span>usize;
+<a href=#1494 id=1494 data-nosnippet>1494</a>            <span class="kw">let </span>inverted = (ref_val &amp; <span class="number">1</span>) != <span class="number">0</span>;
+<a href=#1495 id=1495 data-nosnippet>1495</a>            <span class="kw">let </span>val = <span class="kw-2">*</span>pin_values.get(<span class="kw-2">&amp;</span>aigpin).unwrap_or_else(|| {
+<a href=#1496 id=1496 data-nosnippet>1496</a>                <span class="macro">panic!</span>(
+<a href=#1497 id=1497 data-nosnippet>1497</a>                    <span class="string">"Pin {} not found in values map (ref_val={})"</span>,
+<a href=#1498 id=1498 data-nosnippet>1498</a>                    aigpin, ref_val
+<a href=#1499 id=1499 data-nosnippet>1499</a>                )
+<a href=#1500 id=1500 data-nosnippet>1500</a>            });
+<a href=#1501 id=1501 data-nosnippet>1501</a>            <span class="kw">if </span>inverted {
+<a href=#1502 id=1502 data-nosnippet>1502</a>                !val
+<a href=#1503 id=1503 data-nosnippet>1503</a>            } <span class="kw">else </span>{
+<a href=#1504 id=1504 data-nosnippet>1504</a>                val
+<a href=#1505 id=1505 data-nosnippet>1505</a>            }
+<a href=#1506 id=1506 data-nosnippet>1506</a>        }
+<a href=#1507 id=1507 data-nosnippet>1507</a>    }
+<a href=#1508 id=1508 data-nosnippet>1508</a>
+<a href=#1509 id=1509 data-nosnippet>1509</a>    <span class="doccomment">/// Load all PDK models and UDPs from the submodule.
+<a href=#1510 id=1510 data-nosnippet>1510</a>    </span><span class="kw">fn </span>load_test_pdk() -&gt; PdkModels {
+<a href=#1511 id=1511 data-nosnippet>1511</a>        <span class="kw">let </span>pdk_path = Path::new(<span class="string">"vendor/sky130_fd_sc_hd/cells"</span>);
+<a href=#1512 id=1512 data-nosnippet>1512</a>        <span class="kw">if </span>!pdk_path.exists() {
+<a href=#1513 id=1513 data-nosnippet>1513</a>            <span class="macro">panic!</span>(<span class="string">"sky130_fd_sc_hd submodule not initialized. Run: git submodule update --init"</span>);
+<a href=#1514 id=1514 data-nosnippet>1514</a>        }
+<a href=#1515 id=1515 data-nosnippet>1515</a>
+<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="comment">// Get all cell types
+<a href=#1517 id=1517 data-nosnippet>1517</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>cell_types: Vec&lt;String&gt; = Vec::new();
+<a href=#1518 id=1518 data-nosnippet>1518</a>        <span class="kw">for </span>entry <span class="kw">in </span>std::fs::read_dir(pdk_path).unwrap() {
+<a href=#1519 id=1519 data-nosnippet>1519</a>            <span class="kw">let </span>entry = entry.unwrap();
+<a href=#1520 id=1520 data-nosnippet>1520</a>            <span class="kw">if </span>entry.file_type().unwrap().is_dir() {
+<a href=#1521 id=1521 data-nosnippet>1521</a>                cell_types.push(entry.file_name().to_string_lossy().to_string());
+<a href=#1522 id=1522 data-nosnippet>1522</a>            }
+<a href=#1523 id=1523 data-nosnippet>1523</a>        }
+<a href=#1524 id=1524 data-nosnippet>1524</a>        cell_types.sort();
+<a href=#1525 id=1525 data-nosnippet>1525</a>
+<a href=#1526 id=1526 data-nosnippet>1526</a>        load_pdk_models(pdk_path, <span class="kw-2">&amp;</span>cell_types)
+<a href=#1527 id=1527 data-nosnippet>1527</a>    }
+<a href=#1528 id=1528 data-nosnippet>1528</a>
+<a href=#1529 id=1529 data-nosnippet>1529</a>    <span class="doccomment">/// Check if all input pins of a model are recognized by CellInputs.
+<a href=#1530 id=1530 data-nosnippet>1530</a>    </span><span class="kw">fn </span>all_inputs_supported(model: <span class="kw-2">&amp;</span>BehavioralModel) -&gt; bool {
+<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="kw">let </span>supported = [
+<a href=#1532 id=1532 data-nosnippet>1532</a>            <span class="string">"A"</span>, <span class="string">"A_N"</span>, <span class="string">"A0"</span>, <span class="string">"A1"</span>, <span class="string">"A1_N"</span>, <span class="string">"A2"</span>, <span class="string">"A2_N"</span>, <span class="string">"A3"</span>, <span class="string">"A4"</span>, <span class="string">"B"</span>, <span class="string">"B_N"</span>, <span class="string">"B1"</span>, <span class="string">"B1_N"</span>,
+<a href=#1533 id=1533 data-nosnippet>1533</a>            <span class="string">"B2"</span>, <span class="string">"C"</span>, <span class="string">"C_N"</span>, <span class="string">"C1"</span>, <span class="string">"C2"</span>, <span class="string">"D"</span>, <span class="string">"D_N"</span>, <span class="string">"D1"</span>, <span class="string">"S"</span>, <span class="string">"S0"</span>, <span class="string">"S1"</span>, <span class="string">"CIN"</span>, <span class="string">"SET_B"</span>,
+<a href=#1534 id=1534 data-nosnippet>1534</a>            <span class="string">"RESET_B"</span>, <span class="string">"SLEEP"</span>, <span class="string">"SLEEP_B"</span>,
+<a href=#1535 id=1535 data-nosnippet>1535</a>        ];
+<a href=#1536 id=1536 data-nosnippet>1536</a>        model
+<a href=#1537 id=1537 data-nosnippet>1537</a>            .inputs
+<a href=#1538 id=1538 data-nosnippet>1538</a>            .iter()
+<a href=#1539 id=1539 data-nosnippet>1539</a>            .all(|name| supported.contains(<span class="kw-2">&amp;</span>name.as_str()))
+<a href=#1540 id=1540 data-nosnippet>1540</a>    }
+<a href=#1541 id=1541 data-nosnippet>1541</a>
+<a href=#1542 id=1542 data-nosnippet>1542</a>    <span class="doccomment">/// Exhaustive truth-table test for all combinational cells with supported pins.
+<a href=#1543 id=1543 data-nosnippet>1543</a>    /// For each cell: evaluate all 2^N input combinations through both
+<a href=#1544 id=1544 data-nosnippet>1544</a>    /// the AIG decomposition and the direct gate evaluator, verify they match.
+<a href=#1545 id=1545 data-nosnippet>1545</a>    </span><span class="attr">#[test]
+<a href=#1546 id=1546 data-nosnippet>1546</a>    </span><span class="kw">fn </span>test_all_cells_vs_pdk() {
+<a href=#1547 id=1547 data-nosnippet>1547</a>        <span class="kw">let </span>pdk = load_test_pdk();
+<a href=#1548 id=1548 data-nosnippet>1548</a>
+<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="kw">let </span><span class="kw-2">mut </span>tested = <span class="number">0</span>;
+<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="kw">let </span><span class="kw-2">mut </span>skipped_inputs = <span class="number">0</span>;
+<a href=#1551 id=1551 data-nosnippet>1551</a>        <span class="kw">let </span><span class="kw-2">mut </span>skipped_size = <span class="number">0</span>;
+<a href=#1552 id=1552 data-nosnippet>1552</a>
+<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="comment">// Sort keys for deterministic output
+<a href=#1554 id=1554 data-nosnippet>1554</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>cell_types: Vec&lt;<span class="kw-2">&amp;</span>String&gt; = pdk.models.keys().collect();
+<a href=#1555 id=1555 data-nosnippet>1555</a>        cell_types.sort();
+<a href=#1556 id=1556 data-nosnippet>1556</a>
+<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">for </span>cell_type <span class="kw">in </span>cell_types {
+<a href=#1558 id=1558 data-nosnippet>1558</a>            <span class="kw">let </span>model = <span class="kw-2">&amp;</span>pdk.models[cell_type];
+<a href=#1559 id=1559 data-nosnippet>1559</a>            <span class="kw">let </span>num_inputs = model.inputs.len();
+<a href=#1560 id=1560 data-nosnippet>1560</a>
+<a href=#1561 id=1561 data-nosnippet>1561</a>            <span class="comment">// Skip cells with unsupported input pin names
+<a href=#1562 id=1562 data-nosnippet>1562</a>            </span><span class="kw">if </span>!all_inputs_supported(model) {
+<a href=#1563 id=1563 data-nosnippet>1563</a>                skipped_inputs += <span class="number">1</span>;
+<a href=#1564 id=1564 data-nosnippet>1564</a>                <span class="kw">continue</span>;
+<a href=#1565 id=1565 data-nosnippet>1565</a>            }
+<a href=#1566 id=1566 data-nosnippet>1566</a>
+<a href=#1567 id=1567 data-nosnippet>1567</a>            <span class="comment">// Skip cells with too many inputs for exhaustive testing (&gt; 8 inputs)
+<a href=#1568 id=1568 data-nosnippet>1568</a>            </span><span class="kw">if </span>num_inputs &gt; <span class="number">8 </span>{
+<a href=#1569 id=1569 data-nosnippet>1569</a>                skipped_size += <span class="number">1</span>;
+<a href=#1570 id=1570 data-nosnippet>1570</a>                <span class="kw">continue</span>;
+<a href=#1571 id=1571 data-nosnippet>1571</a>            }
+<a href=#1572 id=1572 data-nosnippet>1572</a>
+<a href=#1573 id=1573 data-nosnippet>1573</a>            <span class="kw">let </span>num_combos = <span class="number">1u32 </span>&lt;&lt; num_inputs;
+<a href=#1574 id=1574 data-nosnippet>1574</a>
+<a href=#1575 id=1575 data-nosnippet>1575</a>            <span class="kw">for </span>output_pin <span class="kw">in </span><span class="kw-2">&amp;</span>model.outputs {
+<a href=#1576 id=1576 data-nosnippet>1576</a>                <span class="kw">for </span>combo <span class="kw">in </span><span class="number">0</span>..num_combos {
+<a href=#1577 id=1577 data-nosnippet>1577</a>                    <span class="comment">// Convert combo to input booleans
+<a href=#1578 id=1578 data-nosnippet>1578</a>                    </span><span class="kw">let </span>input_bools: Vec&lt;bool&gt; =
+<a href=#1579 id=1579 data-nosnippet>1579</a>                        (<span class="number">0</span>..num_inputs).map(|i| ((combo &gt;&gt; i) &amp; <span class="number">1</span>) != <span class="number">0</span>).collect();
+<a href=#1580 id=1580 data-nosnippet>1580</a>
+<a href=#1581 id=1581 data-nosnippet>1581</a>                    <span class="comment">// Set up CellInputs
+<a href=#1582 id=1582 data-nosnippet>1582</a>                    </span><span class="kw">let </span>(cell_inputs, bool_map) = setup_test_inputs(model, <span class="kw-2">&amp;</span>input_bools);
+<a href=#1583 id=1583 data-nosnippet>1583</a>
+<a href=#1584 id=1584 data-nosnippet>1584</a>                    <span class="comment">// Evaluate via direct gate interpretation (reference)
+<a href=#1585 id=1585 data-nosnippet>1585</a>                    </span><span class="kw">let </span>expected = eval_behavioral_model(model, <span class="kw-2">&amp;</span>bool_map, output_pin, <span class="kw-2">&amp;</span>pdk.udps);
+<a href=#1586 id=1586 data-nosnippet>1586</a>
+<a href=#1587 id=1587 data-nosnippet>1587</a>                    <span class="comment">// Evaluate via AIG decomposition
+<a href=#1588 id=1588 data-nosnippet>1588</a>                    </span><span class="kw">let </span>decomp = decompose_with_pdk(cell_type, <span class="kw-2">&amp;</span>cell_inputs, output_pin, <span class="kw-2">&amp;</span>pdk);
+<a href=#1589 id=1589 data-nosnippet>1589</a>
+<a href=#1590 id=1590 data-nosnippet>1590</a>                    <span class="comment">// Build pin_values map for decomp evaluator
+<a href=#1591 id=1591 data-nosnippet>1591</a>                    </span><span class="kw">let </span><span class="kw-2">mut </span>pin_values: HashMap&lt;usize, bool&gt; = HashMap::new();
+<a href=#1592 id=1592 data-nosnippet>1592</a>                    pin_values.insert(<span class="number">0</span>, <span class="bool-val">false</span>); <span class="comment">// const-0
+<a href=#1593 id=1593 data-nosnippet>1593</a>                    </span><span class="kw">for </span>(i, <span class="kw-2">&amp;</span>val) <span class="kw">in </span>input_bools.iter().enumerate() {
+<a href=#1594 id=1594 data-nosnippet>1594</a>                        pin_values.insert(i + <span class="number">1</span>, val);
+<a href=#1595 id=1595 data-nosnippet>1595</a>                    }
+<a href=#1596 id=1596 data-nosnippet>1596</a>
+<a href=#1597 id=1597 data-nosnippet>1597</a>                    <span class="kw">let </span>actual = eval_decomp_bool(<span class="kw-2">&amp;</span>decomp, <span class="kw-2">&amp;</span>pin_values);
+<a href=#1598 id=1598 data-nosnippet>1598</a>
+<a href=#1599 id=1599 data-nosnippet>1599</a>                    <span class="macro">assert_eq!</span>(
+<a href=#1600 id=1600 data-nosnippet>1600</a>                        actual, expected,
+<a href=#1601 id=1601 data-nosnippet>1601</a>                        <span class="string">"Mismatch for cell '{}' output '{}' with inputs {:?}: AIG={}, expected={}"</span>,
+<a href=#1602 id=1602 data-nosnippet>1602</a>                        cell_type, output_pin, input_bools, actual, expected
+<a href=#1603 id=1603 data-nosnippet>1603</a>                    );
+<a href=#1604 id=1604 data-nosnippet>1604</a>                }
+<a href=#1605 id=1605 data-nosnippet>1605</a>            }
+<a href=#1606 id=1606 data-nosnippet>1606</a>            tested += <span class="number">1</span>;
+<a href=#1607 id=1607 data-nosnippet>1607</a>        }
+<a href=#1608 id=1608 data-nosnippet>1608</a>
+<a href=#1609 id=1609 data-nosnippet>1609</a>        <span class="macro">println!</span>(
+<a href=#1610 id=1610 data-nosnippet>1610</a>            <span class="string">"Tested {} cell types exhaustively, skipped {} (unsupported pins), {} (too many inputs)"</span>,
+<a href=#1611 id=1611 data-nosnippet>1611</a>            tested, skipped_inputs, skipped_size
+<a href=#1612 id=1612 data-nosnippet>1612</a>        );
+<a href=#1613 id=1613 data-nosnippet>1613</a>        <span class="macro">assert!</span>(
+<a href=#1614 id=1614 data-nosnippet>1614</a>            tested &gt; <span class="number">50</span>,
+<a href=#1615 id=1615 data-nosnippet>1615</a>            <span class="string">"Expected to test at least 50 cell types, but only tested {}"</span>,
+<a href=#1616 id=1616 data-nosnippet>1616</a>            tested
+<a href=#1617 id=1617 data-nosnippet>1617</a>        );
+<a href=#1618 id=1618 data-nosnippet>1618</a>    }
+<a href=#1619 id=1619 data-nosnippet>1619</a>}
 </code></pre></div></section></main></body></html>
