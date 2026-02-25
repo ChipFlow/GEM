@@ -38,6 +38,11 @@ jobs:
       - name: Install CF_SRAM IP
         run: uv run --with cf-ipm -- ipm install CF_SRAM_1024x32
 
+      - name: Install SKY130 PDK via volare
+        run: |
+          uv tool install volare
+          volare enable --pdk sky130 c6d73a35f524070e85faff4a6a9eef49553ebc2b
+
       - name: Pull librelane image
         run: docker pull ghcr.io/robtaylor/librelane:dev-x86_64
 
@@ -47,6 +52,7 @@ jobs:
             -v "$PWD/designs/mcu_soc_sky130/build:/design" \
             -v "$PWD/sram:/sram:ro" \
             -v "$PWD/scripts/openlane2/synth.ys:/design/synth.ys:ro" \
+            -v "$HOME/.volare:/root/.volare:ro" \
             ghcr.io/robtaylor/librelane:dev-x86_64 \
             yosys /design/synth.ys
 
