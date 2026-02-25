@@ -1,4 +1,4 @@
-read_ilang /design/mcu_soc_sky130.il
+read_rtlil /design/mcu_soc_sky130.il
 hierarchy -top top
 proc
 flatten
