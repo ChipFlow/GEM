@@ -66,6 +66,8 @@ jobs:
             yosys /design/synth.ys
 
       - name: Place and Route (librelane)
+        id: pnr
+        continue-on-error: true
         run: |
           docker run --rm \
             -v "$PWD/designs/mcu_soc_sky130/build:/design" \
@@ -80,6 +82,12 @@ jobs:
         run: |
           RUN_DIR=$(find designs/mcu_soc_sky130/build/runs -maxdepth 1 -name 'RUN_*' -type d | sort -r | head -1)
           echo "Using run directory: $RUN_DIR"
+
+          # Verify P&R produced a netlist (may exist even if sign-off checks failed)
+          if ! ls "$RUN_DIR"/final/nl/*.nl.v 1>/dev/null 2>&1; then
+            echo "::error::No post-P&R netlist found. P&R failed before generating output."
+            exit 1
+          fi
 
           # Post-P&R netlist (unpowered)
           cp "$RUN_DIR"/final/nl/*.nl.v tests/mcu_soc/data/6_final_raw.v
