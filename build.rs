@@ -46,6 +46,9 @@ fn main() {
         cl_hip.compile("gemhip");
         println!("cargo:rustc-link-lib=static=gemhip");
         println!("cargo:rustc-link-lib=dylib=amdhip64");
+        // Add ROCm library search path (default /opt/rocm/lib).
+        let rocm_path = std::env::var("ROCM_PATH").unwrap_or_else(|_| "/opt/rocm".to_string());
+        println!("cargo:rustc-link-search=native={}/lib", rocm_path);
         ucc::bindgen(["csrc/kernel_v1.hip.cpp"], "kernel_v1_hip.rs");
         ucc::export_csrc();
         ucc::make_compile_commands(&[&cl_hip]);

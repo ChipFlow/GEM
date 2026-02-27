@@ -297,6 +297,8 @@ jobs:
           echo "HIP_PLATFORM=nvidia" >> $GITHUB_ENV
           echo "HIP_COMPILER=nvcc" >> $GITHUB_ENV
           echo "HIP_RUNTIME=cuda" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/opt/rocm/lib:${LIBRARY_PATH:-}" >> $GITHUB_ENV
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
