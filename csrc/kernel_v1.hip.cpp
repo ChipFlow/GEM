@@ -15,6 +15,21 @@
     }                                                           \
   } while (0)
 
+// One-time warp size validation — RDNA uses wave32, matching CUDA.
+// Called once before the first kernel launch.
+static void validate_warp_size() {
+  static bool checked = false;
+  if (checked) return;
+  checked = true;
+  int warp_size = 0;
+  hipDeviceGetAttribute(&warp_size, hipDeviceAttributeWarpSize, 0);
+  if (warp_size != 32) {
+    printf("ERROR: Loom requires warpSize==32 (RDNA), but this GPU reports %d.\n"
+           "CDNA / GCN GPUs (wave64) are not supported.\n", warp_size);
+    exit(EXIT_FAILURE);
+  }
+}
+
 // Original function without timing support (backward compatible).
 extern "C"
 void simulate_v1_noninteractive_simple_scan_hip(
@@ -29,13 +44,7 @@ void simulate_v1_noninteractive_simple_scan_hip(
   u32 *states_noninteractive
   )
 {
-  // Runtime warp size assertion — RDNA uses wave32, matching CUDA.
-  int warp_size = 0;
-  hipDeviceGetAttribute(&warp_size, hipDeviceAttributeWarpSize, 0);
-  if (warp_size != 32) {
-    printf("ERROR: Loom requires warpSize==32, but this GPU reports %d\n", warp_size);
-    exit(EXIT_FAILURE);
-  }
+  validate_warp_size();
 
   const u32 *timing_constraints = nullptr;
   EventBuffer *event_buffer = nullptr;
@@ -70,13 +79,7 @@ void simulate_v1_noninteractive_timed_hip(
   u8 *event_buffer
   )
 {
-  // Runtime warp size assertion — RDNA uses wave32, matching CUDA.
-  int warp_size = 0;
-  hipDeviceGetAttribute(&warp_size, hipDeviceAttributeWarpSize, 0);
-  if (warp_size != 32) {
-    printf("ERROR: Loom requires warpSize==32, but this GPU reports %d\n", warp_size);
-    exit(EXIT_FAILURE);
-  }
+  validate_warp_size();
 
   void *arg_ptrs[11] = {
     (void *)&num_blocks, (void *)&num_major_stages,
