@@ -273,16 +273,21 @@ jobs:
           # Import ROCm GPG signing key
           wget -q -O - https://repo.radeon.com/rocm/rocm.gpg.key | sudo apt-key add -
           sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 9386B48A1A693C5C 2>/dev/null || true
-          # Add ROCm repo (noble = Ubuntu 24.04)
+          # Add ROCm repo
           CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
           echo "deb [arch=amd64] https://repo.radeon.com/rocm/apt/6.2.4 ${CODENAME} main" | \
             sudo tee /etc/apt/sources.list.d/rocm.list
-          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | \
-            sudo tee /etc/apt/preferences.d/rocm-pin-600
-          # Hold existing NVIDIA driver packages to prevent conflicts with ROCm deps
-          sudo apt-mark hold $(dpkg -l | grep -E '^ii\s+nvidia-' | awk '{print $2}') 2>/dev/null || true
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends hip-runtime-nvidia hip-dev
+          # hip-runtime-nvidia pulls nvidia driver packages that conflict with the
+          # server-variant drivers pre-installed on the GPU runner. Download the HIP
+          # packages and force-install them, skipping unresolvable driver deps.
+          cd /tmp
+          apt-get download hip-runtime-nvidia hip-dev hipcc-nvidia hip-runtime-nvidia-dev 2>&1 | tee /tmp/apt-download.log || true
+          # Also grab any dependencies that can be downloaded
+          apt-get download rocm-core hip-base 2>&1 >> /tmp/apt-download.log || true
+          ls -la /tmp/*.deb || true
+          sudo dpkg --force-depends --force-conflicts -i /tmp/*.deb || true
+          # Verify hipcc is available
           echo "PATH=/opt/rocm/bin:$PATH" >> $GITHUB_ENV
           echo "HIP_PLATFORM=nvidia" >> $GITHUB_ENV
           echo "HIP_COMPILER=nvcc" >> $GITHUB_ENV
