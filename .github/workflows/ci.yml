@@ -280,13 +280,15 @@ jobs:
           sudo apt-get update
           # hip-runtime-nvidia pulls nvidia driver packages that conflict with the
           # server-variant drivers pre-installed on the GPU runner. Download the HIP
-          # .deb files and force-install them, bypassing the driver dep conflicts.
+          # .deb files individually and force-install, bypassing driver dep conflicts.
           DLDIR=$(mktemp -d)
           pushd "$DLDIR"
-          sudo apt-get download \
-            hip-runtime-nvidia hip-dev hipcc-nvidia hip-runtime-nvidia-dev \
-            rocm-core hip-base 2>&1 || true
-          ls -la *.deb 2>/dev/null
+          for pkg in hip-runtime-nvidia hip-dev hipcc-nvidia rocm-core; do
+            echo "Downloading ${pkg}..."
+            sudo apt-get download "$pkg" 2>&1 || echo "  (skipped: $pkg not available)"
+          done
+          echo "Downloaded packages:"
+          ls -la *.deb 2>/dev/null || { echo "ERROR: No .deb files downloaded!"; exit 1; }
           sudo dpkg --force-depends --force-conflicts -i *.deb
           popd
           # Verify hipcc is available
