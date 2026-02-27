@@ -270,17 +270,17 @@ jobs:
 
       - name: Install ROCm/HIP (NVIDIA backend)
         run: |
-          # Import ROCm GPG signing key (use apt-key for broadest compatibility)
+          # Import ROCm GPG signing key
           wget -q -O - https://repo.radeon.com/rocm/rocm.gpg.key | sudo apt-key add -
-          # Also try fetching the specific key from keyserver as fallback
           sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 9386B48A1A693C5C 2>/dev/null || true
-          # Detect Ubuntu codename; ROCm 6.2 supports jammy (22.04) and noble (24.04)
+          # Add ROCm repo (noble = Ubuntu 24.04)
           CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
           echo "deb [arch=amd64] https://repo.radeon.com/rocm/apt/6.2.4 ${CODENAME} main" | \
             sudo tee /etc/apt/sources.list.d/rocm.list
-          # Pin ROCm packages to avoid conflicts with NVIDIA packages
           printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | \
             sudo tee /etc/apt/preferences.d/rocm-pin-600
+          # Hold existing NVIDIA driver packages to prevent conflicts with ROCm deps
+          sudo apt-mark hold $(dpkg -l | grep -E '^ii\s+nvidia-' | awk '{print $2}') 2>/dev/null || true
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends hip-runtime-nvidia hip-dev
           echo "PATH=/opt/rocm/bin:$PATH" >> $GITHUB_ENV
