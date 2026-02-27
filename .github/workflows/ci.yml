@@ -246,6 +246,119 @@ jobs:
             cuda_xprop.txt
             perf_metrics/
 
+  # Build and run HIP simulation on NVIDIA GPU (HIP's NVIDIA backend)
+  # This validates the HIP code path using hipcc targeting NVIDIA via HIP_PLATFORM=nvidia.
+  # When an AMD GPU runner becomes available, a native AMD job can be added.
+  hip-on-nvidia:
+    name: HIP Tests (NVIDIA backend)
+    runs-on: nvidia-runner-1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init required submodules
+        run: git submodule update --init vendor/eda-infra-rs vendor/sky130_fd_sc_hd
+
+      - name: Install CUDA Toolkit (driver already present on GPU runner)
+        run: |
+          nvidia-smi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cuda-toolkit-12-8
+          echo "PATH=/usr/local/cuda-12.8/bin:$PATH" >> $GITHUB_ENV
+          echo "CUDA_PATH=/usr/local/cuda-12.8" >> $GITHUB_ENV
+          /usr/local/cuda-12.8/bin/nvcc --version
+
+      - name: Install ROCm/HIP (NVIDIA backend)
+        run: |
+          # Add ROCm APT repository
+          sudo mkdir -p --mode=0755 /etc/apt/keyrings
+          wget -q -O - https://repo.radeon.com/rocm/rocm.gpg.key | \
+            gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+          # Detect Ubuntu codename for the ROCm repo
+          CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.2.4 ${CODENAME} main" | \
+            sudo tee /etc/apt/sources.list.d/rocm.list
+          # Pin ROCm packages to avoid conflicts
+          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | \
+            sudo tee /etc/apt/preferences.d/rocm-pin-600
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends hip-runtime-nvidia hip-dev
+          echo "PATH=/opt/rocm/bin:$PATH" >> $GITHUB_ENV
+          echo "HIP_PLATFORM=nvidia" >> $GITHUB_ENV
+          echo "HIP_COMPILER=nvcc" >> $GITHUB_ENV
+          echo "HIP_RUNTIME=cuda" >> $GITHUB_ENV
+          /opt/rocm/bin/hipcc --version
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-hip-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-hip-
+
+      - name: Build loom (HIP)
+        run: cargo build --release --features hip --bin loom
+
+      - name: Run HIP simulation (timing test)
+        run: |
+          time (cargo run --release --features hip --bin loom -- sim \
+            tests/timing_test/dff_test_synth.gv \
+            tests/timing_test/dff_test.gemparts \
+            tests/timing_test/dff_test.vcd \
+            tests/timing_test/ci_hip_output.vcd \
+            1) 2>&1 | tee hip_timing.txt
+
+      - name: Report HIP performance
+        run: |
+          {
+            echo "## HIP (NVIDIA backend) Simulation Performance"
+            echo "\`\`\`"
+            cat hip_timing.txt
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run HIP simulation with X-propagation
+        run: |
+          cargo run --release --features hip --bin loom -- map \
+            tests/timing_test/dff_test_synth.gv \
+            tests/timing_test/dff_test_xprop.gemparts \
+            --xprop
+          cargo run --release --features hip --bin loom -- sim \
+            tests/timing_test/dff_test_synth.gv \
+            tests/timing_test/dff_test_xprop.gemparts \
+            tests/timing_test/dff_test.vcd \
+            tests/timing_test/ci_hip_xprop_output.vcd \
+            1 --xprop 2>&1 | tee hip_xprop.txt
+
+      - name: Verify HIP X-propagation output
+        run: |
+          if grep -q 'x' tests/timing_test/ci_hip_xprop_output.vcd; then
+            echo "X-propagation VCD contains X values as expected"
+          else
+            echo "WARNING: No X values in HIP xprop output VCD"
+          fi
+
+      - name: Upload HIP artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hip-outputs
+          path: |
+            tests/timing_test/ci_hip_output.vcd
+            tests/timing_test/ci_hip_xprop_output.vcd
+            hip_timing.txt
+            hip_xprop.txt
+            perf_metrics/
+
   # Check formatting and clippy
   # Note: Currently set to warn-only due to existing issues in codebase
   lint:
