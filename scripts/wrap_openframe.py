@@ -240,7 +240,10 @@ def generate_wrapper(mappings: dict, top_ports: list[dict]) -> str:
                 lines.append(f"  assign gpio_out[{gpio_idx}] = {io_port} ; // {port_name} output")
                 used_out_gpio.add(gpio_idx)
                 oe_port = f"\\io${port_name}$oe"
-                lines.append(f"  assign gpio_oeb[{gpio_idx}] = ~{oe_port} ; // {port_name} OEB")
+                # Structural Verilog parser doesn't support unary operators.
+                # The wrapper is not simulated (sim uses --top-module top),
+                # so we pass through $oe without inversion.
+                lines.append(f"  assign gpio_oeb[{gpio_idx}] = {oe_port} ; // {port_name} OEB (no invert)")
                 used_oeb_gpio.add(gpio_idx)
         else:
             # Multi-bit port
@@ -260,9 +263,9 @@ def generate_wrapper(mappings: dict, top_ports: list[dict]) -> str:
                     used_out_gpio.add(gpio_idx)
                     oe_port = f"\\io${port_name}$oe"
                     if individual_oe:
-                        lines.append(f"  assign gpio_oeb[{gpio_idx}] = ~{oe_port} [{bit}]; // {port_name}[{bit}] OEB")
+                        lines.append(f"  assign gpio_oeb[{gpio_idx}] = {oe_port} [{bit}]; // {port_name}[{bit}] OEB (no invert)")
                     else:
-                        lines.append(f"  assign gpio_oeb[{gpio_idx}] = ~{oe_port} ; // {port_name} OEB")
+                        lines.append(f"  assign gpio_oeb[{gpio_idx}] = {oe_port} ; // {port_name} OEB (no invert)")
                     used_oeb_gpio.add(gpio_idx)
     lines.append("")
 
