@@ -35,10 +35,9 @@ cargo run -r --features hip --bin jacquard -- sim --help
 
 1. **Memory synthesis** (Yosys): Map memories using `memlib_yosys.txt` → outputs `memory_mapped.v`
 2. **Logic synthesis** (DC or Yosys): Synthesize to `aigpdk.lib` cells → outputs `gatelevel.gv`
-3. **Jacquard mapping**: `jacquard map gatelevel.gv result.gemparts`
-4. **Simulation**: `jacquard sim` with `gatelevel.gv result.gemparts input.vcd output.vcd NUM_BLOCKS`
+3. **Simulation**: `jacquard sim gatelevel.gv input.vcd output.vcd NUM_BLOCKS`
 
-Set `NUM_BLOCKS` to 2× the number of GPU streaming multiprocessors (SMs) for CUDA, 2× the number of Compute Units (CUs) for HIP/AMD, or 1 for Metal.
+Partitioning happens automatically at simulation start. Set `NUM_BLOCKS` to 2× the number of GPU streaming multiprocessors (SMs) for CUDA, 2× the number of Compute Units (CUs) for HIP/AMD, or 1 for Metal.
 
 ## Architecture
 
@@ -65,7 +64,7 @@ NetlistDB (Verilog) → AIG → StagedAIG → Partitions → FlattenedScript →
 
 ### Binary Tools (`src/bin/`)
 
-- **`jacquard.rs`**: Unified CLI — `jacquard map` (partition mapping), `jacquard sim` (GPU simulation), `jacquard cosim` (co-simulation)
+- **`jacquard.rs`**: Unified CLI — `jacquard sim` (GPU simulation), `jacquard cosim` (co-simulation)
 - **`timing_sim_cpu.rs`**: CPU-based timing simulation with SDF back-annotation (development tool)
 - **`timing_analysis.rs`**: Static timing analysis utility (development tool)
 
@@ -118,15 +117,9 @@ cargo run -r --features metal --bin jacquard -- sim ... --max-cycles 1000
 Pre-synthesized benchmark designs are in `benchmarks/dataset/` (git submodule). See `benchmarks/README.md` for full instructions.
 
 ```bash
-# Generate partition file (NVDLA - smallest, good for testing)
-cargo run -r --bin jacquard -- map \
-    benchmarks/dataset/nvdlaAIG.gv \
-    benchmarks/nvdla.gemparts
-
-# Run Metal simulation benchmark
+# Run Metal simulation benchmark (NVDLA - smallest, good for testing)
 cargo run -r --features metal --bin jacquard -- sim \
     benchmarks/dataset/nvdlaAIG.gv \
-    benchmarks/nvdla.gemparts \
     benchmarks/dataset/nvdla.pdp_16x6x16_4x2_split_max_int8_0.vcd \
     benchmarks/nvdla_output.vcd \
     1
