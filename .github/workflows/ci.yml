@@ -82,13 +82,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-metal-llvm${{ env.LLVM_VERSION }}-
 
-      - name: Build loom (Metal)
-        run: cargo build --release --features metal --bin loom
+      - name: Build jacquard (Metal)
+        run: cargo build --release --features metal --bin jacquard
 
       - name: Run Metal simulation (timing test)
         run: |
           # Capture timing output
-          time (cargo run --release --features metal --bin loom -- sim \
+          time (cargo run --release --features metal --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test.gemparts \
             tests/timing_test/dff_test.vcd \
@@ -124,11 +124,11 @@ jobs:
 
       - name: Run Metal simulation with X-propagation
         run: |
-          cargo run --release --features metal --bin loom -- map \
+          cargo run --release --features metal --bin jacquard -- map \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test_xprop.gemparts \
             --xprop
-          cargo run --release --features metal --bin loom -- sim \
+          cargo run --release --features metal --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test_xprop.gemparts \
             tests/timing_test/dff_test.vcd \
@@ -192,12 +192,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-cuda-
 
-      - name: Build loom (CUDA)
-        run: cargo build --release --features cuda --bin loom
+      - name: Build jacquard (CUDA)
+        run: cargo build --release --features cuda --bin jacquard
 
       - name: Run CUDA simulation (timing test)
         run: |
-          time (cargo run --release --features cuda --bin loom -- sim \
+          time (cargo run --release --features cuda --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test.gemparts \
             tests/timing_test/dff_test.vcd \
@@ -215,11 +215,11 @@ jobs:
 
       - name: Run CUDA simulation with X-propagation
         run: |
-          cargo run --release --features cuda --bin loom -- map \
+          cargo run --release --features cuda --bin jacquard -- map \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test_xprop.gemparts \
             --xprop
-          cargo run --release --features cuda --bin loom -- sim \
+          cargo run --release --features cuda --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test_xprop.gemparts \
             tests/timing_test/dff_test.vcd \
@@ -316,12 +316,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-hip-
 
-      - name: Build loom (HIP)
-        run: cargo build --release --features hip --bin loom
+      - name: Build jacquard (HIP)
+        run: cargo build --release --features hip --bin jacquard
 
       - name: Run HIP simulation (timing test)
         run: |
-          time (cargo run --release --features hip --bin loom -- sim \
+          time (cargo run --release --features hip --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test.gemparts \
             tests/timing_test/dff_test.vcd \
@@ -339,11 +339,11 @@ jobs:
 
       - name: Run HIP simulation with X-propagation
         run: |
-          cargo run --release --features hip --bin loom -- map \
+          cargo run --release --features hip --bin jacquard -- map \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test_xprop.gemparts \
             --xprop
-          cargo run --release --features hip --bin loom -- sim \
+          cargo run --release --features hip --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
             tests/timing_test/dff_test_xprop.gemparts \
             tests/timing_test/dff_test.vcd \
@@ -505,14 +505,14 @@ jobs:
       - name: Compile gemparts
         timeout-minutes: 10
         run: |
-          cargo run --release --features metal --bin loom -- map \
+          cargo run --release --features metal --bin jacquard -- map \
             tests/mcu_soc/data/6_final.v tests/mcu_soc/data/result.gemparts \
             --top-module top
 
       - name: Run GPU co-simulation (100K ticks)
         timeout-minutes: 10
         run: |
-          cargo run --release --features metal --bin loom -- cosim \
+          cargo run --release --features metal --bin jacquard -- cosim \
             tests/mcu_soc/data/6_final.v tests/mcu_soc/data/result.gemparts \
             --config tests/mcu_soc/sim_config.json --top-module top \
             --max-cycles 100000 \

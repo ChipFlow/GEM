@@ -9,15 +9,15 @@
 //! Usage:
 //!   cargo run -r --bin timing_sim_cpu -- <netlist.gv> <input.vcd> [options]
 
-use gem::aig::{DriverType, AIG};
-use gem::aigpdk::AIGPDKLeafPins;
-use gem::flatten::PackedDelay;
-use gem::liberty_parser::TimingLibrary;
-use gem::sky130::{
+use jacquard::aig::{DriverType, AIG};
+use jacquard::aigpdk::AIGPDKLeafPins;
+use jacquard::flatten::PackedDelay;
+use jacquard::liberty_parser::TimingLibrary;
+use jacquard::sky130::{
     detect_library_from_file, extract_cell_type, is_sky130_cell, CellLibrary, SKY130LeafPins,
 };
-use gem::sky130_pdk::is_sequential_cell;
-use gem::testbench::{
+use jacquard::sky130_pdk::is_sequential_cell;
+use jacquard::testbench::{
     CppSpiFlash, FlashConfig, GpioConfig, SramInitConfig, TestbenchConfig, UartConfig, UartEvent,
     UartState, Watchlist, WatchlistEntry, WatchlistSignal,
 };
@@ -168,7 +168,7 @@ struct Args {
 }
 
 // TestbenchConfig, FlashConfig, UartConfig, GpioConfig, SramInitConfig,
-// UartState, UartEvent are imported from gem::testbench
+// UartState, UartEvent are imported from jacquard::testbench
 
 /// QSPI Flash simulator for functional simulation.
 struct QspiFlash {
@@ -543,7 +543,7 @@ impl SramCell {
     }
 }
 
-// WatchlistSignal, Watchlist, WatchlistEntry are imported from gem::testbench
+// WatchlistSignal, Watchlist, WatchlistEntry are imported from jacquard::testbench
 
 /// A discovered Wishbone bus (master or slave side).
 struct WbBus {
@@ -1102,7 +1102,7 @@ impl TimingState {
         &mut self,
         aig: &AIG,
         netlistdb: &NetlistDB,
-        sdf: &gem::sdf_parser::SdfFile,
+        sdf: &jacquard::sdf_parser::SdfFile,
         lib: &TimingLibrary,
         debug: bool,
     ) {
@@ -1129,7 +1129,7 @@ impl TimingState {
         for (&cellid, path) in &cellid_to_path {
             sdf_path_to_cellid.insert(path.as_str(), cellid);
         }
-        let mut wire_delays_per_cell: std::collections::HashMap<usize, gem::sdf_parser::SdfDelay> =
+        let mut wire_delays_per_cell: std::collections::HashMap<usize, jacquard::sdf_parser::SdfDelay> =
             std::collections::HashMap::new();
         for cell in &sdf.cells {
             for ic in &cell.interconnects {
@@ -1137,7 +1137,7 @@ impl TimingState {
                     let dest_inst = &ic.dest[..dot_pos];
                     if let Some(&dest_cellid) = sdf_path_to_cellid.get(dest_inst) {
                         let entry = wire_delays_per_cell.entry(dest_cellid).or_insert(
-                            gem::sdf_parser::SdfDelay {
+                            jacquard::sdf_parser::SdfDelay {
                                 rise_ps: 0,
                                 fall_ps: 0,
                             },
@@ -1217,14 +1217,14 @@ impl TimingState {
                     if let Some(setup) = sdf_cell
                         .timing_checks
                         .iter()
-                        .find(|c| c.check_type == gem::sdf_parser::TimingCheckType::Setup)
+                        .find(|c| c.check_type == jacquard::sdf_parser::TimingCheckType::Setup)
                     {
                         self.setup_time_ps = self.setup_time_ps.max(setup.value_ps.max(0) as u64);
                     }
                     if let Some(hold) = sdf_cell
                         .timing_checks
                         .iter()
-                        .find(|c| c.check_type == gem::sdf_parser::TimingCheckType::Hold)
+                        .find(|c| c.check_type == jacquard::sdf_parser::TimingCheckType::Hold)
                     {
                         self.hold_time_ps = self.hold_time_ps.max(hold.value_ps.max(0) as u64);
                     }
@@ -1243,8 +1243,8 @@ impl TimingState {
         &self,
         driver: &DriverType,
         and_delay: (u64, u64),
-        dff_timing: &Option<gem::liberty_parser::DFFTiming>,
-        sram_timing: &Option<gem::liberty_parser::SRAMTiming>,
+        dff_timing: &Option<jacquard::liberty_parser::DFFTiming>,
+        sram_timing: &Option<jacquard::liberty_parser::SRAMTiming>,
     ) -> PackedDelay {
         match driver {
             DriverType::AndGate(_, _) => PackedDelay::from_u64(and_delay.0, and_delay.1),
@@ -2795,15 +2795,15 @@ fn main() {
         let mut cell_types: Vec<String> = Vec::new();
         for cellid in 1..netlistdb.num_cells {
             let celltype = netlistdb.celltypes[cellid].as_str();
-            if gem::sky130::is_sky130_cell(celltype) {
-                let ct = gem::sky130::extract_cell_type(celltype).to_string();
+            if jacquard::sky130::is_sky130_cell(celltype) {
+                let ct = jacquard::sky130::extract_cell_type(celltype).to_string();
                 if !cell_types.contains(&ct) {
                     cell_types.push(ct);
                 }
             }
         }
         cell_types.sort();
-        Some(gem::sky130_pdk::load_pdk_models(pdk_path, &cell_types))
+        Some(jacquard::sky130_pdk::load_pdk_models(pdk_path, &cell_types))
     } else {
         None
     };
@@ -2826,12 +2826,12 @@ fn main() {
 
     // Load timing: SDF (per-instance) or Liberty (uniform)
     if let Some(ref sdf_path) = args.sdf {
-        let corner: gem::sdf_parser::SdfCorner = args
+        let corner: jacquard::sdf_parser::SdfCorner = args
             .sdf_corner
             .parse()
             .unwrap_or_else(|e| panic!("Invalid SDF corner: {}", e));
         clilog::info!("Loading SDF: {} (corner: {})", sdf_path.display(), corner);
-        let sdf = gem::sdf_parser::SdfFile::parse_file(sdf_path, corner)
+        let sdf = jacquard::sdf_parser::SdfFile::parse_file(sdf_path, corner)
             .unwrap_or_else(|e| panic!("Failed to parse SDF: {}", e));
         clilog::info!("{}", sdf.summary());
         state.init_delays_from_sdf(&aig, &netlistdb, &sdf, &lib, args.sdf_debug);

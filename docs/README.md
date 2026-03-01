@@ -1,6 +1,6 @@
-# Loom Documentation
+# Jacquard Documentation
 
-Welcome to the documentation for Loom, a GPU-accelerated RTL logic simulator.
+Welcome to the documentation for Jacquard, a GPU-accelerated RTL logic simulator.
 
 Use the sidebar to navigate between topics, or start with the [Getting Started](usage.md) guide.
 
@@ -8,7 +8,7 @@ Use the sidebar to navigate between topics, or start with the [Getting Started](
 
 ### Core Documentation
 
-- **[Simulation Architecture](simulation-architecture.md)**: Detailed explanation of Loom's internal architecture
+- **[Simulation Architecture](simulation-architecture.md)**: Detailed explanation of Jacquard's internal architecture
   - Pipeline stages (NetlistDB → AIG → StagedAIG → Partitions → FlattenedScript → GPU)
   - Data structures and representations
   - VCD input/output format requirements
@@ -32,7 +32,7 @@ Use the sidebar to navigate between topics, or start with the [Getting Started](
 
 ### VCD Input Requirements (Critical!)
 
-Loom expects VCD signals at **absolute top-level** (no module hierarchy):
+Jacquard expects VCD signals at **absolute top-level** (no module hierarchy):
 
 ```verilog
 // ✓ Correct testbench
@@ -52,10 +52,10 @@ end
 
 ```bash
 # Enable debug logging
-RUST_LOG=debug cargo run -r --features metal --bin loom -- sim <args>
+RUST_LOG=debug cargo run -r --features metal --bin jacquard -- sim <args>
 
 # Verify with CPU simulation
-cargo run -r --features metal --bin loom -- sim <args> --check-with-cpu
+cargo run -r --features metal --bin jacquard -- sim <args> --check-with-cpu
 
 # Check VCD structure
 grep '\$scope\|\$var' input.vcd | head -20
@@ -63,7 +63,7 @@ grep '\$scope\|\$var' input.vcd | head -20
 
 ### Key Statistics
 
-When running Loom, look for these diagnostic outputs:
+When running Jacquard, look for these diagnostic outputs:
 
 ```
 netlist has X pins, Y aig pins, Z and gates        # AIG complexity
@@ -74,18 +74,18 @@ WARN (GATESIM_VCDI_MISSING_PI) ...                 # VCD issues!
 
 ## Investigation Methodology
 
-This documentation was created through systematic investigation of Loom's behavior:
+This documentation was created through systematic investigation of Jacquard's behavior:
 
 1. **Source Code Analysis**: Examined `src/aig.rs`, `src/flatten.rs`, `src/staging.rs`
 2. **Debug Tracing**: Used `RUST_LOG=debug` to capture internal state
 3. **Test Case Development**: Created minimal reproducible examples
-4. **Comparative Testing**: Compared Loom vs iverilog outputs
+4. **Comparative Testing**: Compared Jacquard vs iverilog outputs
 5. **Third-Party Validation**: Tested with real-world examples (sva-playground)
 
 ## Known Issues Documented
 
 1. **VCD Hierarchy Mismatch** (CRITICAL):
-   - Loom expects flat VCD hierarchy
+   - Jacquard expects flat VCD hierarchy
    - Most testbenches generate hierarchical VCDs
    - See troubleshooting-vcd.md for solutions
 

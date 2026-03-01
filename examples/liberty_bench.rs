@@ -1,4 +1,4 @@
-use gem::liberty_parser::TimingLibrary;
+use jacquard::liberty_parser::TimingLibrary;
 use std::time::Instant;
 
 fn main() {

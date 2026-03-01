@@ -1,22 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-//! Unified CLI for the Loom GPU-accelerated RTL simulator.
+//! Unified CLI for the Jacquard GPU-accelerated RTL simulator.
 
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use gem::aig::AIG;
-use gem::aigpdk::AIGPDKLeafPins;
-use gem::pe::{process_partitions, Partition};
-use gem::repcut::RCHyperGraph;
-use gem::sim::setup::DesignArgs;
-use gem::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
-use gem::staging::build_staged_aigs;
+use jacquard::aig::AIG;
+use jacquard::aigpdk::AIGPDKLeafPins;
+use jacquard::pe::{process_partitions, Partition};
+use jacquard::repcut::RCHyperGraph;
+use jacquard::sim::setup::DesignArgs;
+use jacquard::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
+use jacquard::staging::build_staged_aigs;
 use netlistdb::NetlistDB;
 use rayon::prelude::*;
 
 #[derive(Parser)]
-#[command(name = "loom", about = "Loom — GPU-accelerated RTL logic simulator")]
+#[command(name = "jacquard", about = "Jacquard — GPU-accelerated RTL logic simulator")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -26,8 +26,8 @@ struct Cli {
 enum Commands {
     /// Map a synthesized gate-level netlist to a .gemparts partition file.
     ///
-    /// This is the first step in the Loom workflow. The resulting .gemparts file
-    /// is then used by `loom sim` to run the design on a GPU.
+    /// This is the first step in the Jacquard workflow. The resulting .gemparts file
+    /// is then used by `jacquard sim` to run the design on a GPU.
     Map(MapArgs),
 
     /// Run a GPU simulation with VCD input/output.
@@ -59,7 +59,7 @@ struct MapArgs {
 
     /// Top module name in the netlist.
     ///
-    /// If not specified, Loom guesses the top module from the hierarchy.
+    /// If not specified, Jacquard guesses the top module from the hierarchy.
     #[clap(long)]
     top_module: Option<String>,
 
@@ -80,7 +80,7 @@ struct MapArgs {
     /// Enable selective X-propagation analysis (informational only at map time).
     ///
     /// Reports how many pins and partitions would be X-capable. The actual
-    /// X-propagation is enabled at simulation time with `loom sim --xprop`.
+    /// X-propagation is enabled at simulation time with `jacquard sim --xprop`.
     #[clap(long)]
     xprop: bool,
 }
@@ -244,7 +244,7 @@ fn run_par(hg: &RCHyperGraph, num_parts: usize) -> Vec<Vec<usize>> {
 }
 
 fn cmd_map(args: MapArgs) {
-    clilog::info!("Loom map args:\n{:#?}", args.netlist_verilog);
+    clilog::info!("Jacquard map args:\n{:#?}", args.netlist_verilog);
 
     // Detect cell library
     let lib = detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
@@ -379,8 +379,8 @@ fn cmd_map(args: MapArgs) {
 
 #[allow(unused_variables)]
 fn cmd_sim(args: SimArgs) {
-    use gem::sim::setup;
-    use gem::sim::vcd_io;
+    use jacquard::sim::setup;
+    use jacquard::sim::vcd_io;
 
     let design_args = DesignArgs {
         netlist_verilog: args.netlist_verilog.clone(),
@@ -453,10 +453,10 @@ fn cmd_sim(args: SimArgs) {
     #[cfg(not(any(feature = "metal", feature = "cuda", feature = "hip")))]
     {
         eprintln!(
-            "loom sim requires GPU support. Build with:\n\
-             \n  cargo build -r --features metal --bin loom   (macOS)\n\
-             \n  cargo build -r --features cuda --bin loom    (Linux/NVIDIA)\n\
-             \n  cargo build -r --features hip --bin loom     (Linux/AMD)\n"
+            "jacquard sim requires GPU support. Build with:\n\
+             \n  cargo build -r --features metal --bin jacquard   (macOS)\n\
+             \n  cargo build -r --features cuda --bin jacquard    (Linux/NVIDIA)\n\
+             \n  cargo build -r --features hip --bin jacquard     (Linux/AMD)\n"
         );
         std::process::exit(1);
     }
@@ -507,7 +507,7 @@ fn cmd_sim(args: SimArgs) {
             for _ in 0..num_input_snaps {
                 input_xmasks.extend_from_slice(&xmask_template);
             }
-            gem::sim::cpu_reference::sanity_check_cpu_xprop(
+            jacquard::sim::cpu_reference::sanity_check_cpu_xprop(
                 &design.script,
                 &input_states,
                 &gpu_values,
@@ -516,7 +516,7 @@ fn cmd_sim(args: SimArgs) {
                 num_cycles,
             );
         } else {
-            gem::sim::cpu_reference::sanity_check_cpu(
+            jacquard::sim::cpu_reference::sanity_check_cpu(
                 &design.script,
                 &input_states,
                 &gpu_states[..],
@@ -585,14 +585,14 @@ fn cmd_sim(args: SimArgs) {
 
 #[cfg(feature = "metal")]
 fn sim_metal(
-    design: &gem::sim::setup::LoadedDesign,
+    design: &jacquard::sim::setup::LoadedDesign,
     input_states: &[u32],
     offsets_timestamps: &[(usize, u64)],
     timing_constraints: &Option<Vec<u32>>,
 ) -> Vec<u32> {
-    use gem::aig::SimControlType;
-    use gem::display::format_display_message;
-    use gem::event_buffer::{
+    use jacquard::aig::SimControlType;
+    use jacquard::display::format_display_message;
+    use jacquard::event_buffer::{
         process_events, AssertConfig, EventBuffer, EventType, SimControl, SimStats, MAX_EVENTS,
     };
     use metal::{Device as MTLDevice, MTLResourceOptions, MTLSize};
@@ -621,7 +621,7 @@ fn sim_metal(
 
     // When xprop is enabled, expand the value-only state buffer to include X-mask
     let expanded_states = if script.xprop_enabled {
-        gem::sim::vcd_io::expand_states_for_xprop(input_states, script)
+        jacquard::sim::vcd_io::expand_states_for_xprop(input_states, script)
     } else {
         input_states.to_vec()
     };
@@ -920,14 +920,14 @@ fn sim_metal(
 
 #[cfg(feature = "cuda")]
 fn sim_cuda(
-    design: &gem::sim::setup::LoadedDesign,
+    design: &jacquard::sim::setup::LoadedDesign,
     input_states: &[u32],
     offsets_timestamps: &[(usize, u64)],
     timing_constraints: &Option<Vec<u32>>,
 ) -> Vec<u32> {
-    use gem::aig::SimControlType;
-    use gem::display::format_display_message;
-    use gem::event_buffer::{AssertAction, AssertConfig, EventType, SimStats};
+    use jacquard::aig::SimControlType;
+    use jacquard::display::format_display_message;
+    use jacquard::event_buffer::{AssertAction, AssertConfig, EventType, SimStats};
     use ulib::{AsUPtrMut, Device, UVec};
 
     mod ucci {
@@ -940,7 +940,7 @@ fn sim_cuda(
 
     // When xprop is enabled, expand the value-only state buffer to include X-mask
     let expanded_states = if script.xprop_enabled {
-        gem::sim::vcd_io::expand_states_for_xprop(input_states, script)
+        jacquard::sim::vcd_io::expand_states_for_xprop(input_states, script)
     } else {
         input_states.to_vec()
     };
@@ -1100,14 +1100,14 @@ fn sim_cuda(
 
 #[cfg(feature = "hip")]
 fn sim_hip(
-    design: &gem::sim::setup::LoadedDesign,
+    design: &jacquard::sim::setup::LoadedDesign,
     input_states: &[u32],
     offsets_timestamps: &[(usize, u64)],
     timing_constraints: &Option<Vec<u32>>,
 ) -> Vec<u32> {
-    use gem::aig::SimControlType;
-    use gem::display::format_display_message;
-    use gem::event_buffer::{AssertAction, AssertConfig, EventType, SimStats};
+    use jacquard::aig::SimControlType;
+    use jacquard::display::format_display_message;
+    use jacquard::event_buffer::{AssertAction, AssertConfig, EventType, SimStats};
     use ulib::{AsUPtrMut, Device, UVec};
 
     mod ucci_hip {
@@ -1120,7 +1120,7 @@ fn sim_hip(
 
     // When xprop is enabled, expand the value-only state buffer to include X-mask
     let expanded_states = if script.xprop_enabled {
-        gem::sim::vcd_io::expand_states_for_xprop(input_states, script)
+        jacquard::sim::vcd_io::expand_states_for_xprop(input_states, script)
     } else {
         input_states.to_vec()
     };
@@ -1274,7 +1274,7 @@ fn sim_hip(
 
 #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
 fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
-    use gem::liberty_parser::TimingLibrary;
+    use jacquard::liberty_parser::TimingLibrary;
 
     clilog::info!("Running timing analysis on GPU simulation results...");
     let timer_timing = clilog::stimer!("timing_analysis");
@@ -1364,17 +1364,17 @@ fn cmd_cosim(args: CosimArgs) {
     #[cfg(not(feature = "metal"))]
     {
         eprintln!(
-            "loom cosim requires Metal support (macOS only). Build with:\n\
-             \n  cargo build -r --features metal --bin loom\n"
+            "jacquard cosim requires Metal support (macOS only). Build with:\n\
+             \n  cargo build -r --features metal --bin jacquard\n"
         );
         std::process::exit(1);
     }
 
     #[cfg(feature = "metal")]
     {
-        use gem::sim::cosim_metal::CosimOpts;
-        use gem::sim::setup;
-        use gem::testbench::TestbenchConfig;
+        use jacquard::sim::cosim_metal::CosimOpts;
+        use jacquard::sim::setup;
+        use jacquard::testbench::TestbenchConfig;
 
         // Load testbench config
         let file = std::fs::File::open(&args.config).expect("Failed to open config file");
@@ -1432,7 +1432,7 @@ fn cmd_cosim(args: CosimArgs) {
         };
 
         let result =
-            gem::sim::cosim_metal::run_cosim(&mut design, &config, &opts, &timing_constraints);
+            jacquard::sim::cosim_metal::run_cosim(&mut design, &config, &opts, &timing_constraints);
         std::process::exit(if result.passed { 0 } else { 1 });
     }
 }

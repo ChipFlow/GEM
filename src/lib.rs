@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Loom — GPU-accelerated RTL logic simulator.
+//! Jacquard — GPU-accelerated RTL logic simulator.
 //!
-//! Loom compiles gate-level netlists into GPU-executable Boolean processor
+//! Jacquard compiles gate-level netlists into GPU-executable Boolean processor
 //! programs and simulates them on CUDA or Metal GPUs, achieving 5–40× speedup
 //! over CPU-based RTL simulators.
 //!

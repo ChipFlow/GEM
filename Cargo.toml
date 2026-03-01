@@ -1,8 +1,8 @@
 [package]
-name = "gem"
+name = "jacquard"
 version = "0.1.0"
 edition = "2021"
-links = "gem"
+links = "jacquard"
 
 [dependencies]
 cachedhash = "0.2.0"
@@ -47,7 +47,7 @@ version = "0.1"
 optional = true
 
 [[bin]]
-name = "loom"
+name = "jacquard"
 
 [dev-dependencies]
 criterion = "0.5"

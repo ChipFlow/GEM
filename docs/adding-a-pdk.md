@@ -1,12 +1,12 @@
 # Adding a New PDK for Post-Layout Simulation
 
 This guide documents the process of enabling a new process design kit (PDK) for
-gate-level simulation in Loom. It is based on the SKY130 enablement and captures
+gate-level simulation in Jacquard. It is based on the SKY130 enablement and captures
 every integration point.
 
 ## Overview
 
-Loom natively supports AIGPDK (its own synthesis library of AND gates, DFFs, and
+Jacquard natively supports AIGPDK (its own synthesis library of AND gates, DFFs, and
 SRAMs). Supporting a foundry PDK like SKY130 requires teaching the simulator how
 to interpret the PDK's standard cells: their pin directions, their boolean
 function, and which ones are sequential.
@@ -34,7 +34,7 @@ For SKY130, the PDK data lives in `vendor/sky130_fd_sc_hd/` as a git submodule.
 **Reference**: `src/sky130.rs` -- `is_sky130_cell()`, `detect_library()`,
 `detect_library_from_file()`
 
-Loom scans the netlist to determine which cell library is in use. Each PDK needs
+Jacquard scans the netlist to determine which cell library is in use. Each PDK needs
 a name-matching function:
 
 ```rust
@@ -145,7 +145,7 @@ one output pin at a time.
 **Reference**: `src/sky130_pdk.rs` -- `load_pdk_models()`, `parse_functional_model()`,
 `parse_udp()`
 
-Loom decomposes PDK cells to AIG primitives (AND gates and inversions) by
+Jacquard decomposes PDK cells to AIG primitives (AND gates and inversions) by
 parsing their functional Verilog models. The expected file structure:
 
 ```
@@ -251,7 +251,7 @@ reset/set conventions.
 
 ## Step 8: CLI Integration
 
-**Reference**: `src/bin/loom.rs`
+**Reference**: `src/bin/jacquard.rs`
 
 The `cmd_map` function detects the library and creates the netlist with the
 appropriate pin provider:
@@ -310,7 +310,7 @@ For a complete PDK integration, you need:
 | `src/<pdk>_pdk.rs` | Cell classification, model parsing, AIG decomposition |
 | `src/aig.rs` | AIG builder hooks (dependencies, pre/post-process) |
 | `src/sky130.rs` | Update `CellLibrary` enum |
-| `src/bin/loom.rs` | CLI match arms for new library |
+| `src/bin/jacquard.rs` | CLI match arms for new library |
 | `vendor/<pdk>/` | PDK cell models (git submodule) |
 
 ## Common Pitfalls

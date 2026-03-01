@@ -3,7 +3,7 @@
 //! Benchmarks for X-propagation CPU kernel overhead.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use gem::sim::cpu_reference::{simulate_block_v1, simulate_block_v1_xprop};
+use jacquard::sim::cpu_reference::{simulate_block_v1, simulate_block_v1_xprop};
 
 /// Build a partition script with realistic IO count and multiple boomerang stages.
 fn build_bench_script(is_x_capable: bool, num_ios: u32, num_stages: u32) -> Vec<u32> {

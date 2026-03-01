@@ -1,12 +1,12 @@
-# Loom
+# Jacquard
 
-![CI](https://github.com/ChipFlow/Loom/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/ChipFlow/Jacquard/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Rust](https://img.shields.io/badge/rust-edition%202021-orange)
 
-Loom is a GPU-accelerated RTL logic simulator. Like a Jacquard loom weaving patterns from punched cards, Loom maps gate-level netlists onto a virtual manycore Boolean processor and executes them on GPUs, delivering 5-40X speedup over CPU-based RTL simulators.
+Jacquard is a GPU-accelerated RTL logic simulator. Like a Jacquard loom weaving patterns from punched cards, Jacquard maps gate-level netlists onto a virtual manycore Boolean processor and executes them on GPUs, delivering 5-40X speedup over CPU-based RTL simulators.
 
-Loom builds on the excellent [GEM](https://github.com/NVlabs/GEM) research by Zizheng Guo, Yanqing Zhang, Runsheng Wang, Yibo Lin, and Haoxing Ren at NVIDIA Research. [ChipFlow](https://chipflow.io) extends their work with:
+Jacquard builds on the excellent [GEM](https://github.com/NVlabs/GEM) research by Zizheng Guo, Yanqing Zhang, Runsheng Wang, Yibo Lin, and Haoxing Ren at NVIDIA Research. [ChipFlow](https://chipflow.io) extends their work with:
 
 - **Metal backend** for Apple Silicon Macs (in addition to the original CUDA backend)
 - **Liberty timing support** — load real cell delays from Liberty files (e.g. SKY130) for timing-annotated simulation
@@ -27,7 +27,7 @@ The goal is GPU-accelerated gate-level simulation with real cell timing — a fi
 | CPU timing simulation | Done — arrival time propagation with setup/hold checking |
 | GPU timing simulation | Done — setup/hold violation detection on GPU (Metal + CUDA) |
 | SKY130 timing test suite | Done — post-P&R test circuits with SDF |
-| Unified `loom sim` CLI | Done — timing constraints wired to both Metal and CUDA kernels |
+| Unified `jacquard sim` CLI | Done — timing constraints wired to both Metal and CUDA kernels |
 
 Next steps:
 1. Timing-aware bit packing for improved GPU utilization
@@ -38,15 +38,15 @@ Next steps:
 Requires the [Rust toolchain](https://rustup.rs/).
 
 ```sh
-git clone https://github.com/ChipFlow/Loom.git
-cd Loom
+git clone https://github.com/ChipFlow/Jacquard.git
+cd Jacquard
 git submodule update --init --recursive
 ```
 
 ### Build (Metal - macOS)
 
 ```sh
-cargo build -r --features metal --bin loom
+cargo build -r --features metal --bin jacquard
 ```
 
 ### Build (CUDA - Linux)
@@ -54,30 +54,30 @@ cargo build -r --features metal --bin loom
 Requires CUDA toolkit installed.
 
 ```sh
-cargo build -r --features cuda --bin loom
+cargo build -r --features cuda --bin jacquard
 ```
 
 ## Usage
 
-Loom operates in two phases:
+Jacquard operates in two phases:
 
 1. **Map** your synthesized gate-level netlist to a `.gemparts` file (one-time cost):
 
 ```sh
-cargo run -r --bin loom -- map design.gv design.gemparts
+cargo run -r --bin jacquard -- map design.gv design.gemparts
 ```
 
 2. **Simulate** with a VCD input waveform:
 
 ```sh
 # Metal (macOS) - use NUM_BLOCKS=1
-cargo run -r --features metal --bin loom -- sim design.gv design.gemparts input.vcd output.vcd 1
+cargo run -r --features metal --bin jacquard -- sim design.gv design.gemparts input.vcd output.vcd 1
 
 # CUDA (Linux) - set NUM_BLOCKS to 2x your GPU's SM count
-cargo run -r --features cuda --bin loom -- sim design.gv design.gemparts input.vcd output.vcd NUM_BLOCKS
+cargo run -r --features cuda --bin jacquard -- sim design.gv design.gemparts input.vcd output.vcd NUM_BLOCKS
 
 # With SDF timing back-annotation:
-cargo run -r --features metal --bin loom -- sim design.gv design.gemparts input.vcd output.vcd 1 \
+cargo run -r --features metal --bin jacquard -- sim design.gv design.gemparts input.vcd output.vcd 1 \
   --sdf design.sdf --sdf-corner typ
 ```
 
@@ -85,7 +85,7 @@ cargo run -r --features metal --bin loom -- sim design.gv design.gemparts input.
 
 ## Documentation
 
-Browse the full documentation [online](https://chipflow.github.io/Loom/) or build it locally with [mdbook](https://rust-lang.github.io/mdBook/):
+Browse the full documentation [online](https://chipflow.github.io/Jacquard/) or build it locally with [mdbook](https://rust-lang.github.io/mdBook/):
 
 ```sh
 mdbook serve   # opens at http://localhost:3000
@@ -105,7 +105,7 @@ Available designs: NVDLA, Rocket, Gemmini.
 
 ## Citation
 
-Loom builds on the GEM research. Please cite the original paper if you find this work useful.
+Jacquard builds on the GEM research. Please cite the original paper if you find this work useful.
 
 ``` bibtex
 @inproceedings{gem,

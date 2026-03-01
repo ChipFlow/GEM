@@ -1,8 +1,8 @@
-# Selective X-Propagation for Loom
+# Selective X-Propagation for Jacquard
 
 ## Summary
 
-This document proposes adding **selective unknown-value (X) propagation** to Loom's
+This document proposes adding **selective unknown-value (X) propagation** to Jacquard's
 gate-level simulator. Rather than uniformly upgrading the entire simulator to
 four-state logic (2x storage, ~2-3x ALU cost), we use **static analysis at
 compile time** to identify which signals can carry X values, and only apply
@@ -11,7 +11,7 @@ to run with the existing fast two-state kernel.
 
 ## Motivation
 
-Loom currently simulates in pure two-state Boolean logic (0/1). All DFFs and
+Jacquard currently simulates in pure two-state Boolean logic (0/1). All DFFs and
 SRAMs start at 0. This is fast but has two significant drawbacks:
 
 1. **Undetected initialisation bugs**: If a design reads a register before it
@@ -24,9 +24,9 @@ SRAMs start at 0. This is fast but has two significant drawbacks:
    in simulation but fail on silicon.
 
 3. **No RTL/gate-level mismatch detection**: RTL simulators (Icarus, VCS,
-   Questa) propagate X values that expose these bugs. When comparing Loom's
+   Questa) propagate X values that expose these bugs. When comparing Jacquard's
    gate-level results against an RTL reference, false mismatches arise because
-   Loom resolves unknowns to zero.
+   Jacquard resolves unknowns to zero.
 
 Naively upgrading the entire simulator to four-state would halve throughput
 (double storage per signal, double ALU per gate). The key insight is that in a
@@ -36,7 +36,7 @@ reset). We should only pay the overhead where it matters.
 
 ## Background: X in And-Inverter Graphs
 
-Loom's core IR is an And-Inverter Graph (AIG). Every gate is an AND with
+Jacquard's core IR is an And-Inverter Graph (AIG). Every gate is an AND with
 optional input inversions. The boomerang reduction tree computes:
 
 ```
@@ -82,7 +82,7 @@ value is unknown:
    sources. Memory contents are undefined until written.
 
 3. **Undriven primary inputs**: If a primary input is not driven by the
-   testbench VCD, it should be marked X. (Currently Loom warns about missing
+   testbench VCD, it should be marked X. (Currently Jacquard warns about missing
    PI signals; this would upgrade that warning to X propagation.)
 
 These are identified directly from `AIG.drivers` (variant `DFF(_)` and
@@ -170,7 +170,7 @@ For X-capable partitions, each signal carries a **sideband X mask** alongside
 its value:
 
 - `v` (value bit): The Boolean value. When `x = 1`, this is a "best guess"
-  (we use 0 by convention, matching Loom's current behaviour for
+  (we use 0 by convention, matching Jacquard's current behaviour for
   backwards-compatible output).
 - `x` (X-mask bit): 1 = unknown, 0 = known.
 
@@ -320,7 +320,7 @@ initialisation bugs that would otherwise escape to silicon.
 
 ## Implementation Status
 
-All stages are implemented. Enable with `--xprop` on both `loom map` and `loom sim`.
+All stages are implemented. Enable with `--xprop` on both `jacquard map` and `jacquard sim`.
 
 ### Stage 1: Static X-Source Analysis (`src/aig.rs`)
 
@@ -340,10 +340,10 @@ All stages are implemented. Enable with `--xprop` on both `loom map` and `loom s
 - `sanity_check_cpu_xprop()` -- CPU vs GPU comparison for both lanes
 - Non-X-capable partitions delegate to `simulate_block_v1` (zero overhead)
 
-### Stage 4: CLI and VCD Integration (`src/bin/loom.rs`, `src/sim/vcd_io.rs`)
+### Stage 4: CLI and VCD Integration (`src/bin/jacquard.rs`, `src/sim/vcd_io.rs`)
 
-- `loom map --xprop` runs static analysis and logs X-capable pin/partition stats
-- `loom sim --xprop` enables X-aware simulation with doubled state buffer
+- `jacquard map --xprop` runs static analysis and logs X-capable pin/partition stats
+- `jacquard sim --xprop` enables X-aware simulation with doubled state buffer
 - `write_output_vcd_xprop()` emits `Value::X` for X-masked primary outputs
 - `expand_states_for_xprop()` / `split_xprop_states()` for state buffer management
 
@@ -382,15 +382,15 @@ All stages are implemented. Enable with `--xprop` on both `loom map` and `loom s
 
 - **[Synopsys VCS T-Prop](https://semiengineering.com/simulation-with-taint-propagation-for-security-verification/)**: Taint propagation in VCS uses a parallel sideband bit per signal to track data flow for security verification. Our X-mask is architecturally identical -- a sideband bit that propagates alongside the value using different rules.
 
-- **[Chris Drake, "Improving Verilog Four State Logic" (2024)](https://cjdrake.substack.com/p/improving-verilog-four-state-logic)**: Argues that Verilog conflates "uninitialised" and "don't care" uses of X, and proposes splitting them. Our approach naturally supports this: the X-mask tracks only uninitialised/unknown values, not synthesis don't-cares (which are already resolved by the synthesis tool before Loom sees the netlist).
+- **[Chris Drake, "Improving Verilog Four State Logic" (2024)](https://cjdrake.substack.com/p/improving-verilog-four-state-logic)**: Argues that Verilog conflates "uninitialised" and "don't care" uses of X, and proposes splitting them. Our approach naturally supports this: the X-mask tracks only uninitialised/unknown values, not synthesis don't-cares (which are already resolved by the synthesis tool before Jacquard sees the netlist).
 
 ## What This Does NOT Address
 
-- **Z (high-impedance)**: Loom does not support tri-state buses and this
+- **Z (high-impedance)**: Jacquard does not support tri-state buses and this
   proposal does not add support. Z would require a third state bit and bus
   resolution logic.
 
-- **X-optimism in RTL control flow**: Since Loom operates on gate-level
+- **X-optimism in RTL control flow**: Since Jacquard operates on gate-level
   netlists (post-synthesis), there are no `if`/`case` statements to
   be X-optimistic about. Gate-level X propagation through AND/OR truth tables
   is naturally correct (though potentially X-pessimistic -- see below).
@@ -429,7 +429,7 @@ All stages are implemented. Enable with `--xprop` on both `loom map` and `loom s
    pessimism at partition boundaries.
 
 5. **Runtime CLI flag**: X-propagation is controlled by `--xprop` on both
-   `loom map` and sim binaries, rather than a compile-time feature flag.
+   `jacquard map` and sim binaries, rather than a compile-time feature flag.
    No new Cargo dependencies are needed. The `.gemparts` file carries the
    `xprop_enabled` metadata, with `#[serde(default)]` ensuring backward
    compatibility with old files (they deserialize with `xprop_enabled = false`).

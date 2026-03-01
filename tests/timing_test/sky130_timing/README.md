@@ -2,7 +2,7 @@
 
 Small test circuits using SKY130 HD standard cells with analytically
 verifiable timing properties. These serve as ground truth for validating
-Loom's timing simulation (both CPU and GPU paths).
+Jacquard's timing simulation (both CPU and GPU paths).
 
 ## Test Circuits
 
