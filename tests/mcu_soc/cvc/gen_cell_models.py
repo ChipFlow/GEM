@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parents[2]
-CELL_LIB = PROJECT_ROOT / "sky130_fd_sc_hd"
+CELL_LIB = PROJECT_ROOT / "vendor" / "sky130_fd_sc_hd"
 CELLS_DIR = CELL_LIB / "cells"
 MODELS_DIR = CELL_LIB / "models"
 NETLIST = PROJECT_ROOT / "tests" / "mcu_soc" / "data" / "6_final.v"
