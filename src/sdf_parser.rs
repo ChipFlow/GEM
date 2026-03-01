@@ -630,6 +630,11 @@ impl<'a> SdfParser<'a> {
         match self.tokenizer.peek_token() {
             Some(Token::LParen) => {
                 self.tokenizer.next_token();
+                // Empty parens `()` represent undefined/unspecified delay
+                if matches!(self.tokenizer.peek_token(), Some(Token::RParen)) {
+                    self.tokenizer.next_token();
+                    return Ok(0);
+                }
                 let triple_str = self.read_str()?;
                 self.expect_rparen()?;
                 self.parse_triple(&triple_str, timescale_ps)
@@ -984,6 +989,28 @@ mod tests {
         assert_eq!(setups.len(), 2);
         assert_eq!(setups[0].data_pin, "D");
         assert_eq!(setups[0].clock_edge, "CLK");
+    }
+
+    #[test]
+    fn test_empty_delay_parens() {
+        // Some SDF files use empty `()` for undefined delays
+        // e.g., (IOPATH RESET_B Q () (0.000:0.000:0.000))
+        let sdf = r#"(DELAYFILE
+            (SDFVERSION "3.0")
+            (DESIGN "test")
+            (TIMESCALE 1ps)
+            (CELL (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+                (INSTANCE dff0)
+                (DELAY (ABSOLUTE
+                    (IOPATH RESET_B Q () (100:200:300))
+                ))
+            )
+        )"#;
+        let parsed = SdfFile::parse_str(sdf, SdfCorner::Typ).unwrap();
+        let cell = parsed.get_cell("dff0").unwrap();
+        assert_eq!(cell.iopaths.len(), 1);
+        assert_eq!(cell.iopaths[0].delay.rise_ps, 0); // empty () = 0
+        assert_eq!(cell.iopaths[0].delay.fall_ps, 200); // typ of 100:200:300
     }
 
     #[test]
