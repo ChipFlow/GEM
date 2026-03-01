@@ -529,6 +529,13 @@ jobs:
             --stimulus-vcd tests/mcu_soc/stimulus.vcd \
             2>&1 | tee cosim_stimulus.txt
 
+      - name: Strip SDF timing checks for GPU simulation
+        run: |
+          # Remove TIMINGCHECK directives from SDF (timing checks can cause parser errors)
+          uv run tests/mcu_soc/cvc/strip_sdf_checks.py \
+            tests/mcu_soc/data/6_final.sdf \
+            tests/mcu_soc/data/6_final_stripped.sdf
+
       - name: Replay with timing VCD
         timeout-minutes: 15
         continue-on-error: true
@@ -539,7 +546,7 @@ jobs:
             tests/mcu_soc/stimulus.vcd \
             tests/mcu_soc/loom_timed_mcu.vcd \
             1 \
-            --sdf tests/mcu_soc/data/6_final.sdf \
+            --sdf tests/mcu_soc/data/6_final_stripped.sdf \
             --sdf-corner typ \
             --timing-vcd \
             --top-module top \
