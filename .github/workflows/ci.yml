@@ -519,6 +519,31 @@ jobs:
             exit 1
           fi
 
+      - name: Capture stimulus VCD (10K ticks)
+        timeout-minutes: 10
+        run: |
+          cargo run --release --features metal --bin loom -- cosim \
+            tests/mcu_soc/data/6_final.v \
+            --config tests/mcu_soc/sim_config.json --top-module top \
+            --max-cycles 10000 \
+            --stimulus-vcd tests/mcu_soc/stimulus.vcd \
+            2>&1 | tee cosim_stimulus.txt
+
+      - name: Replay with timing VCD
+        timeout-minutes: 15
+        run: |
+          cargo run --release --features metal --bin loom -- sim \
+            tests/mcu_soc/data/6_final.v \
+            tests/mcu_soc/stimulus.vcd \
+            tests/mcu_soc/loom_timed_mcu.vcd \
+            1 \
+            --sdf tests/mcu_soc/data/6_final.sdf \
+            --sdf-corner typ \
+            --timing-vcd \
+            --top-module top \
+            --max-cycles 10000 \
+            2>&1 | tee metal_mcu_timed.txt
+
       - name: Report simulation results
         if: always()
         run: |
@@ -527,6 +552,12 @@ jobs:
             echo "\`\`\`"
             tail -20 cosim_output.txt
             echo "\`\`\`"
+            if [ -f metal_mcu_timed.txt ]; then
+              echo "## MCU SoC Timing VCD Replay"
+              echo "\`\`\`"
+              tail -20 metal_mcu_timed.txt
+              echo "\`\`\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
@@ -536,7 +567,11 @@ jobs:
           name: mcu-soc-results
           path: |
             cosim_output.txt
+            cosim_stimulus.txt
+            metal_mcu_timed.txt
             tests/mcu_soc/sim_config.json
+            tests/mcu_soc/stimulus.vcd
+            tests/mcu_soc/loom_timed_mcu.vcd
 
   # Build documentation (cargo doc + mdbook) and deploy to GitHub Pages
   docs:
@@ -742,3 +777,148 @@ jobs:
           path: |
             timing_comparison.json
             comparison.txt
+
+  # CVC SDF-annotated simulation of MCU SoC for timing correctness validation
+  mcu-soc-cvc:
+    name: MCU SoC CVC Reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [mcu-soc-metal]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init required submodules
+        run: git submodule update --init vendor/sky130_fd_sc_hd
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Cache CVC binary
+        id: cache-cvc
+        uses: actions/cache@v4
+        with:
+          path: ~/cvc/bin
+          key: cvc-binary-debug-v2
+
+      - name: Build CVC from source
+        if: steps.cache-cvc.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev
+          git clone --depth 1 https://github.com/cambridgehackers/open-src-cvc.git ~/cvc-src
+          cd ~/cvc-src/src
+          make -f makefile.cvc64 -j$(nproc) \
+            OPTFLGS="" \
+            CFLAGS="-Wall -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
+          mkdir -p ~/cvc/bin
+          cp cvc64 ~/cvc/bin/
+
+      - name: Add CVC to PATH
+        run: echo "$HOME/cvc/bin" >> "$GITHUB_PATH"
+
+      - name: Download Metal artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mcu-soc-results
+          path: metal-results/
+
+      - name: Generate cell models
+        run: uv run tests/mcu_soc/cvc/gen_cell_models.py
+
+      - name: Strip SDF timing checks
+        run: |
+          uv run tests/mcu_soc/cvc/strip_sdf_checks.py \
+            tests/mcu_soc/data/6_final.sdf \
+            tests/mcu_soc/cvc/6_final_nocheck.sdf
+
+      - name: Convert stimulus to Verilog
+        run: |
+          uv run tests/mcu_soc/cvc/convert_stimulus.py \
+            metal-results/tests/mcu_soc/stimulus.vcd \
+            tests/mcu_soc/cvc/stimulus_gen.v
+
+      - name: Run CVC simulation
+        timeout-minutes: 45
+        working-directory: tests/mcu_soc/cvc
+        run: |
+          ln -sf ../data/6_final.v .
+          cvc64 +typdelays tb_cvc.v sky130_cells.v cf_sram.v 6_final.v \
+            2>&1 | tee cvc_compile.log
+          ./cvcsim 2>&1 | tee cvc_sim.log
+
+      - name: Report results
+        if: always()
+        run: |
+          {
+            echo "## MCU SoC CVC Reference Simulation"
+            echo ""
+            echo "### CVC Compilation"
+            echo "\`\`\`"
+            tail -20 tests/mcu_soc/cvc/cvc_compile.log 2>/dev/null || echo "No compile output"
+            echo "\`\`\`"
+            echo ""
+            echo "### CVC Simulation"
+            echo "\`\`\`"
+            tail -20 tests/mcu_soc/cvc/cvc_sim.log 2>/dev/null || echo "No sim output"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcu-soc-cvc-results
+          path: |
+            tests/mcu_soc/cvc/cvc_compile.log
+            tests/mcu_soc/cvc/cvc_sim.log
+            tests/mcu_soc/cvc/cvc_output.vcd
+
+  # Compare MCU SoC timing results between CVC and Loom
+  mcu-soc-comparison:
+    name: MCU SoC Timing Comparison
+    runs-on: ubuntu-latest
+    needs: [mcu-soc-metal, mcu-soc-cvc]
+    if: always() && needs.mcu-soc-metal.result == 'success' && needs.mcu-soc-cvc.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Download Metal artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mcu-soc-results
+          path: metal-results/
+
+      - name: Download CVC artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mcu-soc-cvc-results
+          path: cvc-results/
+
+      - name: Compare outputs
+        run: |
+          uv run tests/mcu_soc/cvc/compare_outputs.py \
+            metal-results/tests/mcu_soc/loom_timed_mcu.vcd \
+            cvc-results/tests/mcu_soc/cvc/cvc_output.vcd \
+            --skip-cycles 5 \
+            2>&1 | tee mcu_comparison.txt
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## MCU SoC Timing Comparison (CVC vs Loom)"
+            echo ""
+            echo "\`\`\`"
+            cat mcu_comparison.txt 2>/dev/null || echo "No comparison output"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcu-soc-comparison-results
+          path: mcu_comparison.txt
