@@ -140,7 +140,7 @@ jobs:
 
       - name: Run Metal simulation with timing VCD (inv_chain_pnr)
         run: |
-          cargo run --release --features metal --bin loom -- sim \
+          cargo run --release --features metal --bin jacquard -- sim \
             tests/timing_test/inv_chain_pnr/inv_chain.v \
             tests/timing_test/inv_chain_pnr/inv_chain_stimulus.vcd \
             tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
@@ -522,7 +522,7 @@ jobs:
       - name: Capture stimulus VCD (10K ticks)
         timeout-minutes: 10
         run: |
-          cargo run --release --features metal --bin loom -- cosim \
+          cargo run --release --features metal --bin jacquard -- cosim \
             tests/mcu_soc/data/6_final.v \
             --config tests/mcu_soc/sim_config.json --top-module top \
             --max-cycles 10000 \
@@ -532,7 +532,7 @@ jobs:
       - name: Replay with timing VCD
         timeout-minutes: 15
         run: |
-          cargo run --release --features metal --bin loom -- sim \
+          cargo run --release --features metal --bin jacquard -- sim \
             tests/mcu_soc/data/6_final.v \
             tests/mcu_soc/stimulus.vcd \
             tests/mcu_soc/loom_timed_mcu.vcd \

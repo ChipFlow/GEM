@@ -1,6 +1,6 @@
 # /// script
-# /// requires-python = ">=3.10"
-# /// dependencies = []
+# requires-python = ">=3.10"
+# dependencies = []
 # ///
 """Compare Loom and CVC simulation outputs for MCU SoC timing validation.
 

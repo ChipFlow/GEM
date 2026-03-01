@@ -1,6 +1,6 @@
 # /// script
-# /// requires-python = ">=3.10"
-# /// dependencies = []
+# requires-python = ">=3.10"
+# dependencies = []
 # ///
 """Strip TIMINGCHECK, INTERCONNECT, and empty DELAY blocks from SDF for CVC.
 

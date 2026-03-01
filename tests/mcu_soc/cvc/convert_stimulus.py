@@ -1,6 +1,6 @@
 # /// script
-# /// requires-python = ">=3.10"
-# /// dependencies = []
+# requires-python = ">=3.10"
+# dependencies = []
 # ///
 """Convert a Loom stimulus VCD to Verilog timed assignments for CVC.
 
