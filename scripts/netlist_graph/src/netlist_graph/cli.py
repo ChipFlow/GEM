@@ -142,16 +142,15 @@ def search(netlist: Path, pattern: str):
 @main.command()
 @click.argument("netlist", type=click.Path(exists=True, path_type=Path))
 @click.argument("signals", type=str, nargs=-1)
-@click.option("--rust", is_flag=True, help="Generate Rust code for timing_sim_cpu")
 @click.option("--json", "json_out", is_flag=True, help="Output as JSON for programmatic use")
-def trace(netlist: Path, signals: tuple[str, ...], rust: bool, json_out: bool):
+def trace(netlist: Path, signals: tuple[str, ...], json_out: bool):
     """Generate trace configuration for monitoring signals.
 
-    Finds nets matching the given patterns and outputs configuration
-    for monitoring them in timing_sim_cpu.
+    Finds nets matching the given patterns and outputs their signal
+    type and driver information.
 
     Example:
-        netlist-graph trace design.v ibus__cyc rst_n_sync.rst --rust
+        netlist-graph trace design.v ibus__cyc rst_n_sync.rst --json
     """
     import json
 
@@ -198,32 +197,6 @@ def trace(netlist: Path, signals: tuple[str, ...], rust: bool, json_out: bool):
         click.echo(json.dumps(results, indent=2))
         return
 
-    if rust:
-        click.echo("// Add to timing_sim_cpu.rs - signal monitoring")
-        click.echo("// Paste this in the signal setup section\n")
-
-        click.echo("// Signal name patterns to monitor")
-        click.echo("let trace_patterns: &[(&str, &str)] = &[")
-        for r in results:
-            click.echo(f'    ("{r["pattern"]}", "{r["net_name"]}"),')
-        click.echo("];\n")
-
-        click.echo("// Find pins for traced signals")
-        click.echo("let mut trace_pins: Vec<(String, usize)> = Vec::new();")
-        click.echo("for (label, pattern) in trace_patterns {")
-        click.echo("    if let Some(pin) = find_pin_by_pattern(pattern) {")
-        click.echo("        trace_pins.push((label.to_string(), pin));")
-        click.echo("    }")
-        click.echo("}\n")
-
-        click.echo("// In simulation loop, add:")
-        click.echo("// for (label, pin) in &trace_pins {")
-        click.echo('//     let val = circ_state[*pin];')
-        click.echo('//     print!("{label}={val} ");')
-        click.echo("// }")
-        click.echo("// println!();")
-        return
-
     # Default: simple output
     click.echo(f"\nFound {len(results)} signals to trace:")
     for r in results:
@@ -239,10 +212,9 @@ def trace(netlist: Path, signals: tuple[str, ...], rust: bool, json_out: bool):
 @click.argument("output", type=click.Path(path_type=Path))
 @click.argument("signals", type=str, nargs=-1)
 def watchlist(netlist: Path, output: Path, signals: tuple[str, ...]):
-    """Generate a watchlist file for timing_sim_cpu.
+    """Generate a watchlist JSON file for signal monitoring.
 
-    Creates a JSON file mapping signal names to their net names,
-    which timing_sim_cpu can load with --watchlist.
+    Creates a JSON file mapping signal names to their net names.
 
     Example:
         netlist-graph watchlist design.v watch.json ibus__cyc rst_n_sync gpio_out

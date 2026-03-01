@@ -65,7 +65,6 @@ NetlistDB (Verilog) → AIG → StagedAIG → Partitions → FlattenedScript →
 ### Binary Tools (`src/bin/`)
 
 - **`jacquard.rs`**: Unified CLI — `jacquard sim` (GPU simulation), `jacquard cosim` (co-simulation)
-- **`timing_sim_cpu.rs`**: CPU-based timing simulation with SDF back-annotation (development tool)
 - **`timing_analysis.rs`**: Static timing analysis utility (development tool)
 
 ### Dependencies (`vendor/eda-infra-rs` submodule)
@@ -151,7 +150,7 @@ uv run netlist-graph path <netlist.v> "<source>" "<target>"
 # Search for nets matching pattern
 uv run netlist-graph search <netlist.v> "<pattern>"
 
-# Generate watchlist JSON for timing_sim_cpu
+# Generate watchlist JSON for signal monitoring
 uv run netlist-graph watchlist <netlist.v> output.json signal1 signal2 ...
 
 # Interactive mode for exploration
@@ -170,14 +169,3 @@ uv run netlist-graph path tests/timing_test/minimal_build/6_final.v "gpio_in[40]
 ### Timing Violation Detection
 
 See `docs/timing-violations.md` for the full guide on enabling GPU-side setup/hold violation checks, interpreting violation reports, and tracing violations back to source signals using `netlist_graph`.
-
-### Timing Simulation with Signal Tracing
-
-```bash
-# Create watchlist and trace signals
-cargo run -r --bin timing_sim_cpu -- netlist.v \
-  --config testbench.json \
-  --watchlist signals.json \
-  --trace-output trace.csv \
-  --max-cycles 1000
-```

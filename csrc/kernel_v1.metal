@@ -722,7 +722,7 @@ kernel void state_prep(
 //   -> signal(batch_done)
 //   CPU: drain UART channel + bus trace
 //
-// Flash runs TWICE per tick to match timing_sim_cpu behavior: the SPI CLK
+// Flash runs TWICE per tick: the SPI CLK
 // passes through clock gating (Q = sys_CLK & EN_latch), so the flash sees
 // CLK=0 after the falling edge and CLK=EN_latch after the rising edge.
 
@@ -924,7 +924,7 @@ kernel void gpu_apply_flash_din(
 // Stores result d_i in FlashState for next gpu_apply_flash_din.
 //
 // Runs TWICE per tick: once after falling-edge simulate, once after rising-edge
-// simulate. This matches timing_sim_cpu's dual flash stepping.
+// simulate.
 
 kernel void gpu_flash_model_step(
     device u32* states [[buffer(0)]],

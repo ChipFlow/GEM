@@ -37,14 +37,11 @@ uv run netlist-graph path <netlist.v> <source> <target>
 
 ### Generate trace configuration
 
-Generate configuration for monitoring signals in timing_sim_cpu:
+Generate signal type and driver information:
 
 ```bash
 # Simple output
 uv run netlist-graph trace <netlist.v> <signal1> <signal2> ...
-
-# Generate Rust code snippet
-uv run netlist-graph trace <netlist.v> ibus__cyc rst_n_sync.rst --rust
 
 # Generate JSON for programmatic use
 uv run netlist-graph trace <netlist.v> ibus__cyc rst_n_sync.rst --json
@@ -52,7 +49,7 @@ uv run netlist-graph trace <netlist.v> ibus__cyc rst_n_sync.rst --json
 
 ### Generate watchlist file
 
-Create a JSON watchlist that timing_sim_cpu can load:
+Create a JSON watchlist for signal monitoring:
 
 ```bash
 uv run netlist-graph watchlist <netlist.v> <output.json> <signal1> <signal2> ...

@@ -487,8 +487,8 @@ impl MetalSimulator {
     ///   7. gpu_flash_model_step (after rising edge — sees posedge SPI CLK)
     ///   8. gpu_io_step (UART + bus trace)
     ///
-    /// The flash model runs TWICE per tick (after each half-cycle simulate),
-    /// matching timing_sim_cpu behavior. This is critical because the SPI CLK
+    /// The flash model runs TWICE per tick (after each half-cycle simulate).
+    /// This is critical because the SPI CLK
     /// signal passes through clock gating logic (Q = system_CLK & EN_latch),
     /// so the flash sees CLK=0 after the falling edge and CLK=EN_latch after
     /// the rising edge. The d_in from the falling-edge flash step is picked up
