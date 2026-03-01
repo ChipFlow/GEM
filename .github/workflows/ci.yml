@@ -138,6 +138,18 @@ jobs:
             echo "WARNING: No X values in xprop output VCD"
           fi
 
+      - name: Run Metal simulation with timing VCD (inv_chain_pnr)
+        run: |
+          cargo run --release --features metal --bin loom -- sim \
+            tests/timing_test/inv_chain_pnr/inv_chain.v \
+            tests/timing_test/inv_chain_pnr/inv_chain_stimulus.vcd \
+            tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
+            1 \
+            --sdf tests/timing_test/inv_chain_pnr/inv_chain_test_ps.sdf \
+            --sdf-corner typ \
+            --timing-vcd \
+            2>&1 | tee metal_timed.txt
+
       - name: Upload VCD artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -146,8 +158,10 @@ jobs:
           path: |
             tests/timing_test/ci_output.vcd
             tests/timing_test/ci_xprop_output.vcd
+            tests/timing_test/inv_chain_pnr/loom_timed_output.vcd
             metal_timing.txt
             metal_xprop.txt
+            metal_timed.txt
             perf_metrics/
 
   # Build and run CUDA simulation on NVIDIA GPU
@@ -673,3 +687,58 @@ jobs:
             tests/timing_test/inv_chain_pnr/cvc_compile.log
             tests/timing_test/inv_chain_pnr/cvc_output.log
             tests/timing_test/inv_chain_pnr/cvc_inv_chain_output.vcd
+
+  # Compare timing results between CVC (event-driven) and Loom (GPU)
+  timing-comparison:
+    name: Timing Comparison (CVC vs Loom)
+    runs-on: ubuntu-latest
+    needs: [metal, cvc-reference]
+    if: always() && needs.metal.result == 'success' && needs.cvc-reference.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Download Metal artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vcd-outputs
+          path: metal-results/
+
+      - name: Download CVC artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cvc-reference-results
+          path: cvc-results/
+
+      - name: Compare timing
+        run: |
+          uv run scripts/compare_timing.py \
+            --cvc-log cvc-results/tests/timing_test/inv_chain_pnr/cvc_output.log \
+            --cvc-vcd cvc-results/tests/timing_test/inv_chain_pnr/cvc_inv_chain_output.vcd \
+            --loom-vcd metal-results/tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
+            --clock-period-ps 10000 \
+            --clock-signal CLK \
+            --output-signal Q \
+            --output-json timing_comparison.json \
+            2>&1 | tee comparison.txt
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## Timing Comparison (CVC vs Loom)"
+            echo ""
+            echo "\`\`\`"
+            cat comparison.txt 2>/dev/null || echo "No comparison output"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timing-comparison-results
+          path: |
+            timing_comparison.json
+            comparison.txt
