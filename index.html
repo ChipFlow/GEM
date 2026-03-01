@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Introduction - Loom Documentation</title>
+        <title>Introduction - Jacquard Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -120,13 +120,13 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">Loom Documentation</h1>
+                    <h1 class="menu-title">Jacquard Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
-                        <a href="https://github.com/ChipFlow/Loom" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/ChipFlow/Jacquard" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
 
@@ -155,14 +155,14 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="loom-documentation"><a class="header" href="#loom-documentation">Loom Documentation</a></h1>
-<p>Welcome to the documentation for Loom, a GPU-accelerated RTL logic simulator.</p>
+                        <h1 id="jacquard-documentation"><a class="header" href="#jacquard-documentation">Jacquard Documentation</a></h1>
+<p>Welcome to the documentation for Jacquard, a GPU-accelerated RTL logic simulator.</p>
 <p>Use the sidebar to navigate between topics, or start with the <a href="usage.html">Getting Started</a> guide.</p>
 <h2 id="documents"><a class="header" href="#documents">Documents</a></h2>
 <h3 id="core-documentation"><a class="header" href="#core-documentation">Core Documentation</a></h3>
 <ul>
 <li>
-<p><strong><a href="simulation-architecture.html">Simulation Architecture</a></strong>: Detailed explanation of Loom's internal architecture</p>
+<p><strong><a href="simulation-architecture.html">Simulation Architecture</a></strong>: Detailed explanation of Jacquard's internal architecture</p>
 <ul>
 <li>Pipeline stages (NetlistDB → AIG → StagedAIG → Partitions → FlattenedScript → GPU)</li>
 <li>Data structures and representations</li>
@@ -193,7 +193,7 @@
 </ul>
 <h2 id="quick-reference"><a class="header" href="#quick-reference">Quick Reference</a></h2>
 <h3 id="vcd-input-requirements-critical"><a class="header" href="#vcd-input-requirements-critical">VCD Input Requirements (Critical!)</a></h3>
-<p>Loom expects VCD signals at <strong>absolute top-level</strong> (no module hierarchy):</p>
+<p>Jacquard expects VCD signals at <strong>absolute top-level</strong> (no module hierarchy):</p>
 <pre><code class="language-verilog">// ✓ Correct testbench
 initial begin
     $dumpfile("output.vcd");
@@ -208,28 +208,28 @@ end
 </code></pre>
 <h3 id="debug-commands"><a class="header" href="#debug-commands">Debug Commands</a></h3>
 <pre><code class="language-bash"># Enable debug logging
-RUST_LOG=debug cargo run -r --features metal --bin loom -- sim &lt;args&gt;
+RUST_LOG=debug cargo run -r --features metal --bin jacquard -- sim &lt;args&gt;
 
 # Verify with CPU simulation
-cargo run -r --features metal --bin loom -- sim &lt;args&gt; --check-with-cpu
+cargo run -r --features metal --bin jacquard -- sim &lt;args&gt; --check-with-cpu
 
 # Check VCD structure
 grep '\$scope\|\$var' input.vcd | head -20
 </code></pre>
 <h3 id="key-statistics"><a class="header" href="#key-statistics">Key Statistics</a></h3>
-<p>When running Loom, look for these diagnostic outputs:</p>
+<p>When running Jacquard, look for these diagnostic outputs:</p>
 <pre><code>netlist has X pins, Y aig pins, Z and gates        # AIG complexity
 current: N endpoints, try M parts                  # Partition count
 Built script for B blocks, reg/io state size S     # Final script
 WARN (GATESIM_VCDI_MISSING_PI) ...                 # VCD issues!
 </code></pre>
 <h2 id="investigation-methodology"><a class="header" href="#investigation-methodology">Investigation Methodology</a></h2>
-<p>This documentation was created through systematic investigation of Loom's behavior:</p>
+<p>This documentation was created through systematic investigation of Jacquard's behavior:</p>
 <ol>
 <li><strong>Source Code Analysis</strong>: Examined <code>src/aig.rs</code>, <code>src/flatten.rs</code>, <code>src/staging.rs</code></li>
 <li><strong>Debug Tracing</strong>: Used <code>RUST_LOG=debug</code> to capture internal state</li>
 <li><strong>Test Case Development</strong>: Created minimal reproducible examples</li>
-<li><strong>Comparative Testing</strong>: Compared Loom vs iverilog outputs</li>
+<li><strong>Comparative Testing</strong>: Compared Jacquard vs iverilog outputs</li>
 <li><strong>Third-Party Validation</strong>: Tested with real-world examples (sva-playground)</li>
 </ol>
 <h2 id="known-issues-documented"><a class="header" href="#known-issues-documented">Known Issues Documented</a></h2>
@@ -237,7 +237,7 @@ WARN (GATESIM_VCDI_MISSING_PI) ...                 # VCD issues!
 <li>
 <p><strong>VCD Hierarchy Mismatch</strong> (CRITICAL):</p>
 <ul>
-<li>Loom expects flat VCD hierarchy</li>
+<li>Jacquard expects flat VCD hierarchy</li>
 <li>Most testbenches generate hierarchical VCDs</li>
 <li>See troubleshooting-vcd.md for solutions</li>
 </ul>

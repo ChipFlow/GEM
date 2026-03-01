@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Adding a New PDK - Loom Documentation</title>
+        <title>Adding a New PDK - Jacquard Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -120,13 +120,13 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">Loom Documentation</h1>
+                    <h1 class="menu-title">Jacquard Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
-                        <a href="https://github.com/ChipFlow/Loom" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/ChipFlow/Jacquard" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
 
@@ -157,10 +157,10 @@
                     <main>
                         <h1 id="adding-a-new-pdk-for-post-layout-simulation"><a class="header" href="#adding-a-new-pdk-for-post-layout-simulation">Adding a New PDK for Post-Layout Simulation</a></h1>
 <p>This guide documents the process of enabling a new process design kit (PDK) for
-gate-level simulation in Loom. It is based on the SKY130 enablement and captures
+gate-level simulation in Jacquard. It is based on the SKY130 enablement and captures
 every integration point.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
-<p>Loom natively supports AIGPDK (its own synthesis library of AND gates, DFFs, and
+<p>Jacquard natively supports AIGPDK (its own synthesis library of AND gates, DFFs, and
 SRAMs). Supporting a foundry PDK like SKY130 requires teaching the simulator how
 to interpret the PDK's standard cells: their pin directions, their boolean
 function, and which ones are sequential.</p>
@@ -183,7 +183,7 @@ function, and which ones are sequential.</p>
 <h2 id="step-1-library-detection"><a class="header" href="#step-1-library-detection">Step 1: Library Detection</a></h2>
 <p><strong>Reference</strong>: <code>src/sky130.rs</code> -- <code>is_sky130_cell()</code>, <code>detect_library()</code>,
 <code>detect_library_from_file()</code></p>
-<p>Loom scans the netlist to determine which cell library is in use. Each PDK needs
+<p>Jacquard scans the netlist to determine which cell library is in use. Each PDK needs
 a name-matching function:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -264,7 +264,7 @@ one output pin at a time.</p>
 <h2 id="step-5-behavioral-model-loading"><a class="header" href="#step-5-behavioral-model-loading">Step 5: Behavioral Model Loading</a></h2>
 <p><strong>Reference</strong>: <code>src/sky130_pdk.rs</code> -- <code>load_pdk_models()</code>, <code>parse_functional_model()</code>,
 <code>parse_udp()</code></p>
-<p>Loom decomposes PDK cells to AIG primitives (AND gates and inversions) by
+<p>Jacquard decomposes PDK cells to AIG primitives (AND gates and inversions) by
 parsing their functional Verilog models. The expected file structure:</p>
 <pre><code>vendor/&lt;pdk&gt;/
   cells/
@@ -351,7 +351,7 @@ AND gates into the AIG</li>
 implementations of each phase that handle the new cell types' pin names and
 reset/set conventions.</p>
 <h2 id="step-8-cli-integration"><a class="header" href="#step-8-cli-integration">Step 8: CLI Integration</a></h2>
-<p><strong>Reference</strong>: <code>src/bin/loom.rs</code></p>
+<p><strong>Reference</strong>: <code>src/bin/jacquard.rs</code></p>
 <p>The <code>cmd_map</code> function detects the library and creates the netlist with the
 appropriate pin provider:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -410,7 +410,7 @@ flash (this exercises sequential logic, combinational cones, and IO)</li>
 <tr><td><code>src/&lt;pdk&gt;_pdk.rs</code></td><td>Cell classification, model parsing, AIG decomposition</td></tr>
 <tr><td><code>src/aig.rs</code></td><td>AIG builder hooks (dependencies, pre/post-process)</td></tr>
 <tr><td><code>src/sky130.rs</code></td><td>Update <code>CellLibrary</code> enum</td></tr>
-<tr><td><code>src/bin/loom.rs</code></td><td>CLI match arms for new library</td></tr>
+<tr><td><code>src/bin/jacquard.rs</code></td><td>CLI match arms for new library</td></tr>
 <tr><td><code>vendor/&lt;pdk&gt;/</code></td><td>PDK cell models (git submodule)</td></tr>
 </tbody></table>
 </div>

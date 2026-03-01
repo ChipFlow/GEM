@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["cpu_reference","setup","vcd_io"]};

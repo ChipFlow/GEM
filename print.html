@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Loom Documentation</title>
+        <title>Jacquard Documentation</title>
         <meta name="robots" content="noindex">
 
 
@@ -121,13 +121,13 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">Loom Documentation</h1>
+                    <h1 class="menu-title">Jacquard Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
-                        <a href="https://github.com/ChipFlow/Loom" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/ChipFlow/Jacquard" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
 
@@ -156,14 +156,14 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="loom-documentation"><a class="header" href="#loom-documentation">Loom Documentation</a></h1>
-<p>Welcome to the documentation for Loom, a GPU-accelerated RTL logic simulator.</p>
+                        <h1 id="jacquard-documentation"><a class="header" href="#jacquard-documentation">Jacquard Documentation</a></h1>
+<p>Welcome to the documentation for Jacquard, a GPU-accelerated RTL logic simulator.</p>
 <p>Use the sidebar to navigate between topics, or start with the <a href="usage.html">Getting Started</a> guide.</p>
 <h2 id="documents"><a class="header" href="#documents">Documents</a></h2>
 <h3 id="core-documentation"><a class="header" href="#core-documentation">Core Documentation</a></h3>
 <ul>
 <li>
-<p><strong><a href="simulation-architecture.html">Simulation Architecture</a></strong>: Detailed explanation of Loom's internal architecture</p>
+<p><strong><a href="simulation-architecture.html">Simulation Architecture</a></strong>: Detailed explanation of Jacquard's internal architecture</p>
 <ul>
 <li>Pipeline stages (NetlistDB → AIG → StagedAIG → Partitions → FlattenedScript → GPU)</li>
 <li>Data structures and representations</li>
@@ -194,7 +194,7 @@
 </ul>
 <h2 id="quick-reference"><a class="header" href="#quick-reference">Quick Reference</a></h2>
 <h3 id="vcd-input-requirements-critical"><a class="header" href="#vcd-input-requirements-critical">VCD Input Requirements (Critical!)</a></h3>
-<p>Loom expects VCD signals at <strong>absolute top-level</strong> (no module hierarchy):</p>
+<p>Jacquard expects VCD signals at <strong>absolute top-level</strong> (no module hierarchy):</p>
 <pre><code class="language-verilog">// ✓ Correct testbench
 initial begin
     $dumpfile("output.vcd");
@@ -209,28 +209,28 @@ end
 </code></pre>
 <h3 id="debug-commands"><a class="header" href="#debug-commands">Debug Commands</a></h3>
 <pre><code class="language-bash"># Enable debug logging
-RUST_LOG=debug cargo run -r --features metal --bin loom -- sim &lt;args&gt;
+RUST_LOG=debug cargo run -r --features metal --bin jacquard -- sim &lt;args&gt;
 
 # Verify with CPU simulation
-cargo run -r --features metal --bin loom -- sim &lt;args&gt; --check-with-cpu
+cargo run -r --features metal --bin jacquard -- sim &lt;args&gt; --check-with-cpu
 
 # Check VCD structure
 grep '\$scope\|\$var' input.vcd | head -20
 </code></pre>
 <h3 id="key-statistics"><a class="header" href="#key-statistics">Key Statistics</a></h3>
-<p>When running Loom, look for these diagnostic outputs:</p>
+<p>When running Jacquard, look for these diagnostic outputs:</p>
 <pre><code>netlist has X pins, Y aig pins, Z and gates        # AIG complexity
 current: N endpoints, try M parts                  # Partition count
 Built script for B blocks, reg/io state size S     # Final script
 WARN (GATESIM_VCDI_MISSING_PI) ...                 # VCD issues!
 </code></pre>
 <h2 id="investigation-methodology"><a class="header" href="#investigation-methodology">Investigation Methodology</a></h2>
-<p>This documentation was created through systematic investigation of Loom's behavior:</p>
+<p>This documentation was created through systematic investigation of Jacquard's behavior:</p>
 <ol>
 <li><strong>Source Code Analysis</strong>: Examined <code>src/aig.rs</code>, <code>src/flatten.rs</code>, <code>src/staging.rs</code></li>
 <li><strong>Debug Tracing</strong>: Used <code>RUST_LOG=debug</code> to capture internal state</li>
 <li><strong>Test Case Development</strong>: Created minimal reproducible examples</li>
-<li><strong>Comparative Testing</strong>: Compared Loom vs iverilog outputs</li>
+<li><strong>Comparative Testing</strong>: Compared Jacquard vs iverilog outputs</li>
 <li><strong>Third-Party Validation</strong>: Tested with real-world examples (sva-playground)</li>
 </ol>
 <h2 id="known-issues-documented"><a class="header" href="#known-issues-documented">Known Issues Documented</a></h2>
@@ -238,7 +238,7 @@ WARN (GATESIM_VCDI_MISSING_PI) ...                 # VCD issues!
 <li>
 <p><strong>VCD Hierarchy Mismatch</strong> (CRITICAL):</p>
 <ul>
-<li>Loom expects flat VCD hierarchy</li>
+<li>Jacquard expects flat VCD hierarchy</li>
 <li>Most testbenches generate hierarchical VCDs</li>
 <li>See troubleshooting-vcd.md for solutions</li>
 </ul>
@@ -296,8 +296,8 @@ Comparison with other simulators (VCS, Verilator, iverilog)</li>
 <hr />
 <p><strong>Last Updated</strong>: 2026-02-16
 <strong>Maintained By</strong>: ChipFlow + Community Contributions</p>
-<div style="break-before: page; page-break-before: always;"></div><h1 id="getting-started-with-loom"><a class="header" href="#getting-started-with-loom">Getting Started with Loom</a></h1>
-<p><strong>Caveats</strong>: Loom currently only supports non-interactive testbenches. This means the input to the circuit needs to be a static waveform (e.g., VCD). Registers and clock gates inside the circuit are allowed, but latches and other asynchronous sequential logics are currently unsupported.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="getting-started-with-jacquard"><a class="header" href="#getting-started-with-jacquard">Getting Started with Jacquard</a></h1>
+<p><strong>Caveats</strong>: Jacquard currently only supports non-interactive testbenches. This means the input to the circuit needs to be a static waveform (e.g., VCD). Registers and clock gates inside the circuit are allowed, but latches and other asynchronous sequential logics are currently unsupported.</p>
 <p><strong>Dataset</strong>: Some (namely, netlists after AIG transformation in Steps 1-2 below, and reference VCDs) input data is available <a href="https://drive.google.com/drive/folders/1M42vFoVZhG4ZjyD1hqYD0Hrw8F1rwNXd?usp=drive_link">here</a> .</p>
 <h2 id="step-0-download-the-aig-process-kit"><a class="header" href="#step-0-download-the-aig-process-kit">Step 0. Download the AIG Process Kit</a></h2>
 <p>Go to <a href="./aigpdk">aigpdk</a> directory where you can download <code>aigpdk.lib</code>, <code>aigpdk_nomem.lib</code>, <code>aigpdk.v</code>, and <code>memlib_yosys.txt</code>. You will need them later in the flow.</p>
@@ -331,7 +331,7 @@ memory_libmap -lib path/to/memlib_yosys.txt -logic-cost-rom 100 -logic-cost-ram 
 <li>If it is indeed asynchronous, check its size. If its size is very small and affordable to be synthesized using registers and mux trees (which is <em>very</em> expensive for large RAM banks), you can remove the <code>$__RAMGEM_ASYNC_</code> block in <code>memlib_yosys.txt</code>, re-run Yosys to force the use of registers.</li>
 </ul>
 </li>
-<li>If you see <code>using FF mapping for memory</code>, it means the memory is recognized, but due to it being nonstandard (e.g., special global reset or nontrivial initialization), Loom will fall back to registers and mux trees. If the size of the memory is small, this is usually not an issue. Otherwise, you are advised to try other implementations.</li>
+<li>If you see <code>using FF mapping for memory</code>, it means the memory is recognized, but due to it being nonstandard (e.g., special global reset or nontrivial initialization), Jacquard will fall back to registers and mux trees. If the size of the memory is small, this is usually not an issue. Otherwise, you are advised to try other implementations.</li>
 </ul>
 <p>After a successful mapping, use the following command to write out the mapped RTL as a single Verilog file.</p>
 <pre><code class="language-tcl">write_verilog memory_mapped.v
@@ -339,7 +339,7 @@ memory_libmap -lib path/to/memlib_yosys.txt -logic-cost-rom 100 -logic-cost-ram 
 <p>Check the correctness of this step by simulating <code>memory_mapped.v</code> with your reference CPU simulator.</p>
 <h2 id="step-2-logic-synthesis"><a class="header" href="#step-2-logic-synthesis">Step 2. Logic Synthesis</a></h2>
 <p>This step maps all combinational and sequential logic into a special set of standard cells we defined in <code>aigpdk.lib</code>.
-The quality of synthesis is directly tied to Loom's final performance, so we suggest you use a commercial synthesis tool like DC. You can also use Yosys to complete this if you do not have access to a commercial synthesis tool.</p>
+The quality of synthesis is directly tied to Jacquard's final performance, so we suggest you use a commercial synthesis tool like DC. You can also use Yosys to complete this if you do not have access to a commercial synthesis tool.</p>
 <p>Check the correctness of this step by simulating <code>gatelevel.gv</code> with your reference CPU simulator.</p>
 <h3 id="use-synopsys-dc"><a class="header" href="#use-synopsys-dc">Use Synopsys DC</a></h3>
 <p>First, you need to compile <code>aigpdk.lib</code> to <code>aigpdk.db</code> using Library Compiler.</p>
@@ -353,7 +353,7 @@ read_file -format db $target_library
 # elaborate TOP_MODULE
 # current_design TOP_MODULE
 
-# timing settings like create_clock ... are recommended. Loom benefits from timing-driven synthesis.
+# timing settings like create_clock ... are recommended. Jacquard benefits from timing-driven synthesis.
 
 compile_ultra -no_seq_output_inversion -no_autoungroup
 optimize_netlist -area
@@ -381,51 +381,51 @@ opt_clean -purge
 # write out
 write_verilog gatelevel.gv
 </code></pre>
-<h2 id="step-3-download-and-compile-loom"><a class="header" href="#step-3-download-and-compile-loom">Step 3. Download and Compile Loom</a></h2>
+<h2 id="step-3-download-and-compile-jacquard"><a class="header" href="#step-3-download-and-compile-jacquard">Step 3. Download and Compile Jacquard</a></h2>
 <p>Download and install the Rust toolchain. This is as simple as a one-liner in your terminal. We recommend <a href="https://rustup.rs/">https://rustup.rs</a>.</p>
-<p>Clone Loom along with its dependencies.</p>
-<pre><code class="language-sh">git clone https://github.com/ChipFlow/Loom.git
-cd Loom
+<p>Clone Jacquard along with its dependencies.</p>
+<pre><code class="language-sh">git clone https://github.com/ChipFlow/Jacquard.git
+cd Jacquard
 git submodule update --init --recursive
 </code></pre>
-<p>Loom supports two GPU backends: <strong>CUDA</strong> (NVIDIA GPUs on Linux) and <strong>Metal</strong> (Apple Silicon Macs).</p>
-<p>All functionality is accessed through the <code>loom</code> CLI, which provides <code>map</code>, <code>sim</code>, and <code>cosim</code> subcommands:</p>
+<p>Jacquard supports two GPU backends: <strong>CUDA</strong> (NVIDIA GPUs on Linux) and <strong>Metal</strong> (Apple Silicon Macs).</p>
+<p>All functionality is accessed through the <code>jacquard</code> CLI, which provides <code>map</code>, <code>sim</code>, and <code>cosim</code> subcommands:</p>
 <pre><code class="language-sh"># Mapping (no GPU features needed)
-cargo run -r --bin loom -- map --help
+cargo run -r --bin jacquard -- map --help
 
 # Simulation (Metal - macOS)
-cargo run -r --features metal --bin loom -- sim --help
+cargo run -r --features metal --bin jacquard -- sim --help
 
 # Simulation (CUDA - Linux, requires CUDA toolkit)
-cargo run -r --features cuda --bin loom -- sim --help
+cargo run -r --features cuda --bin jacquard -- sim --help
 </code></pre>
-<h2 id="map-the-design-with-loom"><a class="header" href="#map-the-design-with-loom">Map the Design with Loom</a></h2>
-<p>Loom compiles and links to <a href="https://github.com/gzz2000/mt-kahypar-sc">mt-kahypar-sc</a> for hypergraph partitioning automatically.</p>
+<h2 id="map-the-design-with-jacquard"><a class="header" href="#map-the-design-with-jacquard">Map the Design with Jacquard</a></h2>
+<p>Jacquard compiles and links to <a href="https://github.com/gzz2000/mt-kahypar-sc">mt-kahypar-sc</a> for hypergraph partitioning automatically.</p>
 <p>Run the following command to start the Boolean processor mapping.</p>
-<pre><code class="language-sh">cargo run -r --bin loom -- map path/to/gatelevel.gv path/to/result.gemparts
+<pre><code class="language-sh">cargo run -r --bin jacquard -- map path/to/gatelevel.gv path/to/result.gemparts
 </code></pre>
 <p>The mapped result will be stored in a binary file <code>result.gemparts</code>.</p>
 <p>If the mapping failed due to failure to partition deep circuits (which often shows as trying to partition a circuit with only 0 or 1 endpoints), try adding a <code>--level-split</code> option to force a stage split. For example <code>--level-split 30</code> or <code>--level-split 20,40</code>. If you used this, remember to add the same <code>--level-split</code> option when you simulate.</p>
 <h2 id="simulate-the-design"><a class="header" href="#simulate-the-design">Simulate the Design</a></h2>
 <h3 id="metal-macos"><a class="header" href="#metal-macos">Metal (macOS)</a></h3>
 <p>Use <code>NUM_BLOCKS=1</code> for Metal.</p>
-<pre><code class="language-sh">cargo run -r --features metal --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1
+<pre><code class="language-sh">cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1
 </code></pre>
 <h3 id="cuda-linux"><a class="header" href="#cuda-linux">CUDA (Linux)</a></h3>
 <p>Replace <code>NUM_BLOCKS</code> with twice the number of physical streaming multiprocessors (SMs) of your GPU.</p>
-<pre><code class="language-sh">cargo run -r --features cuda --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS
+<pre><code class="language-sh">cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS
 </code></pre>
 <h3 id="vcd-scope-handling"><a class="header" href="#vcd-scope-handling">VCD Scope Handling</a></h3>
-<p>Loom automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code>. If auto-detection fails or you need to override it, use:</p>
+<p>Jacquard automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code>. If auto-detection fails or you need to override it, use:</p>
 <pre><code class="language-sh"># Metal
-cargo run -r --features metal --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1 --input-vcd-scope "testbench/dut"
+cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1 --input-vcd-scope "testbench/dut"
 
 # CUDA
-cargo run -r --features cuda --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input-vcd-scope "testbench/dut"
+cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input-vcd-scope "testbench/dut"
 </code></pre>
 <p>Use slash separators (<code>/</code>) for hierarchical paths, not dots. See <a href="troubleshooting-vcd.html">troubleshooting-vcd.md</a> for details.</p>
 <p>The simulated output ports value will be stored in <code>output.vcd</code>.</p>
-<p><strong>Caveat</strong>: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing <code>input.vcd</code>. You are recommended to develop your own pipeline to feed the input waveform into Loom's GPU kernels.</p>
+<p><strong>Caveat</strong>: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing <code>input.vcd</code>. You are recommended to develop your own pipeline to feed the input waveform into Jacquard's GPU kernels.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gem-simulation-architecture"><a class="header" href="#gem-simulation-architecture">GEM Simulation Architecture</a></h1>
 <p>This document describes GEM's internal simulation architecture based on investigation and testing.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
@@ -505,7 +505,7 @@ cargo run -r --features cuda --bin loom -- sim path/to/gatelevel.gv path/to/resu
 </ul>
 <p><strong>Process</strong>:</p>
 <ul>
-<li>Interactive partitioning (<code>loom map</code>)</li>
+<li>Interactive partitioning (<code>jacquard map</code>)</li>
 <li>Tries 1 partition first, then increases if needed</li>
 <li>Merges partitions to minimize inter-partition communication</li>
 </ul>
@@ -611,10 +611,10 @@ $upscope $end
 <h2 id="debug-information"><a class="header" href="#debug-information">Debug Information</a></h2>
 <h3 id="enabling-debug-output"><a class="header" href="#enabling-debug-output">Enabling Debug Output</a></h3>
 <pre><code class="language-bash"># Metal simulation with debug logging
-RUST_LOG=debug cargo run -r --features metal --bin loom -- sim &lt;args&gt;
+RUST_LOG=debug cargo run -r --features metal --bin jacquard -- sim &lt;args&gt;
 
 # CPU verification (slower but validates GPU results)
-cargo run -r --features metal --bin loom -- sim &lt;args&gt; --check-with-cpu
+cargo run -r --features metal --bin jacquard -- sim &lt;args&gt; --check-with-cpu
 </code></pre>
 <h3 id="key-debug-messages"><a class="header" href="#key-debug-messages">Key Debug Messages</a></h3>
 <p><strong>AIG Construction</strong>:</p>
@@ -1111,7 +1111,7 @@ Band 3: 30+ps    → Threads 192-255
 <ol>
 <li><strong>SDF file</strong> with back-annotated delays from your place-and-route tool</li>
 <li><strong>Gate-level netlist</strong> synthesized to <code>aigpdk.lib</code> cells</li>
-<li><strong>Compiled <code>.gemparts</code></strong> file from <code>loom map</code></li>
+<li><strong>Compiled <code>.gemparts</code></strong> file from <code>jacquard map</code></li>
 </ol>
 <h3 id="step-by-step"><a class="header" href="#step-by-step">Step-by-step</a></h3>
 <ol>
@@ -1124,13 +1124,13 @@ ls my_build/6_final.sdf
 <li>
 <p><strong>Run the simulator</strong> with <code>--sdf</code> and a clock period:</p>
 <p><strong>Metal (macOS)</strong>:</p>
-<pre><code class="language-bash">cargo run -r --features metal --bin loom -- sim \
+<pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
     design.gv design.gemparts input.vcd output.vcd 1 \
     --sdf design.sdf \
     --sdf-corner typ
 </code></pre>
 <p><strong>CUDA (NVIDIA)</strong>:</p>
-<pre><code class="language-bash">cargo run -r --features cuda --bin loom -- sim \
+<pre><code class="language-bash">cargo run -r --features cuda --bin jacquard -- sim \
     design.gv design.gemparts input.vcd output.vcd 8 \
     --sdf design.sdf \
     --sdf-corner typ \
@@ -1151,20 +1151,20 @@ ls my_build/6_final.sdf
 <tr><td><code>--sdf &lt;path&gt;</code></td><td>all</td><td>Path to SDF file with back-annotated delays</td></tr>
 <tr><td><code>--sdf-corner &lt;min|typ|max&gt;</code></td><td>all</td><td>Which SDF corner to use (default: <code>typ</code>)</td></tr>
 <tr><td><code>--sdf-debug</code></td><td>all</td><td>Print unmatched SDF instances for debugging</td></tr>
-<tr><td><code>--enable-timing</code></td><td><code>loom sim</code></td><td>Enable timing analysis (arrival + violation checks)</td></tr>
-<tr><td><code>--timing-clock-period &lt;ps&gt;</code></td><td><code>loom sim</code></td><td>Clock period in picoseconds (default: 1000)</td></tr>
-<tr><td><code>--timing-report-violations</code></td><td><code>loom sim</code></td><td>Report all violations, not just summary</td></tr>
-<tr><td><code>--liberty &lt;path&gt;</code></td><td><code>loom sim</code></td><td>Liberty library for timing data (optional, falls back to AIGPDK defaults)</td></tr>
+<tr><td><code>--enable-timing</code></td><td><code>jacquard sim</code></td><td>Enable timing analysis (arrival + violation checks)</td></tr>
+<tr><td><code>--timing-clock-period &lt;ps&gt;</code></td><td><code>jacquard sim</code></td><td>Clock period in picoseconds (default: 1000)</td></tr>
+<tr><td><code>--timing-report-violations</code></td><td><code>jacquard sim</code></td><td>Report all violations, not just summary</td></tr>
+<tr><td><code>--liberty &lt;path&gt;</code></td><td><code>jacquard sim</code></td><td>Liberty library for timing data (optional, falls back to AIGPDK defaults)</td></tr>
 </tbody></table>
 </div>
 <h3 id="example-inv_chain_pnr-test-case"><a class="header" href="#example-inv_chain_pnr-test-case">Example: inv_chain_pnr Test Case</a></h3>
 <pre><code class="language-bash"># Map the design
-cargo run -r --features metal --bin loom -- map \
+cargo run -r --features metal --bin jacquard -- map \
     tests/timing_test/inv_chain_pnr/6_final.v \
     tests/timing_test/inv_chain_pnr/inv_chain.gemparts
 
 # Run with SDF timing
-cargo run -r --features metal --bin loom -- sim \
+cargo run -r --features metal --bin jacquard -- sim \
     tests/timing_test/inv_chain_pnr/6_final.v \
     tests/timing_test/inv_chain_pnr/inv_chain.gemparts \
     tests/timing_test/inv_chain_pnr/input.vcd \
@@ -1256,10 +1256,10 @@ cargo run -r --bin timing_sim_cpu -- design.v input.vcd \
 <p><strong>Violations only on first cycle</strong>: The <code>arrival &gt; 0</code> guard in the GPU kernel skips setup checks when arrival is zero (meaning no data has propagated through combinational logic yet). If you see violations on cycle 0, they are hold violations — setup violations on cycle 0 are suppressed by design.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="adding-a-new-pdk-for-post-layout-simulation"><a class="header" href="#adding-a-new-pdk-for-post-layout-simulation">Adding a New PDK for Post-Layout Simulation</a></h1>
 <p>This guide documents the process of enabling a new process design kit (PDK) for
-gate-level simulation in Loom. It is based on the SKY130 enablement and captures
+gate-level simulation in Jacquard. It is based on the SKY130 enablement and captures
 every integration point.</p>
 <h2 id="overview-2"><a class="header" href="#overview-2">Overview</a></h2>
-<p>Loom natively supports AIGPDK (its own synthesis library of AND gates, DFFs, and
+<p>Jacquard natively supports AIGPDK (its own synthesis library of AND gates, DFFs, and
 SRAMs). Supporting a foundry PDK like SKY130 requires teaching the simulator how
 to interpret the PDK's standard cells: their pin directions, their boolean
 function, and which ones are sequential.</p>
@@ -1282,7 +1282,7 @@ function, and which ones are sequential.</p>
 <h2 id="step-1-library-detection"><a class="header" href="#step-1-library-detection">Step 1: Library Detection</a></h2>
 <p><strong>Reference</strong>: <code>src/sky130.rs</code> -- <code>is_sky130_cell()</code>, <code>detect_library()</code>,
 <code>detect_library_from_file()</code></p>
-<p>Loom scans the netlist to determine which cell library is in use. Each PDK needs
+<p>Jacquard scans the netlist to determine which cell library is in use. Each PDK needs
 a name-matching function:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -1363,7 +1363,7 @@ one output pin at a time.</p>
 <h2 id="step-5-behavioral-model-loading"><a class="header" href="#step-5-behavioral-model-loading">Step 5: Behavioral Model Loading</a></h2>
 <p><strong>Reference</strong>: <code>src/sky130_pdk.rs</code> -- <code>load_pdk_models()</code>, <code>parse_functional_model()</code>,
 <code>parse_udp()</code></p>
-<p>Loom decomposes PDK cells to AIG primitives (AND gates and inversions) by
+<p>Jacquard decomposes PDK cells to AIG primitives (AND gates and inversions) by
 parsing their functional Verilog models. The expected file structure:</p>
 <pre><code>vendor/&lt;pdk&gt;/
   cells/
@@ -1450,7 +1450,7 @@ AND gates into the AIG</li>
 implementations of each phase that handle the new cell types' pin names and
 reset/set conventions.</p>
 <h2 id="step-8-cli-integration"><a class="header" href="#step-8-cli-integration">Step 8: CLI Integration</a></h2>
-<p><strong>Reference</strong>: <code>src/bin/loom.rs</code></p>
+<p><strong>Reference</strong>: <code>src/bin/jacquard.rs</code></p>
 <p>The <code>cmd_map</code> function detects the library and creates the netlist with the
 appropriate pin provider:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -1509,7 +1509,7 @@ flash (this exercises sequential logic, combinational cones, and IO)</li>
 <tr><td><code>src/&lt;pdk&gt;_pdk.rs</code></td><td>Cell classification, model parsing, AIG decomposition</td></tr>
 <tr><td><code>src/aig.rs</code></td><td>AIG builder hooks (dependencies, pre/post-process)</td></tr>
 <tr><td><code>src/sky130.rs</code></td><td>Update <code>CellLibrary</code> enum</td></tr>
-<tr><td><code>src/bin/loom.rs</code></td><td>CLI match arms for new library</td></tr>
+<tr><td><code>src/bin/jacquard.rs</code></td><td>CLI match arms for new library</td></tr>
 <tr><td><code>vendor/&lt;pdk&gt;/</code></td><td>PDK cell models (git submodule)</td></tr>
 </tbody></table>
 </div>
@@ -1551,7 +1551,7 @@ approach prevents misclassification.</p>
 <h2 id="vcd-scope-auto-detection-recommended"><a class="header" href="#vcd-scope-auto-detection-recommended">VCD Scope Auto-Detection (Recommended)</a></h2>
 <p><strong>NEW</strong>: GEM now automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code> manually.</p>
 <h3 id="how-auto-detection-works"><a class="header" href="#how-auto-detection-works">How Auto-Detection Works</a></h3>
-<p>When you run <code>loom sim</code> without specifying <code>--input-vcd-scope</code>, GEM:</p>
+<p>When you run <code>jacquard sim</code> without specifying <code>--input-vcd-scope</code>, GEM:</p>
 <ol>
 <li>Extracts the list of required input ports from your synthesized design</li>
 <li>Searches the VCD file for scopes containing all required ports</li>
@@ -1568,11 +1568,11 @@ INFO Auto-detected VCD scope: safe_tb/uut (matched common pattern 'uut')
 <h3 id="manual-override"><a class="header" href="#manual-override">Manual Override</a></h3>
 <p>If auto-detection fails or selects the wrong scope, use <code>--input-vcd-scope</code> to specify manually:</p>
 <pre><code class="language-bash"># Slash-separated path to the DUT scope
-loom sim design.gv design.gemparts input.vcd output.vcd 8 \
+jacquard sim design.gv design.gemparts input.vcd output.vcd 8 \
     --input-vcd-scope "testbench/dut"
 
 # For nested hierarchies
-loom sim design.gv design.gemparts input.vcd output.vcd 8 \
+jacquard sim design.gv design.gemparts input.vcd output.vcd 8 \
     --input-vcd-scope "top_tb/subsystem/my_module"
 </code></pre>
 <p><strong>Note</strong>: Use slash separators (<code>/</code>), not dots (<code>.</code>).</p>
@@ -1719,7 +1719,7 @@ if __name__ == '__main__':
 </code></pre>
 <h2 id="solution-3-vcd-scope-option-experimental"><a class="header" href="#solution-3-vcd-scope-option-experimental">Solution 3: VCD Scope Option (Experimental)</a></h2>
 <p>GEM provides <code>--input-vcd-scope</code> to specify which module hierarchy to read:</p>
-<pre><code class="language-bash">cargo run -r --features metal --bin loom -- sim \
+<pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
     design.gv parts.gemparts input.vcd output.vcd 48 \
     --input-vcd-scope module_name
 </code></pre>
@@ -1771,7 +1771,7 @@ if __name__ == '__main__':
 <h2 id="validation-steps"><a class="header" href="#validation-steps">Validation Steps</a></h2>
 <p>After fixing VCD issues, validate GEM is reading inputs correctly:</p>
 <h3 id="1-run-with-cpu-verification"><a class="header" href="#1-run-with-cpu-verification">1. Run with CPU Verification</a></h3>
-<pre><code class="language-bash">cargo run -r --features metal --bin loom -- sim \
+<pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
     design.gv parts.gemparts input.vcd output.vcd 48 \
     --check-with-cpu
 </code></pre>
@@ -1789,7 +1789,7 @@ grep '^[01]!' gem_output.vcd
 grep '^[01]!' reference.vcd
 </code></pre>
 <h3 id="3-check-cycle-count"><a class="header" href="#3-check-cycle-count">3. Check Cycle Count</a></h3>
-<pre><code class="language-bash">cargo run -r --features metal --bin loom -- sim \
+<pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
     design.gv parts.gemparts input.vcd output.vcd 48 \
     2&gt;&amp;1 | grep "total number of cycles"
 </code></pre>
@@ -1911,7 +1911,7 @@ grep '\$var' safe_flat.vcd
 <ol>
 <li>
 <p><strong>Enable debug logging</strong>:</p>
-<pre><code class="language-bash">RUST_LOG=debug,vcd_ng=trace cargo run -r --features metal --bin loom -- sim &lt;args&gt; 2&gt;&amp;1 | tee debug.log
+<pre><code class="language-bash">RUST_LOG=debug,vcd_ng=trace cargo run -r --features metal --bin jacquard -- sim &lt;args&gt; 2&gt;&amp;1 | tee debug.log
 </code></pre>
 </li>
 <li>

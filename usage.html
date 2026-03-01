@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Getting Started - Loom Documentation</title>
+        <title>Getting Started - Jacquard Documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -120,13 +120,13 @@
                         </button>
                     </div>
 
-                    <h1 class="menu-title">Loom Documentation</h1>
+                    <h1 class="menu-title">Jacquard Documentation</h1>
 
                     <div class="right-buttons">
                         <a href="print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
-                        <a href="https://github.com/ChipFlow/Loom" title="Git repository" aria-label="Git repository">
+                        <a href="https://github.com/ChipFlow/Jacquard" title="Git repository" aria-label="Git repository">
                             <i id="git-repository-button" class="fa fa-github"></i>
                         </a>
 
@@ -155,8 +155,8 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="getting-started-with-loom"><a class="header" href="#getting-started-with-loom">Getting Started with Loom</a></h1>
-<p><strong>Caveats</strong>: Loom currently only supports non-interactive testbenches. This means the input to the circuit needs to be a static waveform (e.g., VCD). Registers and clock gates inside the circuit are allowed, but latches and other asynchronous sequential logics are currently unsupported.</p>
+                        <h1 id="getting-started-with-jacquard"><a class="header" href="#getting-started-with-jacquard">Getting Started with Jacquard</a></h1>
+<p><strong>Caveats</strong>: Jacquard currently only supports non-interactive testbenches. This means the input to the circuit needs to be a static waveform (e.g., VCD). Registers and clock gates inside the circuit are allowed, but latches and other asynchronous sequential logics are currently unsupported.</p>
 <p><strong>Dataset</strong>: Some (namely, netlists after AIG transformation in Steps 1-2 below, and reference VCDs) input data is available <a href="https://drive.google.com/drive/folders/1M42vFoVZhG4ZjyD1hqYD0Hrw8F1rwNXd?usp=drive_link">here</a> .</p>
 <h2 id="step-0-download-the-aig-process-kit"><a class="header" href="#step-0-download-the-aig-process-kit">Step 0. Download the AIG Process Kit</a></h2>
 <p>Go to <a href="./aigpdk">aigpdk</a> directory where you can download <code>aigpdk.lib</code>, <code>aigpdk_nomem.lib</code>, <code>aigpdk.v</code>, and <code>memlib_yosys.txt</code>. You will need them later in the flow.</p>
@@ -190,7 +190,7 @@ memory_libmap -lib path/to/memlib_yosys.txt -logic-cost-rom 100 -logic-cost-ram 
 <li>If it is indeed asynchronous, check its size. If its size is very small and affordable to be synthesized using registers and mux trees (which is <em>very</em> expensive for large RAM banks), you can remove the <code>$__RAMGEM_ASYNC_</code> block in <code>memlib_yosys.txt</code>, re-run Yosys to force the use of registers.</li>
 </ul>
 </li>
-<li>If you see <code>using FF mapping for memory</code>, it means the memory is recognized, but due to it being nonstandard (e.g., special global reset or nontrivial initialization), Loom will fall back to registers and mux trees. If the size of the memory is small, this is usually not an issue. Otherwise, you are advised to try other implementations.</li>
+<li>If you see <code>using FF mapping for memory</code>, it means the memory is recognized, but due to it being nonstandard (e.g., special global reset or nontrivial initialization), Jacquard will fall back to registers and mux trees. If the size of the memory is small, this is usually not an issue. Otherwise, you are advised to try other implementations.</li>
 </ul>
 <p>After a successful mapping, use the following command to write out the mapped RTL as a single Verilog file.</p>
 <pre><code class="language-tcl">write_verilog memory_mapped.v
@@ -198,7 +198,7 @@ memory_libmap -lib path/to/memlib_yosys.txt -logic-cost-rom 100 -logic-cost-ram 
 <p>Check the correctness of this step by simulating <code>memory_mapped.v</code> with your reference CPU simulator.</p>
 <h2 id="step-2-logic-synthesis"><a class="header" href="#step-2-logic-synthesis">Step 2. Logic Synthesis</a></h2>
 <p>This step maps all combinational and sequential logic into a special set of standard cells we defined in <code>aigpdk.lib</code>.
-The quality of synthesis is directly tied to Loom's final performance, so we suggest you use a commercial synthesis tool like DC. You can also use Yosys to complete this if you do not have access to a commercial synthesis tool.</p>
+The quality of synthesis is directly tied to Jacquard's final performance, so we suggest you use a commercial synthesis tool like DC. You can also use Yosys to complete this if you do not have access to a commercial synthesis tool.</p>
 <p>Check the correctness of this step by simulating <code>gatelevel.gv</code> with your reference CPU simulator.</p>
 <h3 id="use-synopsys-dc"><a class="header" href="#use-synopsys-dc">Use Synopsys DC</a></h3>
 <p>First, you need to compile <code>aigpdk.lib</code> to <code>aigpdk.db</code> using Library Compiler.</p>
@@ -212,7 +212,7 @@ read_file -format db $target_library
 # elaborate TOP_MODULE
 # current_design TOP_MODULE
 
-# timing settings like create_clock ... are recommended. Loom benefits from timing-driven synthesis.
+# timing settings like create_clock ... are recommended. Jacquard benefits from timing-driven synthesis.
 
 compile_ultra -no_seq_output_inversion -no_autoungroup
 optimize_netlist -area
@@ -240,51 +240,51 @@ opt_clean -purge
 # write out
 write_verilog gatelevel.gv
 </code></pre>
-<h2 id="step-3-download-and-compile-loom"><a class="header" href="#step-3-download-and-compile-loom">Step 3. Download and Compile Loom</a></h2>
+<h2 id="step-3-download-and-compile-jacquard"><a class="header" href="#step-3-download-and-compile-jacquard">Step 3. Download and Compile Jacquard</a></h2>
 <p>Download and install the Rust toolchain. This is as simple as a one-liner in your terminal. We recommend <a href="https://rustup.rs/">https://rustup.rs</a>.</p>
-<p>Clone Loom along with its dependencies.</p>
-<pre><code class="language-sh">git clone https://github.com/ChipFlow/Loom.git
-cd Loom
+<p>Clone Jacquard along with its dependencies.</p>
+<pre><code class="language-sh">git clone https://github.com/ChipFlow/Jacquard.git
+cd Jacquard
 git submodule update --init --recursive
 </code></pre>
-<p>Loom supports two GPU backends: <strong>CUDA</strong> (NVIDIA GPUs on Linux) and <strong>Metal</strong> (Apple Silicon Macs).</p>
-<p>All functionality is accessed through the <code>loom</code> CLI, which provides <code>map</code>, <code>sim</code>, and <code>cosim</code> subcommands:</p>
+<p>Jacquard supports two GPU backends: <strong>CUDA</strong> (NVIDIA GPUs on Linux) and <strong>Metal</strong> (Apple Silicon Macs).</p>
+<p>All functionality is accessed through the <code>jacquard</code> CLI, which provides <code>map</code>, <code>sim</code>, and <code>cosim</code> subcommands:</p>
 <pre><code class="language-sh"># Mapping (no GPU features needed)
-cargo run -r --bin loom -- map --help
+cargo run -r --bin jacquard -- map --help
 
 # Simulation (Metal - macOS)
-cargo run -r --features metal --bin loom -- sim --help
+cargo run -r --features metal --bin jacquard -- sim --help
 
 # Simulation (CUDA - Linux, requires CUDA toolkit)
-cargo run -r --features cuda --bin loom -- sim --help
+cargo run -r --features cuda --bin jacquard -- sim --help
 </code></pre>
-<h2 id="map-the-design-with-loom"><a class="header" href="#map-the-design-with-loom">Map the Design with Loom</a></h2>
-<p>Loom compiles and links to <a href="https://github.com/gzz2000/mt-kahypar-sc">mt-kahypar-sc</a> for hypergraph partitioning automatically.</p>
+<h2 id="map-the-design-with-jacquard"><a class="header" href="#map-the-design-with-jacquard">Map the Design with Jacquard</a></h2>
+<p>Jacquard compiles and links to <a href="https://github.com/gzz2000/mt-kahypar-sc">mt-kahypar-sc</a> for hypergraph partitioning automatically.</p>
 <p>Run the following command to start the Boolean processor mapping.</p>
-<pre><code class="language-sh">cargo run -r --bin loom -- map path/to/gatelevel.gv path/to/result.gemparts
+<pre><code class="language-sh">cargo run -r --bin jacquard -- map path/to/gatelevel.gv path/to/result.gemparts
 </code></pre>
 <p>The mapped result will be stored in a binary file <code>result.gemparts</code>.</p>
 <p>If the mapping failed due to failure to partition deep circuits (which often shows as trying to partition a circuit with only 0 or 1 endpoints), try adding a <code>--level-split</code> option to force a stage split. For example <code>--level-split 30</code> or <code>--level-split 20,40</code>. If you used this, remember to add the same <code>--level-split</code> option when you simulate.</p>
 <h2 id="simulate-the-design"><a class="header" href="#simulate-the-design">Simulate the Design</a></h2>
 <h3 id="metal-macos"><a class="header" href="#metal-macos">Metal (macOS)</a></h3>
 <p>Use <code>NUM_BLOCKS=1</code> for Metal.</p>
-<pre><code class="language-sh">cargo run -r --features metal --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1
+<pre><code class="language-sh">cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1
 </code></pre>
 <h3 id="cuda-linux"><a class="header" href="#cuda-linux">CUDA (Linux)</a></h3>
 <p>Replace <code>NUM_BLOCKS</code> with twice the number of physical streaming multiprocessors (SMs) of your GPU.</p>
-<pre><code class="language-sh">cargo run -r --features cuda --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS
+<pre><code class="language-sh">cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS
 </code></pre>
 <h3 id="vcd-scope-handling"><a class="header" href="#vcd-scope-handling">VCD Scope Handling</a></h3>
-<p>Loom automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code>. If auto-detection fails or you need to override it, use:</p>
+<p>Jacquard automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code>. If auto-detection fails or you need to override it, use:</p>
 <pre><code class="language-sh"># Metal
-cargo run -r --features metal --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1 --input-vcd-scope "testbench/dut"
+cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1 --input-vcd-scope "testbench/dut"
 
 # CUDA
-cargo run -r --features cuda --bin loom -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input-vcd-scope "testbench/dut"
+cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input-vcd-scope "testbench/dut"
 </code></pre>
 <p>Use slash separators (<code>/</code>) for hierarchical paths, not dots. See <a href="troubleshooting-vcd.html">troubleshooting-vcd.md</a> for details.</p>
 <p>The simulated output ports value will be stored in <code>output.vcd</code>.</p>
-<p><strong>Caveat</strong>: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing <code>input.vcd</code>. You are recommended to develop your own pipeline to feed the input waveform into Loom's GPU kernels.</p>
+<p><strong>Caveat</strong>: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing <code>input.vcd</code>. You are recommended to develop your own pipeline to feed the input waveform into Jacquard's GPU kernels.</p>
 
                     </main>
 
