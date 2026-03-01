@@ -148,22 +148,17 @@ uv run netlist-graph drivers design.v "dff_name.D" -d 10
 uv run netlist-graph search design.v "dff_out*"
 ```
 
-### 4. Detailed CPU Timing Analysis
+### 4. Detailed Timing Analysis with CVC
 
-For per-signal accuracy (no 32-signal approximation), use `timing_sim_cpu`:
+For per-signal accuracy (no 32-signal approximation), use CVC (open-src-cvc) with SDF back-annotation:
 
 ```bash
-# Generate a watchlist for signals of interest
-cd scripts/netlist_graph
-uv run netlist-graph watchlist design.v watch.json dff_name signal1 signal2
-
-# Run CPU timing simulation with per-signal tracing
-cargo run -r --bin timing_sim_cpu -- design.v input.vcd \
-    --liberty sky130.lib --clock-period 1200 \
-    --watchlist watch.json --trace-output trace.csv
+# Run CVC with SDF timing
+cvc64 +typdelays tb.v design.v
+./cvcsim
 ```
 
-The CSV trace shows per-cycle arrival times for each watched signal, allowing you to pinpoint exactly which path is critical.
+CVC provides event-driven simulation with full SDF support (IOPATH + INTERCONNECT delays), allowing you to pinpoint exactly which path is critical.
 
 ## The Approximation Caveat
 
@@ -176,7 +171,7 @@ GEM tracks **one arrival time per 32-signal group** (one GPU thread position). T
 
 If a violation is reported but you suspect it's a false positive from the approximation:
 
-1. **Use `timing_sim_cpu`** for per-signal accuracy (see [Detailed CPU Timing Analysis](#4-detailed-cpu-timing-analysis) above).
+1. **Use CVC** for per-signal accuracy (see [Detailed Timing Analysis with CVC](#4-detailed-timing-analysis-with-cvc) above).
 2. **Timing-aware bit packing** groups signals with similar arrival times into the same thread, reducing the approximation error. See `docs/timing-simulation.md` § "Timing-Aware Bit Packing" for details.
 
 ## Common Scenarios

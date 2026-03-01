@@ -1,8 +1,7 @@
 // CVC SDF-annotated testbench for inv_chain timing validation.
 //
 // This testbench is designed for CVC (open-src-cvc) and validates timing
-// of the inv_chain design with SDF back-annotation. Results can be compared
-// against Loom's timing_sim_cpu for correctness verification.
+// of the inv_chain design with SDF back-annotation.
 //
 // Run with CVC:
 //   cvc64 +typdelays tb_cvc.v inv_chain.v
@@ -67,7 +66,7 @@ module tb_cvc;
     .Q(Q)
   );
 
-  // VCD output for comparison with timing_sim_cpu
+  // VCD output
   initial begin
     $dumpfile("cvc_inv_chain_output.vcd");
     $dumpvars(0, uut);

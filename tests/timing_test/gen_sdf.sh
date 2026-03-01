@@ -111,9 +111,6 @@ if [ -f "$OUTPUT_SDF" ]; then
         echo "      These require SDF parser escape-stripping for correct matching."
     fi
     echo ""
-    echo "Usage with timing_sim_cpu:"
-    echo "  cargo run -r --bin timing_sim_cpu -- --config tests/timing_test/sim_config.json --sdf $OUTPUT_SDF"
-    echo ""
     echo "Note: This SDF has gate-only timing (no parasitic wire delays)."
     echo "For wire delays, provide a SPEF file from PnR routing."
 else

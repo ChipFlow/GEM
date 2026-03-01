@@ -44,13 +44,10 @@ The defaults in `TimingLibrary::default_sky130()` are approximate.
 
 ## Running
 
-```sh
-# Run with default SKY130 timing values
-cargo run -r --bin timing_sim_cpu -- tests/timing_test/sky130_timing/inv_chain.v \
-    tests/timing_test/sky130_timing/inv_chain.vcd --clock-period 10000
+Use CVC for SDF-annotated timing simulation of these test circuits:
 
-# Run with real Liberty file (if available)
-cargo run -r --bin timing_sim_cpu -- tests/timing_test/sky130_timing/inv_chain.v \
-    tests/timing_test/sky130_timing/inv_chain.vcd --clock-period 10000 \
-    --liberty path/to/sky130_fd_sc_hd__tt_025C_1v80.lib
+```sh
+# Run with CVC (requires open-src-cvc)
+cvc64 +typdelays tb_cvc.v inv_chain.v
+./cvcsim
 ```

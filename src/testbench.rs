@@ -3,7 +3,7 @@
 //! Shared testbench infrastructure for timing and GPU simulation.
 //!
 //! Contains testbench configuration, SPI flash model (FFI), UART decoder,
-//! and watchlist types used by both `timing_sim_cpu` and `gpu_sim`.
+//! and watchlist types used by `gpu_sim`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

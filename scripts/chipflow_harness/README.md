@@ -5,7 +5,7 @@ VCD stimulus generator for ChipFlow post-synthesis simulation using GEM.
 ## Overview
 
 This tool converts ChipFlow's `input.json` test format into VCD waveforms suitable
-for gate-level timing simulation with GEM's `timing_sim_cpu`.
+for gate-level simulation with Loom.
 
 ## Installation
 
@@ -122,8 +122,8 @@ uv run --extra dev pytest tests/ -v
                                              │
                                              ▼
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│ netlist.v   │───►│timing_sim_  │───►│ events.json │
-│ liberty.lib │    │    cpu      │    │             │
+│ netlist.v   │───►│  loom sim   │───►│ events.json │
+│             │    │  / cosim    │    │             │
 └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
