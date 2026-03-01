@@ -709,7 +709,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/cvc/bin
-          key: cvc-binary-v1
+          key: cvc-binary-debug-v2
 
       - name: Build CVC from source
         if: steps.cache-cvc.outputs.cache-hit != 'true'
@@ -718,7 +718,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev
           git clone --depth 1 https://github.com/cambridgehackers/open-src-cvc.git ~/cvc-src
           cd ~/cvc-src/src
-          make -f makefile.cvc64 -j$(nproc)
+          # Build with -O0: CVC has undefined behavior in SDF annotation code that
+          # causes segfaults under -O2 optimization (NULL deref after opening SDF file).
+          make -f makefile.cvc64 -j$(nproc) \
+            OPTFLGS="" \
+            CFLAGS="-Wall -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
           mkdir -p ~/cvc/bin
           cp cvc64 ~/cvc/bin/
 
@@ -731,6 +735,8 @@ jobs:
           echo "=== Running CVC on inv_chain with SDF ==="
           # +typdelays selects typical corner; $sdf_annotate in tb_cvc.v loads the SDF file
           cvc64 +typdelays tb_cvc.v inv_chain.v 2>&1 | tee cvc_compile.log
+          # NOTE: CVC must be built with -O0 (debug build). The -O2 optimized build
+          # triggers undefined behavior in CVC's SDF annotation code, causing a segfault.
           ./cvcsim 2>&1 | tee cvc_output.log
           echo ""
           echo "=== CVC simulation complete ==="
