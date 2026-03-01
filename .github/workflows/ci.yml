@@ -845,7 +845,8 @@ jobs:
         run: |
           uv run tests/mcu_soc/cvc/convert_stimulus.py \
             metal-results/tests/mcu_soc/stimulus.vcd \
-            tests/mcu_soc/cvc/stimulus_gen.v
+            tests/mcu_soc/cvc/stimulus_gen.v \
+            --config metal-results/tests/mcu_soc/sim_config.json
 
       - name: Run CVC simulation
         timeout-minutes: 45
