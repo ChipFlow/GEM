@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Shared simulation infrastructure for GPU simulation binaries.
 //!
-//! This module provides common code used by the `loom sim` and `loom cosim`
+//! This module provides common code used by the `jacquard sim` and `jacquard cosim`
 //! subcommands:
 //!
 //! - [`cpu_reference`] — CPU-side block simulator for validation

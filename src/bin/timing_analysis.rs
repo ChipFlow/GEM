@@ -8,9 +8,9 @@
 //! Usage:
 //!   cargo run -r --bin timing_analysis -- <netlist.gv> [options]
 
-use gem::aig::AIG;
-use gem::aigpdk::AIGPDKLeafPins;
-use gem::liberty_parser::TimingLibrary;
+use jacquard::aig::AIG;
+use jacquard::aigpdk::AIGPDKLeafPins;
+use jacquard::liberty_parser::TimingLibrary;
 use netlistdb::NetlistDB;
 use std::path::PathBuf;
 
@@ -126,7 +126,7 @@ fn main() {
 
 fn print_text_report(
     aig: &AIG,
-    report: &gem::aig::TimingReport,
+    report: &jacquard::aig::TimingReport,
     args: &Args,
     netlistdb: &NetlistDB,
 ) {
@@ -163,12 +163,12 @@ fn print_text_report(
             for (j, (node, arr)) in path.iter().enumerate() {
                 let node_name = find_pin_name(netlistdb, aig, *node);
                 let driver = match &aig.drivers[*node] {
-                    gem::aig::DriverType::AndGate(_, _) => "AND",
-                    gem::aig::DriverType::InputPort(_) => "INPUT",
-                    gem::aig::DriverType::DFF(_) => "DFF_Q",
-                    gem::aig::DriverType::SRAM(_) => "SRAM",
-                    gem::aig::DriverType::InputClockFlag(_, _) => "CLK_FLAG",
-                    gem::aig::DriverType::Tie0 => "TIE0",
+                    jacquard::aig::DriverType::AndGate(_, _) => "AND",
+                    jacquard::aig::DriverType::InputPort(_) => "INPUT",
+                    jacquard::aig::DriverType::DFF(_) => "DFF_Q",
+                    jacquard::aig::DriverType::SRAM(_) => "SRAM",
+                    jacquard::aig::DriverType::InputClockFlag(_, _) => "CLK_FLAG",
+                    jacquard::aig::DriverType::Tie0 => "TIE0",
                 };
                 println!("      [{:3}] {} ({}) @ {} ps", j, node_name, driver, arr);
             }
@@ -212,7 +212,7 @@ fn print_text_report(
     }
 }
 
-fn print_json_report(aig: &AIG, report: &gem::aig::TimingReport, args: &Args) {
+fn print_json_report(aig: &AIG, report: &jacquard::aig::TimingReport, args: &Args) {
     use std::collections::HashMap;
 
     let mut json: HashMap<String, serde_json::Value> = HashMap::new();

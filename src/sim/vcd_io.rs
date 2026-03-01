@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! VCD input/output utilities for simulation.
 //!
-//! Shared VCD I/O utilities for `loom sim`.
+//! Shared VCD I/O utilities for `jacquard sim`.
 
 use compact_str::CompactString;
 use netlistdb::{Direction, GeneralPinName, NetlistDB};

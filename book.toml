@@ -1,8 +1,8 @@
 [book]
-title = "Loom Documentation"
+title = "Jacquard Documentation"
 authors = ["ChipFlow"]
 src = "docs"
 
 [output.html]
 default-theme = "light"
-git-repository-url = "https://github.com/ChipFlow/Loom"
+git-repository-url = "https://github.com/ChipFlow/Jacquard"

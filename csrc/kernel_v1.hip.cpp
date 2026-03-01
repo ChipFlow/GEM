@@ -24,7 +24,7 @@ static void validate_warp_size() {
   int warp_size = 0;
   hipDeviceGetAttribute(&warp_size, hipDeviceAttributeWarpSize, 0);
   if (warp_size != 32) {
-    printf("ERROR: Loom requires warpSize==32 (RDNA), but this GPU reports %d.\n"
+    printf("ERROR: Jacquard requires warpSize==32 (RDNA), but this GPU reports %d.\n"
            "CDNA / GCN GPUs (wave64) are not supported.\n", warp_size);
     exit(EXIT_FAILURE);
   }

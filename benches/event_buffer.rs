@@ -3,7 +3,7 @@
 //! Benchmarks for event buffer processing.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use gem::event_buffer::{
+use jacquard::event_buffer::{
     process_events, AssertAction, AssertConfig, Event, EventBuffer, EventType, SimStats,
 };
 use std::sync::atomic::Ordering;
