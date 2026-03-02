@@ -124,15 +124,49 @@ uv run tests/mcu_soc/cvc/compare_outputs.py \
 - Arrival times: Loom values ≥ CVC due to conservative path accumulation
 - CI: Comparison completes without errors
 
-### Pre-layout Library Timing (Future)
+### Pre-layout Library Timing
 
-**Location**: TBD
+**Location**: `tests/timing_test/sky130_timing/`
 
-**Description**: Synthesized design with Liberty timing, no SDF (gate delays from `.lib` file).
+**Description**: Synthesized designs with Library-only timing (no SDF from P&R). Pre-layout tests validate timing accuracy early, before place-and-route.
 
-**Purpose**: Validate timing model on designs before place-and-route.
+**Test circuits**:
+1. **inv_chain**: DFF → 16 inverters → DFF
+   - Expected combo delay: 16 × 28ps = 448ps (from Liberty inv_1 tpd)
+   - Full path: CLK→Q (310ps) + chain (448ps) = 758ps
 
-**Status**: Not yet implemented (Goal step 5)
+2. **logic_cone**: 4 input DFFs → nand2/nor2/and2 tree → DFF
+   - Critical path: 4 gates × 35ps avg = 140ps
+   - Full path: CLK→Q (310ps) + logic (140ps) = 450ps
+
+**Validation**:
+
+```bash
+# Generate Liberty-only SDF
+cd tests/timing_test/sky130_timing
+python3 gen_liberty_sdf.py inv_chain.v
+python3 gen_liberty_sdf.py logic_cone.v
+
+# Run CVC reference
+cvc64 +typdelays tb_inv_chain.v inv_chain.v 2>&1 | tee cvc.log
+./cvcsim
+
+# Run Loom GPU simulation
+cargo run -r --features metal --bin jacquard -- sim \
+    inv_chain.v stimulus.vcd loom_output.vcd 1 \
+    --sdf inv_chain.sdf \
+    --timing-vcd
+
+# Compare outputs
+uv run ../../mcu_soc/cvc/compare_outputs.py loom_output.vcd cvc_output.vcd
+```
+
+**Expected results**:
+- Functional output: Exact match (logic correctness)
+- Arrival times: Loom ≥ CVC (conservative accumulation expected)
+- No SDF parsing errors or malformed delays
+
+**Purpose**: Pre-layout tests catch timing issues early without P&R turnaround (30+ min). Library-only delays provide floor (lower bound); post-layout adds routing parasitics for final validation.
 
 ## CI Integration
 
@@ -166,6 +200,30 @@ SDF files from post-P&R tools may contain:
 - CELL blocks with escaped $ in instance names
 
 **Result**: Stripped SDF retains ~402k lines of useful IOPATH (gate delay) data, removing ~131k problematic lines.
+
+## Comparison Tolerances
+
+### Pre-Layout (Liberty-Only) Tests
+
+Pre-layout tests compare designs without P&R parasitics, using only library cell timing:
+
+| Metric | Tolerance | Notes |
+|--------|-----------|-------|
+| Functional output | 0 (exact match) | Logic correctness required |
+| Arrival time | ±10% | Library delays only; no routing variance |
+| Setup/hold slack | ±10ps | Rounding differences expected |
+
+**Why loose tolerances?** Pre-layout designs have no P&R uncertainty. Functional correctness is critical (exact match); timing metrics can vary due to simulator implementation differences.
+
+### Post-Layout (SDF-Annotated) Tests
+
+Post-layout designs include routing delays and P&R context:
+
+| Metric | Tolerance | Notes |
+|--------|-----------|-------|
+| Functional output | 0 (exact match) | Required; SDF adds no logic changes |
+| Arrival time | ±5% (SDF tool dependent) | GEM accumulates conservatively |
+| Setup/hold slack | ±20ps | Detailed routing adds variance |
 
 ## Known Issues & Limitations
 
@@ -242,8 +300,11 @@ SDF files from post-P&R tools may contain:
 | MCU SoC | Functional output exact match | ✅ Passing (CI) |
 | MCU SoC | SDF parsing completes without panic | ✅ Passing (fixed with strip_sdf_checks) |
 | MCU SoC | Timing VCD generates successfully | ✅ Passing (fixed) |
-| Pre-layout Liberty timing | N/A | ⏳ Not yet implemented |
-| Icarus Verilog comparison | N/A | ⏳ Not yet implemented |
+| Pre-layout inv_chain | Library-only SDF generated correctly | ✅ Passing |
+| Pre-layout logic_cone | Library-only SDF generated correctly | ✅ Passing |
+| Pre-layout timing comparison | Functional output matches CVC | ⏳ In progress (CVC testbenches added) |
+| CUDA/HIP timing support | --timing-vcd flag on GPU backends | ⏳ Not yet implemented |
+| Cosim timing mode | Arrival time readback in cosim | ⏳ Not yet implemented |
 
 ## References
 
