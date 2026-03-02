@@ -922,6 +922,8 @@ jobs:
           uv run tests/mcu_soc/cvc/compare_outputs.py \
             "$LOOM_VCD" "$CVC_VCD" \
             --skip-cycles 5 \
+            --num-cycles 10000 \
+            --config metal-results/tests/mcu_soc/sim_config.json \
             2>&1 | tee mcu_comparison.txt
 
       - name: Report
