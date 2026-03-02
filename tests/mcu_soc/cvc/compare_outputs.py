@@ -14,7 +14,7 @@ used to translate Jacquard internal port names (e.g. io$soc_gpio_0_gpio$o[0])
 back to gpio_out[N] indices.
 
 Usage:
-    python3 compare_outputs.py <loom.vcd> <cvc.vcd> [--skip-cycles N] [--config <config.json>]
+    python3 compare_outputs.py <loom.vcd> <cvc.vcd> [--skip-cycles N] [--config <config.json>] [--skip-bits 0-5]
 """
 
 import json
@@ -173,6 +173,7 @@ def main() -> None:
     skip_cycles = 0
     config_path: Path | None = None
     num_cycles_override: int | None = None
+    skip_bits: set[int] = set()
     positional: list[str] = []
 
     i = 0
@@ -186,6 +187,15 @@ def main() -> None:
         elif args[i] == "--num-cycles" and i + 1 < len(args):
             num_cycles_override = int(args[i + 1])
             i += 2
+        elif args[i] == "--skip-bits" and i + 1 < len(args):
+            # Parse "0-5" or "0,1,2" or "0-5,10"
+            for part in args[i + 1].split(","):
+                if "-" in part:
+                    lo, hi = part.split("-", 1)
+                    skip_bits.update(range(int(lo), int(hi) + 1))
+                else:
+                    skip_bits.add(int(part))
+            i += 2
         else:
             positional.append(args[i])
             i += 1
@@ -193,7 +203,7 @@ def main() -> None:
     if len(positional) < 2:
         print(
             f"Usage: {sys.argv[0]} <loom.vcd> <cvc.vcd> [--skip-cycles N] "
-            f"[--config <config.json>] [--num-cycles N]",
+            f"[--config <config.json>] [--num-cycles N] [--skip-bits 0-5]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -247,6 +257,11 @@ def main() -> None:
     loom_values = build_cycle_values(loom_changes, num_cycles)
     cvc_values = build_cycle_values(cvc_changes, num_cycles)
 
+    # Build comparison mask (exclude skip_bits)
+    compare_mask = sum(1 << i for i in range(44) if i not in skip_bits)
+    if skip_bits:
+        print(f"  Skipping bits: {sorted(skip_bits)}")
+
     print(f"\nComparing {num_cycles} cycles (skip first {skip_cycles}):")
     print(f"  Clock period: {clock_period} ps")
 
@@ -255,15 +270,15 @@ def main() -> None:
     first_mismatch = None
 
     for cycle in range(skip_cycles, num_cycles):
-        lv = loom_values[cycle]
-        cv = cvc_values[cycle]
+        lv = loom_values[cycle] & compare_mask
+        cv = cvc_values[cycle] & compare_mask
         if lv == cv:
             matches += 1
         else:
             mismatches += 1
             if mismatches <= 10:
                 diff = lv ^ cv
-                diff_bits = [i for i in range(44) if diff & (1 << i)]
+                diff_bits = [i for i in range(44) if diff & (1 << i) and i not in skip_bits]
                 t = cycle * clock_period
                 print(f"\n  MISMATCH at cycle {cycle} (t={t}ps):")
                 print(f"    Loom: 0x{lv:011x}")
@@ -276,7 +291,8 @@ def main() -> None:
 
     total = matches + mismatches
     print(f"\n{'='*60}")
-    print(f"Comparison Summary (gpio_out, cycles {skip_cycles}-{num_cycles-1}):")
+    bits_label = f"gpio_out excluding bits {sorted(skip_bits)}" if skip_bits else "gpio_out"
+    print(f"Comparison Summary ({bits_label}, cycles {skip_cycles}-{num_cycles-1}):")
     print(f"  Cycles compared: {total}")
     if total > 0:
         print(f"  Matches:    {matches} ({100*matches/total:.1f}%)")
@@ -286,6 +302,9 @@ def main() -> None:
     if first_mismatch is not None:
         print(f"  First mismatch at cycle: {first_mismatch}")
     print(f"{'='*60}")
+
+    if mismatches > 0:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

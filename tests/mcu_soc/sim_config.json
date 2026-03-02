@@ -3,14 +3,14 @@
     "reset_gpio": 40,
     "reset_active_high": false,
     "reset_cycles": 10,
-    "num_cycles": 500000,
+    "num_cycles": 100000,
     "clock_period_ps": 40000,
-    "netlist_path": "tests/mcu_soc/build/top_synth.v",
+    "netlist_path": "tests/mcu_soc/data/6_final.v",
     "flash": {
         "clk_gpio": 0,
         "csn_gpio": 1,
         "d0_gpio": 2,
-        "firmware": "tests/mcu_soc/build/software.bin",
+        "firmware": "designs/mcu_soc_sky130/build/software/software.bin",
         "firmware_offset": 1048576
     },
     "uart": {
@@ -18,28 +18,48 @@
         "rx_gpio": 26,
         "baud_rate": 115200
     },
-    "constant_inputs": {
-        "41": 1
-    },
     "port_mapping": {
         "inputs": {
             "38": "io$clk$i",
             "40": "io$rst_n$i",
-            "41": "io$soc_cpu_jtag_trst$i",
+            "7": "io$soc_cpu_jtag_tck$i",
+            "9": "io$soc_cpu_jtag_tdi$i",
+            "8": "io$soc_cpu_jtag_tms$i",
+            "6": "io$soc_cpu_jtag_trst$i",
             "2": "io$soc_flash_d$i[0]",
             "3": "io$soc_flash_d$i[1]",
             "4": "io$soc_flash_d$i[2]",
             "5": "io$soc_flash_d$i[3]",
+            "27": "io$soc_gpio_0_gpio$i[0]",
+            "28": "io$soc_gpio_0_gpio$i[1]",
+            "29": "io$soc_gpio_0_gpio$i[2]",
+            "30": "io$soc_gpio_0_gpio$i[3]",
+            "31": "io$soc_gpio_0_gpio$i[4]",
+            "32": "io$soc_gpio_0_gpio$i[5]",
+            "33": "io$soc_gpio_0_gpio$i[6]",
+            "34": "io$soc_gpio_0_gpio$i[7]",
             "26": "io$soc_uart_0_rx$i"
         },
         "outputs": {
+            "10": "io$soc_cpu_jtag_tdo$o",
             "0": "io$soc_flash_clk$o",
             "1": "io$soc_flash_csn$o",
             "2": "io$soc_flash_d$o[0]",
             "3": "io$soc_flash_d$o[1]",
             "4": "io$soc_flash_d$o[2]",
             "5": "io$soc_flash_d$o[3]",
+            "27": "io$soc_gpio_0_gpio$o[0]",
+            "28": "io$soc_gpio_0_gpio$o[1]",
+            "29": "io$soc_gpio_0_gpio$o[2]",
+            "30": "io$soc_gpio_0_gpio$o[3]",
+            "31": "io$soc_gpio_0_gpio$o[4]",
+            "32": "io$soc_gpio_0_gpio$o[5]",
+            "33": "io$soc_gpio_0_gpio$o[6]",
+            "34": "io$soc_gpio_0_gpio$o[7]",
             "25": "io$soc_uart_0_tx$o"
         }
+    },
+    "constant_inputs": {
+        "6": 1
     }
 }

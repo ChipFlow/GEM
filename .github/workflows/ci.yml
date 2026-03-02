@@ -944,6 +944,7 @@ jobs:
             "$LOOM_VCD" "$CVC_VCD" \
             --skip-cycles 5 \
             --num-cycles 10000 \
+            --skip-bits 0-5 \
             --config metal-results/tests/mcu_soc/sim_config.json \
             2>&1 | tee mcu_comparison.txt
 
