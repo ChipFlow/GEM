@@ -529,6 +529,19 @@ jobs:
             --stimulus-vcd tests/mcu_soc/stimulus.vcd \
             2>&1 | tee cosim_stimulus.txt
 
+      - name: Replay stimulus (non-timed, for CVC comparison)
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          cargo run --release --features metal --bin jacquard -- sim \
+            tests/mcu_soc/data/6_final.v \
+            tests/mcu_soc/stimulus.vcd \
+            tests/mcu_soc/loom_replay_mcu.vcd \
+            1 \
+            --top-module top \
+            --max-cycles 10000 \
+            2>&1 | tee metal_mcu_replay.txt
+
       - name: Strip SDF timing checks for GPU simulation
         run: |
           # Remove TIMINGCHECK directives from SDF (timing checks can cause parser errors)
@@ -536,7 +549,7 @@ jobs:
             tests/mcu_soc/data/6_final.sdf \
             tests/mcu_soc/data/6_final_stripped.sdf
 
-      - name: Replay with timing VCD
+      - name: Replay with timing VCD (experimental)
         timeout-minutes: 15
         continue-on-error: true
         run: |
@@ -561,8 +574,14 @@ jobs:
             echo "\`\`\`"
             tail -20 cosim_output.txt
             echo "\`\`\`"
+            if [ -f metal_mcu_replay.txt ]; then
+              echo "## MCU SoC Non-timed Replay"
+              echo "\`\`\`"
+              tail -20 metal_mcu_replay.txt
+              echo "\`\`\`"
+            fi
             if [ -f metal_mcu_timed.txt ]; then
-              echo "## MCU SoC Timing VCD Replay"
+              echo "## MCU SoC Timing VCD Replay (experimental)"
               echo "\`\`\`"
               tail -20 metal_mcu_timed.txt
               echo "\`\`\`"
@@ -577,9 +596,11 @@ jobs:
           path: |
             cosim_output.txt
             cosim_stimulus.txt
+            metal_mcu_replay.txt
             metal_mcu_timed.txt
             tests/mcu_soc/sim_config.json
             tests/mcu_soc/stimulus.vcd
+            tests/mcu_soc/loom_replay_mcu.vcd
             tests/mcu_soc/loom_timed_mcu.vcd
 
   # Build documentation (cargo doc + mdbook) and deploy to GitHub Pages
@@ -884,9 +905,9 @@ jobs:
             tests/mcu_soc/cvc/cvc_sim.log
             tests/mcu_soc/cvc/cvc_output.vcd
 
-  # Compare MCU SoC timing results between CVC and Loom
+  # Compare MCU SoC results between CVC (event-driven) and Loom (GPU)
   mcu-soc-comparison:
-    name: MCU SoC Timing Comparison
+    name: MCU SoC Functional Comparison
     runs-on: ubuntu-latest
     needs: [mcu-soc-metal, mcu-soc-cvc]
     if: always() && needs.mcu-soc-metal.result == 'success' && needs.mcu-soc-cvc.result == 'success'
@@ -907,12 +928,12 @@ jobs:
           name: mcu-soc-cvc-results
           path: cvc-results/
 
-      - name: Compare outputs
+      - name: Compare outputs (non-timed Loom vs CVC)
         run: |
-          LOOM_VCD="metal-results/tests/mcu_soc/loom_timed_mcu.vcd"
+          LOOM_VCD="metal-results/tests/mcu_soc/loom_replay_mcu.vcd"
           CVC_VCD="cvc-results/cvc_output.vcd"
           if [ ! -f "$LOOM_VCD" ]; then
-            echo "SKIP: Loom timed VCD not found (timing replay may have failed)" | tee mcu_comparison.txt
+            echo "SKIP: Loom replay VCD not found" | tee mcu_comparison.txt
             exit 0
           fi
           if [ ! -f "$CVC_VCD" ]; then
@@ -930,7 +951,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## MCU SoC Timing Comparison (CVC vs Loom)"
+            echo "## MCU SoC Functional Comparison (CVC vs Loom)"
             echo ""
             echo "\`\`\`"
             cat mcu_comparison.txt 2>/dev/null || echo "No comparison output"
