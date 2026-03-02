@@ -1,0 +1,125 @@
+(SDFVERSION "3.0")
+(DESIGN "logic_cone")
+(DATE "logic_cone pre-layout Liberty-only SDF")
+(VENDOR "Loom")
+(PROGRAM "gen_liberty_sdf.py")
+(VERSION "1.0")
+(HIERARCHY "logic_cone")
+(TIMESCALE 1ps)
+
+(SDFDATA
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__and2_1")
+    (INSTANCE g3)
+    (DELAY
+      (IOPATH A X (40 40))
+      (IOPATH B X (40 40))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_a)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_b)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_c)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_d)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_out)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE g5)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__nand2_1")
+    (INSTANCE g1)
+    (DELAY
+      (IOPATH A Y (35 35))
+      (IOPATH B Y (35 35))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__nand2_1")
+    (INSTANCE g4)
+    (DELAY
+      (IOPATH A Y (35 35))
+      (IOPATH B Y (35 35))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__nor2_1")
+    (INSTANCE g2)
+    (DELAY
+      (IOPATH A Y (38 38))
+      (IOPATH B Y (38 38))
+    )
+  )
+
+)
