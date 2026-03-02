@@ -910,7 +910,7 @@ jobs:
       - name: Compare outputs
         run: |
           LOOM_VCD="metal-results/tests/mcu_soc/loom_timed_mcu.vcd"
-          CVC_VCD="cvc-results/tests/mcu_soc/cvc/cvc_output.vcd"
+          CVC_VCD="cvc-results/cvc_output.vcd"
           if [ ! -f "$LOOM_VCD" ]; then
             echo "SKIP: Loom timed VCD not found (timing replay may have failed)" | tee mcu_comparison.txt
             exit 0
