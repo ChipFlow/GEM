@@ -607,16 +607,29 @@ impl<'a> SdfParser<'a> {
         })
     }
 
-    /// Read a pin spec, which may be a simple name or (posedge/negedge NAME).
+    /// Read a pin spec, which may be:
+    /// - A simple name: `D`
+    /// - Edge-qualified: `(posedge CLK)` or `(negedge CLK)`
+    /// - Conditional: `(COND condition PIN)`
+    /// - Conditional with edge: `(COND condition (posedge PIN))`
     fn read_pin_spec(&mut self) -> Result<String, SdfParseError> {
         match self.tokenizer.peek_token() {
             Some(Token::LParen) => {
-                // Edge-qualified pin: (posedge CLK)
                 self.tokenizer.next_token();
-                let _edge = self.read_str()?; // posedge/negedge
-                let pin = self.read_str()?;
-                self.expect_rparen()?;
-                Ok(pin)
+                let first = self.read_str()?;
+                if first.eq_ignore_ascii_case("COND") {
+                    // (COND condition PIN) or (COND condition (posedge PIN))
+                    let _condition = self.read_str()?;
+                    // The pin may itself be edge-qualified
+                    let pin = self.read_pin_spec()?;
+                    self.expect_rparen()?;
+                    Ok(pin)
+                } else {
+                    // (posedge CLK) or (negedge CLK)
+                    let pin = self.read_str()?;
+                    self.expect_rparen()?;
+                    Ok(pin)
+                }
             }
             _ => self.read_str(),
         }
@@ -630,6 +643,11 @@ impl<'a> SdfParser<'a> {
         match self.tokenizer.peek_token() {
             Some(Token::LParen) => {
                 self.tokenizer.next_token();
+                // Empty parens `()` represent undefined/unspecified delay
+                if matches!(self.tokenizer.peek_token(), Some(Token::RParen)) {
+                    self.tokenizer.next_token();
+                    return Ok(0);
+                }
                 let triple_str = self.read_str()?;
                 self.expect_rparen()?;
                 self.parse_triple(&triple_str, timescale_ps)
@@ -714,15 +732,22 @@ impl<'a> SdfParser<'a> {
                     self.tokenizer.next_token();
                     let keyword = self.read_str()?;
                     match keyword.to_uppercase().as_str() {
-                        "SETUP" => {
-                            let check = self
-                                .parse_timing_check_entry(TimingCheckType::Setup, timescale_ps)?;
-                            checks.push(check);
-                        }
-                        "HOLD" => {
-                            let check =
-                                self.parse_timing_check_entry(TimingCheckType::Hold, timescale_ps)?;
-                            checks.push(check);
+                        "SETUP" | "HOLD" => {
+                            let ct = if keyword.eq_ignore_ascii_case("SETUP") {
+                                TimingCheckType::Setup
+                            } else {
+                                TimingCheckType::Hold
+                            };
+                            // Save position so we can rewind and skip on parse failure
+                            // (handles exotic pin spec formats we don't support yet)
+                            let saved_pos = self.tokenizer.pos;
+                            match self.parse_timing_check_entry(ct, timescale_ps) {
+                                Ok(check) => checks.push(check),
+                                Err(_) => {
+                                    self.tokenizer.pos = saved_pos;
+                                    self.skip_balanced()?;
+                                }
+                            }
                         }
                         _ => {
                             self.skip_balanced()?;
@@ -984,6 +1009,81 @@ mod tests {
         assert_eq!(setups.len(), 2);
         assert_eq!(setups[0].data_pin, "D");
         assert_eq!(setups[0].clock_edge, "CLK");
+    }
+
+    #[test]
+    fn test_empty_delay_parens() {
+        // Some SDF files use empty `()` for undefined delays
+        // e.g., (IOPATH RESET_B Q () (0.000:0.000:0.000))
+        let sdf = r#"(DELAYFILE
+            (SDFVERSION "3.0")
+            (DESIGN "test")
+            (TIMESCALE 1ps)
+            (CELL (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+                (INSTANCE dff0)
+                (DELAY (ABSOLUTE
+                    (IOPATH RESET_B Q () (100:200:300))
+                ))
+            )
+        )"#;
+        let parsed = SdfFile::parse_str(sdf, SdfCorner::Typ).unwrap();
+        let cell = parsed.get_cell("dff0").unwrap();
+        assert_eq!(cell.iopaths.len(), 1);
+        assert_eq!(cell.iopaths[0].delay.rise_ps, 0); // empty () = 0
+        assert_eq!(cell.iopaths[0].delay.fall_ps, 200); // typ of 100:200:300
+    }
+
+    #[test]
+    fn test_cond_pin_spec_timingcheck() {
+        // SRAM cells can have (COND condition PIN) format in timing checks:
+        // (SETUP (COND notifier_en_a A[0]) (posedge CLK) (0.100))
+        let sdf = r#"(DELAYFILE
+            (SDFVERSION "3.0")
+            (DESIGN "test")
+            (TIMESCALE 1ns)
+            (CELL (CELLTYPE "cf_sram_cell")
+                (INSTANCE sram0)
+                (TIMINGCHECK
+                    (SETUP (COND notifier_en_a A[0]) (posedge CLK) (0.100::0.100))
+                    (HOLD (COND notifier_en_a A[0]) (posedge CLK) (-0.050::-0.050))
+                    (SETUP (COND notifier_en_a TM) (posedge CLK) (0.200::0.200))
+                )
+            )
+        )"#;
+        let parsed = SdfFile::parse_str(sdf, SdfCorner::Typ).unwrap();
+        let cell = parsed.get_cell("sram0").unwrap();
+        assert_eq!(cell.timing_checks.len(), 3);
+        // COND wrapper is stripped, pin name extracted
+        assert_eq!(cell.timing_checks[0].data_pin, "A[0]");
+        assert_eq!(cell.timing_checks[0].clock_edge, "CLK");
+        assert_eq!(cell.timing_checks[2].data_pin, "TM");
+    }
+
+    #[test]
+    fn test_unparseable_timingcheck_skipped() {
+        // Exotic formats that we don't fully support should be skipped
+        // rather than causing a parse failure
+        let sdf = r#"(DELAYFILE
+            (SDFVERSION "3.0")
+            (DESIGN "test")
+            (TIMESCALE 1ns)
+            (CELL (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+                (INSTANCE dff0)
+                (DELAY (ABSOLUTE
+                    (IOPATH CLK Q (0.100:0.200:0.300) (0.100:0.200:0.300))
+                ))
+                (TIMINGCHECK
+                    (SETUP D (posedge CLK) (0.050::0.050))
+                    (REMOVAL D (posedge CLK) (0.030::0.030))
+                    (HOLD D (posedge CLK) (-0.030::-0.030))
+                )
+            )
+        )"#;
+        let parsed = SdfFile::parse_str(sdf, SdfCorner::Typ).unwrap();
+        let cell = parsed.get_cell("dff0").unwrap();
+        // SETUP and HOLD parsed, REMOVAL skipped
+        assert_eq!(cell.timing_checks.len(), 2);
+        assert_eq!(cell.iopaths.len(), 1);
     }
 
     #[test]

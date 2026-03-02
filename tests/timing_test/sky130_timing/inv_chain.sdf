@@ -1,0 +1,167 @@
+(SDFVERSION "3.0")
+(DESIGN "inv_chain")
+(DATE "inv_chain pre-layout Liberty-only SDF")
+(VENDOR "Loom")
+(PROGRAM "gen_liberty_sdf.py")
+(VERSION "1.0")
+(HIERARCHY "inv_chain")
+(TIMESCALE 1ps)
+
+(SDFDATA
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_in)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__dfxtp_1")
+    (INSTANCE dff_out)
+    (TIMINGCHECK
+      (SETUP DATA (POSEDGE CLK) (80 80))
+    )
+    (TIMINGCHECK
+      (HOLD DATA (POSEDGE CLK) (-40 -40))
+    )
+    (DELAY
+      (IOPATH CLK Q (310 310))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i0)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i1)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i2)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i3)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i4)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i5)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i6)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i7)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i8)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i9)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i10)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i11)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i12)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i13)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i14)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+  (CELL
+    (CELLTYPE "sky130_fd_sc_hd__inv_1")
+    (INSTANCE i15)
+    (DELAY
+      (IOPATH A Y (28 28))
+    )
+  )
+
+)

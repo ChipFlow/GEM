@@ -253,7 +253,7 @@ reset/set conventions.
 
 **Reference**: `src/bin/jacquard.rs`
 
-The `cmd_map` function detects the library and creates the netlist with the
+The `load_design` function detects the library and creates the netlist with the
 appropriate pin provider:
 
 ```rust

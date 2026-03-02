@@ -90,7 +90,6 @@ jobs:
           # Capture timing output
           time (cargo run --release --features metal --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test.gemparts \
             tests/timing_test/dff_test.vcd \
             tests/timing_test/ci_output.vcd \
             1) 2>&1 | tee metal_timing.txt
@@ -124,13 +123,8 @@ jobs:
 
       - name: Run Metal simulation with X-propagation
         run: |
-          cargo run --release --features metal --bin jacquard -- map \
-            tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test_xprop.gemparts \
-            --xprop
           cargo run --release --features metal --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test_xprop.gemparts \
             tests/timing_test/dff_test.vcd \
             tests/timing_test/ci_xprop_output.vcd \
             1 --xprop 2>&1 | tee metal_xprop.txt
@@ -144,6 +138,18 @@ jobs:
             echo "WARNING: No X values in xprop output VCD"
           fi
 
+      - name: Run Metal simulation with timing VCD (inv_chain_pnr)
+        run: |
+          cargo run --release --features metal --bin jacquard -- sim \
+            tests/timing_test/inv_chain_pnr/inv_chain.v \
+            tests/timing_test/inv_chain_pnr/inv_chain_stimulus.vcd \
+            tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
+            1 \
+            --sdf tests/timing_test/inv_chain_pnr/inv_chain_test_ps.sdf \
+            --sdf-corner typ \
+            --timing-vcd \
+            2>&1 | tee metal_timed.txt
+
       - name: Upload VCD artifacts
         uses: actions/upload-artifact@v4
         if: always()
@@ -152,8 +158,10 @@ jobs:
           path: |
             tests/timing_test/ci_output.vcd
             tests/timing_test/ci_xprop_output.vcd
+            tests/timing_test/inv_chain_pnr/loom_timed_output.vcd
             metal_timing.txt
             metal_xprop.txt
+            metal_timed.txt
             perf_metrics/
 
   # Build and run CUDA simulation on NVIDIA GPU
@@ -199,7 +207,6 @@ jobs:
         run: |
           time (cargo run --release --features cuda --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test.gemparts \
             tests/timing_test/dff_test.vcd \
             tests/timing_test/ci_cuda_output.vcd \
             1) 2>&1 | tee cuda_timing.txt
@@ -215,13 +222,8 @@ jobs:
 
       - name: Run CUDA simulation with X-propagation
         run: |
-          cargo run --release --features cuda --bin jacquard -- map \
-            tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test_xprop.gemparts \
-            --xprop
           cargo run --release --features cuda --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test_xprop.gemparts \
             tests/timing_test/dff_test.vcd \
             tests/timing_test/ci_cuda_xprop_output.vcd \
             1 --xprop 2>&1 | tee cuda_xprop.txt
@@ -323,7 +325,6 @@ jobs:
         run: |
           time (cargo run --release --features hip --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test.gemparts \
             tests/timing_test/dff_test.vcd \
             tests/timing_test/ci_hip_output.vcd \
             1) 2>&1 | tee hip_timing.txt
@@ -339,13 +340,8 @@ jobs:
 
       - name: Run HIP simulation with X-propagation
         run: |
-          cargo run --release --features hip --bin jacquard -- map \
-            tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test_xprop.gemparts \
-            --xprop
           cargo run --release --features hip --bin jacquard -- sim \
             tests/timing_test/dff_test_synth.gv \
-            tests/timing_test/dff_test_xprop.gemparts \
             tests/timing_test/dff_test.vcd \
             tests/timing_test/ci_hip_xprop_output.vcd \
             1 --xprop 2>&1 | tee hip_xprop.txt
@@ -502,18 +498,11 @@ jobs:
             --firmware designs/mcu_soc_sky130/build/software/software.bin \
             --port-mapping
 
-      - name: Compile gemparts
-        timeout-minutes: 10
-        run: |
-          cargo run --release --features metal --bin jacquard -- map \
-            tests/mcu_soc/data/6_final.v tests/mcu_soc/data/result.gemparts \
-            --top-module top
-
       - name: Run GPU co-simulation (100K ticks)
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           cargo run --release --features metal --bin jacquard -- cosim \
-            tests/mcu_soc/data/6_final.v tests/mcu_soc/data/result.gemparts \
+            tests/mcu_soc/data/6_final.v \
             --config tests/mcu_soc/sim_config.json --top-module top \
             --max-cycles 100000 \
             2>&1 | tee cosim_output.txt
@@ -530,6 +519,40 @@ jobs:
             exit 1
           fi
 
+      - name: Capture stimulus VCD (10K ticks)
+        timeout-minutes: 10
+        run: |
+          cargo run --release --features metal --bin jacquard -- cosim \
+            tests/mcu_soc/data/6_final.v \
+            --config tests/mcu_soc/sim_config.json --top-module top \
+            --max-cycles 10000 \
+            --stimulus-vcd tests/mcu_soc/stimulus.vcd \
+            2>&1 | tee cosim_stimulus.txt
+
+      - name: Strip SDF timing checks for GPU simulation
+        run: |
+          # Remove TIMINGCHECK directives from SDF (timing checks can cause parser errors)
+          uv run tests/mcu_soc/cvc/strip_sdf_checks.py \
+            tests/mcu_soc/data/6_final.sdf \
+            tests/mcu_soc/data/6_final_stripped.sdf
+
+      - name: Replay with timing VCD
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo run --release --features metal --bin jacquard -- sim \
+            tests/mcu_soc/data/6_final.v \
+            tests/mcu_soc/stimulus.vcd \
+            tests/mcu_soc/loom_timed_mcu.vcd \
+            1 \
+            --sdf tests/mcu_soc/data/6_final_stripped.sdf \
+            --sdf-corner typ \
+            --timing-vcd \
+            --top-module top \
+            --max-cycles 10000 \
+            2>&1 | tee metal_mcu_timed.txt
+
       - name: Report simulation results
         if: always()
         run: |
@@ -538,6 +561,12 @@ jobs:
             echo "\`\`\`"
             tail -20 cosim_output.txt
             echo "\`\`\`"
+            if [ -f metal_mcu_timed.txt ]; then
+              echo "## MCU SoC Timing VCD Replay"
+              echo "\`\`\`"
+              tail -20 metal_mcu_timed.txt
+              echo "\`\`\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
@@ -547,7 +576,11 @@ jobs:
           name: mcu-soc-results
           path: |
             cosim_output.txt
+            cosim_stimulus.txt
+            metal_mcu_timed.txt
             tests/mcu_soc/sim_config.json
+            tests/mcu_soc/stimulus.vcd
+            tests/mcu_soc/loom_timed_mcu.vcd
 
   # Build documentation (cargo doc + mdbook) and deploy to GitHub Pages
   docs:
@@ -600,101 +633,313 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./book
 
-  # Run SKY130 post-layout timing simulation
-  sky130-timing:
-    name: SKY130 Timing Simulation
+  # CVC reference simulation for timing correctness validation
+  cvc-reference:
+    name: CVC Reference Simulation
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CVC binary
+        id: cache-cvc
+        uses: actions/cache@v4
+        with:
+          path: ~/cvc/bin
+          key: cvc-binary-debug-v2
+
+      - name: Build CVC from source
+        if: steps.cache-cvc.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev
+          git clone --depth 1 https://github.com/cambridgehackers/open-src-cvc.git ~/cvc-src
+          cd ~/cvc-src/src
+          # Build with -O0: CVC has undefined behavior in SDF annotation code that
+          # causes segfaults under -O2 optimization (NULL deref after opening SDF file).
+          make -f makefile.cvc64 -j$(nproc) \
+            OPTFLGS="" \
+            CFLAGS="-Wall -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
+          mkdir -p ~/cvc/bin
+          cp cvc64 ~/cvc/bin/
+
+      - name: Add CVC to PATH
+        run: echo "$HOME/cvc/bin" >> "$GITHUB_PATH"
+
+      - name: Run CVC simulation with SDF
+        working-directory: tests/timing_test/inv_chain_pnr
+        run: |
+          echo "=== Running CVC on inv_chain with SDF ==="
+          # +typdelays selects typical corner; $sdf_annotate in tb_cvc.v loads the SDF file
+          cvc64 +typdelays tb_cvc.v inv_chain.v 2>&1 | tee cvc_compile.log
+          # NOTE: CVC must be built with -O0 (debug build). The -O2 optimized build
+          # triggers undefined behavior in CVC's SDF annotation code, causing a segfault.
+          ./cvcsim 2>&1 | tee cvc_output.log
+          echo ""
+          echo "=== CVC simulation complete ==="
+
+      - name: Validate CVC timing results
+        working-directory: tests/timing_test/inv_chain_pnr
+        run: |
+          echo "Checking CVC produced timing results..."
+          if grep -q "RESULT: total_delay=" cvc_output.log; then
+            echo "CVC timing results found:"
+            grep "RESULT:" cvc_output.log
+          else
+            echo "ERROR: CVC did not produce expected RESULT: lines"
+            echo "--- Full CVC output ---"
+            cat cvc_output.log
+            exit 1
+          fi
+
+      - name: Validate CVC timing range
+        working-directory: tests/timing_test/inv_chain_pnr
+        run: |
+          echo "=== Validating CVC timing results ==="
+
+          # Compare timing measurements from CVC stdout
+          # CVC RESULT: lines report IOPATH+INTERCONNECT delays
+          # Expected: clk_to_q ~350ps, total_delay ~1323ps (IOPATH+wire)
+          CVC_TOTAL=$(grep "RESULT: total_delay=" cvc_output.log | sed 's/.*=//')
+          echo "CVC total delay: ${CVC_TOTAL}ps"
+
+          # Basic sanity check: total delay should be between 800ps and 2000ps
+          if [ "$CVC_TOTAL" -gt 800 ] && [ "$CVC_TOTAL" -lt 2000 ]; then
+            echo "PASS: CVC total delay is in expected range (800-2000ps)"
+          else
+            echo "FAIL: CVC total delay ${CVC_TOTAL}ps outside expected range"
+            exit 1
+          fi
+
+      - name: Report results
+        if: always()
+        run: |
+          {
+            echo "## CVC Reference Simulation Results"
+            echo ""
+            echo "### CVC Output"
+            echo "\`\`\`"
+            cat tests/timing_test/inv_chain_pnr/cvc_output.log 2>/dev/null || echo "No CVC output"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cvc-reference-results
+          path: |
+            tests/timing_test/inv_chain_pnr/cvc_compile.log
+            tests/timing_test/inv_chain_pnr/cvc_output.log
+            tests/timing_test/inv_chain_pnr/cvc_inv_chain_output.vcd
+
+  # Compare timing results between CVC (event-driven) and Loom (GPU)
+  timing-comparison:
+    name: Timing Comparison (CVC vs Loom)
+    runs-on: ubuntu-latest
+    needs: [metal, cvc-reference]
+    if: always() && needs.metal.result == 'success' && needs.cvc-reference.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Download Metal artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vcd-outputs
+          path: metal-results/
+
+      - name: Download CVC artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cvc-reference-results
+          path: cvc-results/
+
+      - name: Compare timing
+        run: |
+          uv run scripts/compare_timing.py \
+            --cvc-log cvc-results/tests/timing_test/inv_chain_pnr/cvc_output.log \
+            --cvc-vcd cvc-results/tests/timing_test/inv_chain_pnr/cvc_inv_chain_output.vcd \
+            --loom-vcd metal-results/tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
+            --clock-period-ps 10000 \
+            --clock-signal CLK \
+            --output-signal Q \
+            --output-json timing_comparison.json \
+            2>&1 | tee comparison.txt
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## Timing Comparison (CVC vs Loom)"
+            echo ""
+            echo "\`\`\`"
+            cat comparison.txt 2>/dev/null || echo "No comparison output"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: timing-comparison-results
+          path: |
+            timing_comparison.json
+            comparison.txt
+
+  # CVC SDF-annotated simulation of MCU SoC for timing correctness validation
+  mcu-soc-cvc:
+    name: MCU SoC CVC Reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [mcu-soc-metal]
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
       - name: Init required submodules
-        run: git submodule update --init vendor/eda-infra-rs vendor/sky130_fd_sc_hd
+        run: git submodule update --init vendor/sky130_fd_sc_hd
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Cache cargo
+      - name: Cache CVC binary
+        id: cache-cvc
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-sky130-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-sky130-
+          path: ~/cvc/bin
+          key: cvc-binary-debug-v2
 
-      - name: Cache SKY130 PDK
-        uses: actions/cache@v4
+      - name: Build CVC from source
+        if: steps.cache-cvc.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev
+          git clone --depth 1 https://github.com/cambridgehackers/open-src-cvc.git ~/cvc-src
+          cd ~/cvc-src/src
+          make -f makefile.cvc64 -j$(nproc) \
+            OPTFLGS="" \
+            CFLAGS="-Wall -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
+          mkdir -p ~/cvc/bin
+          cp cvc64 ~/cvc/bin/
+
+      - name: Add CVC to PATH
+        run: echo "$HOME/cvc/bin" >> "$GITHUB_PATH"
+
+      - name: Download Metal artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.volare
-          key: sky130-pdk-c6d73a35f524070e85faff4a6a9eef49553ebc2b
-          restore-keys: |
-            sky130-pdk-
+          name: mcu-soc-results
+          path: metal-results/
 
-      - name: Install volare and download SKY130 PDK
+      - name: Generate cell models
+        run: uv run tests/mcu_soc/cvc/gen_cell_models.py
+
+      - name: Strip SDF timing checks
         run: |
-          uv tool install volare
-          # Use the same PDK version as OpenLane 2.x for reproducibility
-          volare enable --pdk sky130 c6d73a35f524070e85faff4a6a9eef49553ebc2b
+          uv run tests/mcu_soc/cvc/strip_sdf_checks.py \
+            tests/mcu_soc/data/6_final.sdf \
+            tests/mcu_soc/cvc/6_final_nocheck.sdf
 
-      - name: Build timing simulator
-        run: cargo build --release --bin timing_sim_cpu
-
-      - name: Run SKY130 timing simulation
-        timeout-minutes: 5
+      - name: Convert stimulus to Verilog
         run: |
-          # Build command arguments (using default timing values)
-          ARGS=(
-            tests/timing_test/minimal_build/6_final.v
-            tests/timing_test/6_final_test_input.vcd
-            --clock-period 25000
-            --max-cycles 10
-          )
+          uv run tests/mcu_soc/cvc/convert_stimulus.py \
+            metal-results/tests/mcu_soc/stimulus.vcd \
+            tests/mcu_soc/cvc/stimulus_gen.v \
+            --config metal-results/tests/mcu_soc/sim_config.json
 
-          # Add SDF back-annotation if available
-          SDF_FILE="tests/timing_test/minimal_build/6_final.sdf"
-          if [ -f "$SDF_FILE" ]; then
-            echo "Running timing simulation with SDF back-annotation"
-            ARGS+=(--sdf "$SDF_FILE" --sdf-corner typ)
-          else
-            echo "Running timing simulation with default timing values"
-            echo "(SDF file not available — add 6_final.sdf for post-layout accuracy)"
-          fi
+      - name: Run CVC simulation
+        timeout-minutes: 45
+        working-directory: tests/mcu_soc/cvc
+        run: |
+          ln -sf ../data/6_final.v .
+          cvc64 +typdelays tb_cvc.v sky130_cells.v cf_sram.v 6_final.v \
+            2>&1 | tee cvc_compile.log
+          ./cvcsim 2>&1 | tee cvc_sim.log
 
-          # Run timing simulation on the post-P&R netlist
-          cargo run --release --bin timing_sim_cpu -- "${ARGS[@]}" 2>&1 | tee sky130_timing.txt
-
-      - name: Report SKY130 timing results
+      - name: Report results
+        if: always()
         run: |
           {
-            echo "## SKY130 Timing Simulation Results"
+            echo "## MCU SoC CVC Reference Simulation"
+            echo ""
+            echo "### CVC Compilation"
             echo "\`\`\`"
-            cat sky130_timing.txt
+            tail -20 tests/mcu_soc/cvc/cvc_compile.log 2>/dev/null || echo "No compile output"
+            echo "\`\`\`"
+            echo ""
+            echo "### CVC Simulation"
+            echo "\`\`\`"
+            tail -20 tests/mcu_soc/cvc/cvc_sim.log 2>/dev/null || echo "No sim output"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Check timing passed
-        run: |
-          if grep -q "TIMING: PASSED" sky130_timing.txt; then
-            echo "SKY130 timing simulation passed!"
-          elif grep -q "TIMING: FAILED" sky130_timing.txt; then
-            echo "SKY130 timing simulation found violations (expected for this test design)"
-            # Don't fail - timing violations are informational
-          else
-            echo "Error: Could not determine timing result"
-            exit 1
-          fi
-
-      - name: Upload timing results
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sky130-timing-results
-          path: sky130_timing.txt
+          name: mcu-soc-cvc-results
+          path: |
+            tests/mcu_soc/cvc/cvc_compile.log
+            tests/mcu_soc/cvc/cvc_sim.log
+            tests/mcu_soc/cvc/cvc_output.vcd
+
+  # Compare MCU SoC timing results between CVC and Loom
+  mcu-soc-comparison:
+    name: MCU SoC Timing Comparison
+    runs-on: ubuntu-latest
+    needs: [mcu-soc-metal, mcu-soc-cvc]
+    if: always() && needs.mcu-soc-metal.result == 'success' && needs.mcu-soc-cvc.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+
+      - name: Download Metal artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mcu-soc-results
+          path: metal-results/
+
+      - name: Download CVC artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mcu-soc-cvc-results
+          path: cvc-results/
+
+      - name: Compare outputs
+        run: |
+          LOOM_VCD="metal-results/tests/mcu_soc/loom_timed_mcu.vcd"
+          CVC_VCD="cvc-results/cvc_output.vcd"
+          if [ ! -f "$LOOM_VCD" ]; then
+            echo "SKIP: Loom timed VCD not found (timing replay may have failed)" | tee mcu_comparison.txt
+            exit 0
+          fi
+          if [ ! -f "$CVC_VCD" ]; then
+            echo "SKIP: CVC output VCD not found (CVC simulation may have failed)" | tee mcu_comparison.txt
+            exit 0
+          fi
+          uv run tests/mcu_soc/cvc/compare_outputs.py \
+            "$LOOM_VCD" "$CVC_VCD" \
+            --skip-cycles 5 \
+            --num-cycles 10000 \
+            --config metal-results/tests/mcu_soc/sim_config.json \
+            2>&1 | tee mcu_comparison.txt
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## MCU SoC Timing Comparison (CVC vs Loom)"
+            echo ""
+            echo "\`\`\`"
+            cat mcu_comparison.txt 2>/dev/null || echo "No comparison output"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcu-soc-comparison-results
+          path: mcu_comparison.txt

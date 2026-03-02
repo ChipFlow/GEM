@@ -35,10 +35,9 @@ cargo run -r --features hip --bin jacquard -- sim --help
 
 1. **Memory synthesis** (Yosys): Map memories using `memlib_yosys.txt` → outputs `memory_mapped.v`
 2. **Logic synthesis** (DC or Yosys): Synthesize to `aigpdk.lib` cells → outputs `gatelevel.gv`
-3. **Jacquard mapping**: `jacquard map gatelevel.gv result.gemparts`
-4. **Simulation**: `jacquard sim` with `gatelevel.gv result.gemparts input.vcd output.vcd NUM_BLOCKS`
+3. **Simulation**: `jacquard sim gatelevel.gv input.vcd output.vcd NUM_BLOCKS`
 
-Set `NUM_BLOCKS` to 2× the number of GPU streaming multiprocessors (SMs) for CUDA, 2× the number of Compute Units (CUs) for HIP/AMD, or 1 for Metal.
+Partitioning happens automatically at simulation start. Set `NUM_BLOCKS` to 2× the number of GPU streaming multiprocessors (SMs) for CUDA, 2× the number of Compute Units (CUs) for HIP/AMD, or 1 for Metal.
 
 ## Architecture
 
@@ -65,8 +64,7 @@ NetlistDB (Verilog) → AIG → StagedAIG → Partitions → FlattenedScript →
 
 ### Binary Tools (`src/bin/`)
 
-- **`jacquard.rs`**: Unified CLI — `jacquard map` (partition mapping), `jacquard sim` (GPU simulation), `jacquard cosim` (co-simulation)
-- **`timing_sim_cpu.rs`**: CPU-based timing simulation with SDF back-annotation (development tool)
+- **`jacquard.rs`**: Unified CLI — `jacquard sim` (GPU simulation), `jacquard cosim` (co-simulation)
 - **`timing_analysis.rs`**: Static timing analysis utility (development tool)
 
 ### Dependencies (`vendor/eda-infra-rs` submodule)
@@ -118,15 +116,9 @@ cargo run -r --features metal --bin jacquard -- sim ... --max-cycles 1000
 Pre-synthesized benchmark designs are in `benchmarks/dataset/` (git submodule). See `benchmarks/README.md` for full instructions.
 
 ```bash
-# Generate partition file (NVDLA - smallest, good for testing)
-cargo run -r --bin jacquard -- map \
-    benchmarks/dataset/nvdlaAIG.gv \
-    benchmarks/nvdla.gemparts
-
-# Run Metal simulation benchmark
+# Run Metal simulation benchmark (NVDLA - smallest, good for testing)
 cargo run -r --features metal --bin jacquard -- sim \
     benchmarks/dataset/nvdlaAIG.gv \
-    benchmarks/nvdla.gemparts \
     benchmarks/dataset/nvdla.pdp_16x6x16_4x2_split_max_int8_0.vcd \
     benchmarks/nvdla_output.vcd \
     1
@@ -158,7 +150,7 @@ uv run netlist-graph path <netlist.v> "<source>" "<target>"
 # Search for nets matching pattern
 uv run netlist-graph search <netlist.v> "<pattern>"
 
-# Generate watchlist JSON for timing_sim_cpu
+# Generate watchlist JSON for signal monitoring
 uv run netlist-graph watchlist <netlist.v> output.json signal1 signal2 ...
 
 # Interactive mode for exploration
@@ -177,14 +169,3 @@ uv run netlist-graph path tests/timing_test/minimal_build/6_final.v "gpio_in[40]
 ### Timing Violation Detection
 
 See `docs/timing-violations.md` for the full guide on enabling GPU-side setup/hold violation checks, interpreting violation reports, and tracing violations back to source signals using `netlist_graph`.
-
-### Timing Simulation with Signal Tracing
-
-```bash
-# Create watchlist and trace signals
-cargo run -r --bin timing_sim_cpu -- netlist.v \
-  --config testbench.json \
-  --watchlist signals.json \
-  --trace-output trace.csv \
-  --max-cycles 1000
-```
