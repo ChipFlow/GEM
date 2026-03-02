@@ -184,7 +184,7 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
                 lib_path,
                 clock_ps
             );
-            script.load_timing(&aig, &lib, clock_ps);
+            script.load_timing(&aig, &netlistdb, &lib, clock_ps);
             script.inject_timing_to_script();
         }
     }

@@ -1499,8 +1499,14 @@ impl FlattenedScriptV1 {
     ///
     /// This populates gate_delays and dff_constraints for timing-aware simulation.
     /// Must be called after building the script if timing analysis is needed.
-    pub fn load_timing(&mut self, aig: &AIG, lib: &TimingLibrary, clock_period_ps: u64) {
-        // Get default delays from library
+    pub fn load_timing(
+        &mut self,
+        aig: &AIG,
+        netlistdb: &NetlistDB,
+        lib: &TimingLibrary,
+        clock_period_ps: u64,
+    ) {
+        // Get generic fallback delays from library
         let and_delay = lib.and_gate_delay("AND2_00_0").unwrap_or((1, 1));
         let dff_timing = lib.dff_timing();
         let sram_timing = lib.sram_timing();
@@ -1508,33 +1514,87 @@ impl FlattenedScriptV1 {
         // Initialize gate delays for all AIG pins
         self.gate_delays = vec![PackedDelay::default(); aig.num_aigpins + 1];
 
-        for i in 1..=aig.num_aigpins {
-            let delay = match &aig.drivers[i] {
-                DriverType::AndGate(_, _) => PackedDelay::from_u64(and_delay.0, and_delay.1),
-                DriverType::InputPort(_) | DriverType::InputClockFlag(_, _) | DriverType::Tie0 => {
-                    PackedDelay::default() // Zero delay for inputs
-                }
-                DriverType::DFF(_) => {
-                    // Clock-to-Q delay
-                    dff_timing
-                        .as_ref()
-                        .map(|t| PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
-                        .unwrap_or_default()
-                }
-                DriverType::SRAM(_) => {
-                    // SRAM read delay
-                    sram_timing
-                        .as_ref()
-                        .map(|t| {
-                            PackedDelay::from_u64(
-                                t.read_clk_to_data_rise_ps,
-                                t.read_clk_to_data_fall_ps,
-                            )
+        let mut matched = 0usize;
+        let mut fallback_count = 0usize;
+
+        for aigpin in 1..=aig.num_aigpins {
+            let origins = &aig.aigpin_cell_origins[aigpin];
+            let delay = if !origins.is_empty() {
+                // AIG pin has cell origin(s) — look up per-cell delays from Liberty.
+                // When multiple cells share an AIG pin (e.g., inverter chain collapsed
+                // to a single wire via invert-bit reuse), sum their delays (serial chain).
+                let mut total_rise: u64 = 0;
+                let mut total_fall: u64 = 0;
+
+                for (cellid, _cell_type, output_pin_name) in origins {
+                    let full_celltype = &netlistdb.celltypes[*cellid];
+                    // Try looking up by full celltype (e.g., "sky130_fd_sc_hd__inv_1")
+                    let cell_delay = lib
+                        .get_cell(full_celltype)
+                        .map(|c| {
+                            // Try pin-specific delay first, then max combinational
+                            c.pins
+                                .get(output_pin_name.as_str())
+                                .and_then(|pin| {
+                                    pin.timing_arcs.iter().find_map(|arc| {
+                                        if arc.timing_type.is_none()
+                                            || arc.timing_type.as_deref()
+                                                == Some("combinational")
+                                        {
+                                            Some((
+                                                arc.cell_rise_ps.unwrap_or(0),
+                                                arc.cell_fall_ps.unwrap_or(0),
+                                            ))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                })
+                                .unwrap_or_else(|| c.max_combinational_delay())
                         })
-                        .unwrap_or(PackedDelay::new(1, 1))
+                        .unwrap_or(and_delay);
+
+                    total_rise += cell_delay.0;
+                    total_fall += cell_delay.1;
+                }
+
+                matched += 1;
+                PackedDelay::from_u64(total_rise, total_fall)
+            } else {
+                // No cell origins — internal decomposition gate or input/tie/DFF/SRAM
+                match &aig.drivers[aigpin] {
+                    DriverType::AndGate(_, _) => {
+                        // Internal AND gate from cell decomposition — zero delay.
+                        // The full cell delay is on the output AIG pin (via origins).
+                        PackedDelay::default()
+                    }
+                    DriverType::InputPort(_)
+                    | DriverType::InputClockFlag(_, _)
+                    | DriverType::Tie0 => PackedDelay::default(),
+                    DriverType::DFF(_) => {
+                        fallback_count += 1;
+                        dff_timing
+                            .as_ref()
+                            .map(|t| {
+                                PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps)
+                            })
+                            .unwrap_or_default()
+                    }
+                    DriverType::SRAM(_) => {
+                        fallback_count += 1;
+                        sram_timing
+                            .as_ref()
+                            .map(|t| {
+                                PackedDelay::from_u64(
+                                    t.read_clk_to_data_rise_ps,
+                                    t.read_clk_to_data_fall_ps,
+                                )
+                            })
+                            .unwrap_or(PackedDelay::new(1, 1))
+                    }
                 }
             };
-            self.gate_delays[i] = delay;
+            self.gate_delays[aigpin] = delay;
         }
 
         // Build DFF constraints
@@ -1543,7 +1603,6 @@ impl FlattenedScriptV1 {
         let hold_time = dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0) as u16;
 
         for (&cell_id, dff) in &aig.dffs {
-            // Find the state position for the D input
             let data_state_pos = self.output_map.get(&dff.d_iv).copied().unwrap_or(u32::MAX);
 
             self.dff_constraints.push(DFFConstraint {
@@ -1557,9 +1616,14 @@ impl FlattenedScriptV1 {
         self.clock_period_ps = clock_period_ps;
         self.timing_enabled = true;
 
+        let nonzero = self.gate_delays.iter().filter(|d| d.max_delay() > 0).count();
         clilog::info!(
-            "Loaded timing: {} gate delays, {} DFF constraints, clock={}ps",
+            "Loaded Liberty timing: {} gate delays ({} from cell origins, {} fallback, {} nonzero), \
+             {} DFF constraints, clock={}ps",
             self.gate_delays.len(),
+            matched,
+            fallback_count,
+            nonzero,
             self.dff_constraints.len(),
             clock_period_ps
         );
@@ -1594,6 +1658,11 @@ impl FlattenedScriptV1 {
             for &aigpin in aigpins {
                 if aigpin < self.gate_delays.len() {
                     max_delay = max_delay.max(self.gate_delays[aigpin].max_delay() as u32);
+                } else {
+                    clilog::debug!(
+                        "inject_timing: aigpin {} out of range (gate_delays len={})",
+                        aigpin, self.gate_delays.len()
+                    );
                 }
             }
             // Store raw picoseconds, clamped to u16 range
