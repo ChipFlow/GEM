@@ -9,10 +9,15 @@ differences. Handles format differences:
   - Loom: individual 1-bit signals with multi-char VCD codes (e.g., %-)
   - CVC: 44-bit bus gpio_out[43:0] with potential X values
 
+When --config is provided, the port_mapping.outputs from the JSON config is
+used to translate Jacquard internal port names (e.g. io$soc_gpio_0_gpio$o[0])
+back to gpio_out[N] indices.
+
 Usage:
-    python3 compare_outputs.py <loom.vcd> <cvc.vcd> [--skip-cycles N]
+    python3 compare_outputs.py <loom.vcd> <cvc.vcd> [--skip-cycles N] [--config <config.json>]
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -25,11 +30,35 @@ class VCDResult:
         self.last_time = last_time  # last timestamp in VCD
 
 
-def parse_loom_vcd(path: Path, width: int = 44) -> VCDResult:
+def build_output_port_mapping(config_path: Path) -> dict[str, int]:
+    """Build internal_name → gpio_number mapping from sim config outputs.
+
+    The config's port_mapping.outputs maps gpio_number → internal_name.
+    We invert it so internal_name → gpio_number.
+    """
+    with open(config_path) as f:
+        config = json.load(f)
+
+    mapping: dict[str, int] = {}
+    pm = config.get("port_mapping", {})
+    for gpio_num_str, internal_name in pm.get("outputs", {}).items():
+        mapping[internal_name] = int(gpio_num_str)
+    return mapping
+
+
+def parse_loom_vcd(
+    path: Path,
+    width: int = 44,
+    output_port_map: dict[str, int] | None = None,
+) -> VCDResult:
     """Parse Loom VCD and return gpio_out value changes + last timestamp.
 
-    Loom VCD has individual 1-bit signals like:
+    Loom VCD has individual 1-bit signals. In traditional mode:
         $var wire 1 %- gpio_out[1] $end
+    In port-mapped mode (Jacquard internal names):
+        $var wire 1 %- io$soc_gpio_0_gpio$o [0] $end
+
+    When output_port_map is provided, internal names are mapped to GPIO indices.
     """
     code_to_bit: dict[str, int] = {}
     in_header = True
@@ -37,6 +66,7 @@ def parse_loom_vcd(path: Path, width: int = 44) -> VCDResult:
     current_time = 0
     last_time = 0
     state = [0] * width
+    matched_signals = 0
 
     with open(path) as f:
         for line in f:
@@ -45,12 +75,29 @@ def parse_loom_vcd(path: Path, width: int = 44) -> VCDResult:
                 if stripped == "$enddefinitions $end":
                     in_header = False
                     continue
+                # Try traditional gpio_out[N] format first
                 m = re.match(
                     r'\$var\s+wire\s+1\s+(\S+)\s+gpio_out\s*\[(\d+)\]\s+\$end',
                     stripped,
                 )
                 if m:
                     code_to_bit[m.group(1)] = int(m.group(2))
+                    matched_signals += 1
+                    continue
+                # Try port-mapped format if mapping provided
+                if output_port_map:
+                    m = re.match(
+                        r'\$var\s+wire\s+1\s+(\S+)\s+(.+?)\s*\$end',
+                        stripped,
+                    )
+                    if m:
+                        vid = m.group(1)
+                        name = m.group(2).strip()
+                        # Normalize "name [N]" → "name[N]"
+                        name = re.sub(r'\s+\[(\d+)\]$', r'[\1]', name)
+                        if name in output_port_map:
+                            code_to_bit[vid] = output_port_map[name]
+                            matched_signals += 1
                 continue
 
             if stripped.startswith('#'):
@@ -69,6 +116,7 @@ def parse_loom_vcd(path: Path, width: int = 44) -> VCDResult:
                         val = sum(state[i] << i for i in range(width))
                         results.append((current_time, val))
 
+    print(f"  Matched {matched_signals} output signals to gpio_out bits")
     return VCDResult(results, last_time)
 
 
@@ -120,24 +168,48 @@ def parse_cvc_vcd(path: Path) -> VCDResult:
 
 
 def main() -> None:
-    if len(sys.argv) < 3:
+    # Parse arguments
+    args = sys.argv[1:]
+    skip_cycles = 0
+    config_path: Path | None = None
+    num_cycles_override: int | None = None
+    positional: list[str] = []
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--skip-cycles" and i + 1 < len(args):
+            skip_cycles = int(args[i + 1])
+            i += 2
+        elif args[i] == "--config" and i + 1 < len(args):
+            config_path = Path(args[i + 1])
+            i += 2
+        elif args[i] == "--num-cycles" and i + 1 < len(args):
+            num_cycles_override = int(args[i + 1])
+            i += 2
+        else:
+            positional.append(args[i])
+            i += 1
+
+    if len(positional) < 2:
         print(
-            f"Usage: {sys.argv[0]} <loom.vcd> <cvc.vcd> [--skip-cycles N]",
+            f"Usage: {sys.argv[0]} <loom.vcd> <cvc.vcd> [--skip-cycles N] "
+            f"[--config <config.json>] [--num-cycles N]",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    loom_path = Path(sys.argv[1])
-    cvc_path = Path(sys.argv[2])
-    skip_cycles = 0
-    if "--skip-cycles" in sys.argv:
-        idx = sys.argv.index("--skip-cycles")
-        skip_cycles = int(sys.argv[idx + 1])
+    loom_path = Path(positional[0])
+    cvc_path = Path(positional[1])
+
+    output_port_map: dict[str, int] | None = None
+    if config_path:
+        output_port_map = build_output_port_mapping(config_path)
+        print(f"Loaded output port mapping from {config_path}: {len(output_port_map)} outputs")
 
     clock_period = 40000  # ps
 
     print(f"Parsing Loom VCD: {loom_path}")
-    loom_result = parse_loom_vcd(loom_path)
+    loom_result = parse_loom_vcd(loom_path, output_port_map=output_port_map)
     loom_changes = loom_result.changes
     print(f"  {len(loom_changes)} gpio_out value changes, last_time={loom_result.last_time}ps")
 
@@ -146,11 +218,15 @@ def main() -> None:
     cvc_changes = cvc_result.changes
     print(f"  {len(cvc_changes)} gpio_out value changes, last_time={cvc_result.last_time}ps")
 
-    # Use the minimum of both last timestamps as the comparison range
-    max_time = min(loom_result.last_time, cvc_result.last_time)
-
-    # Calculate number of cycles
-    num_cycles = max_time // clock_period + 1
+    # Determine comparison range
+    if num_cycles_override:
+        num_cycles = num_cycles_override
+        max_time = num_cycles * clock_period
+        print(f"  Using explicit cycle count: {num_cycles}")
+    else:
+        # Use the minimum of both last timestamps as the comparison range
+        max_time = min(loom_result.last_time, cvc_result.last_time)
+        num_cycles = max_time // clock_period + 1
 
     # Build per-cycle values by interpolating from change lists
     def build_cycle_values(
