@@ -1,0 +1,15 @@
+# jacquard.toml — NVDLA benchmark project configuration
+#
+# With this config file, run benchmarks without typing all the paths:
+#   cd benchmarks && jacquard map
+#   cd benchmarks && jacquard sim
+
+[design]
+netlist = "dataset/nvdlaAIG.gv"
+
+[map]
+output = "nvdla.gemparts"
+
+[sim]
+input_vcd = "dataset/nvdla.pdp_16x6x16_4x2_split_max_int8_0.vcd"
+output_vcd = "nvdla_output.vcd"

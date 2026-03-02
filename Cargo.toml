@@ -25,6 +25,7 @@ sverilogparse = { version = "0.4.2", path = "vendor/eda-infra-rs/sverilogparse" 
 tempdir = "0.3.7"
 ulib = { version = "0.3.13", path = "vendor/eda-infra-rs/ulib" }
 vcd-ng = { version = "0.2.0", path = "vendor/eda-infra-rs/vcd-ng" }
+toml = "1.0.3"
 
 [build-dependencies]
 ucc = { version = "0.2.5", path = "vendor/eda-infra-rs/ucc" }

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use jacquard::aig::AIG;
 use jacquard::aigpdk::AIGPDKLeafPins;
+use jacquard::config::JacquardConfig;
 use jacquard::pe::{process_partitions, Partition};
 use jacquard::repcut::RCHyperGraph;
 use jacquard::sim::setup::{DesignArgs, PartitionFile};
@@ -20,6 +21,13 @@ use rayon::prelude::*;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Path to project configuration file.
+    ///
+    /// If not specified, Jacquard searches for `jacquard.toml` in the current
+    /// directory and parent directories. CLI arguments override config file values.
+    #[clap(short, long, global = true)]
+    config: Option<PathBuf>,
 
     /// Increase verbosity (can be repeated: -vv for trace level).
     #[clap(short, long, global = true, action = clap::ArgAction::Count)]
@@ -60,10 +68,13 @@ struct MapArgs {
     ///
     /// If your design is still at RTL level, you must synthesize it first.
     /// See usage.md for synthesis instructions.
-    netlist_verilog: PathBuf,
+    /// Can also be set via `design.netlist` in jacquard.toml.
+    netlist_verilog: Option<PathBuf>,
 
     /// Output path for the serialized partition file (.gemparts).
-    parts_out: PathBuf,
+    ///
+    /// Can also be set via `map.output` in jacquard.toml.
+    parts_out: Option<PathBuf>,
 
     /// Top module name in the netlist.
     ///
@@ -96,16 +107,24 @@ struct MapArgs {
 #[derive(Parser)]
 struct SimArgs {
     /// Gate-level Verilog path synthesized with AIGPDK or SKY130 library.
-    netlist_verilog: PathBuf,
+    ///
+    /// Can also be set via `design.netlist` in jacquard.toml.
+    netlist_verilog: Option<PathBuf>,
 
     /// Pre-compiled partition mapping (.gemparts file).
-    gemparts: PathBuf,
+    ///
+    /// Can also be set via `sim.gemparts` or `map.output` in jacquard.toml.
+    gemparts: Option<PathBuf>,
 
     /// VCD input signal path.
-    input_vcd: PathBuf,
+    ///
+    /// Can also be set via `sim.input_vcd` in jacquard.toml.
+    input_vcd: Option<PathBuf>,
 
     /// Output VCD path (must be writable).
-    output_vcd: PathBuf,
+    ///
+    /// Can also be set via `sim.output_vcd` in jacquard.toml.
+    output_vcd: Option<PathBuf>,
 
     /// Number of GPU blocks to use.
     ///
@@ -184,14 +203,20 @@ struct SimArgs {
 #[derive(Parser)]
 struct CosimArgs {
     /// Gate-level Verilog path synthesized with AIGPDK or SKY130 library.
-    netlist_verilog: PathBuf,
+    ///
+    /// Can also be set via `design.netlist` in jacquard.toml.
+    netlist_verilog: Option<PathBuf>,
 
     /// Pre-compiled partition mapping (.gemparts file).
-    gemparts: PathBuf,
+    ///
+    /// Can also be set via `sim.gemparts` or `map.output` in jacquard.toml.
+    gemparts: Option<PathBuf>,
 
     /// Testbench configuration JSON file.
+    ///
+    /// Can also be set via `cosim.config` in jacquard.toml.
     #[clap(long)]
-    config: PathBuf,
+    config: Option<PathBuf>,
 
     /// Top module name in the netlist.
     #[clap(long)]
@@ -254,11 +279,38 @@ fn run_par(hg: &RCHyperGraph, num_parts: usize) -> Vec<Vec<usize>> {
     parts
 }
 
-fn cmd_map(args: MapArgs) {
-    clilog::info!("Jacquard map args:\n{:#?}", args.netlist_verilog);
+fn cmd_map(args: MapArgs, config: &Option<JacquardConfig>) {
+    // Merge CLI args with config file values (CLI wins)
+    let netlist_verilog = args.netlist_verilog
+        .or_else(|| config.as_ref().and_then(|c| c.design.netlist.clone()))
+        .unwrap_or_else(|| {
+            eprintln!("Error: netlist_verilog is required (positional arg or design.netlist in jacquard.toml)");
+            std::process::exit(1);
+        });
+    let parts_out = args.parts_out
+        .or_else(|| config.as_ref().and_then(|c| c.map.output.clone()))
+        .unwrap_or_else(|| {
+            // Default to netlist path with .gemparts extension
+            netlist_verilog.with_extension("gemparts")
+        });
+    let top_module = args.top_module
+        .or_else(|| config.as_ref().and_then(|c| c.design.top_module.clone()));
+    let level_split = if args.level_split.is_empty() {
+        config.as_ref().map(|c| c.map.level_split.clone()).unwrap_or_default()
+    } else {
+        args.level_split
+    };
+    let max_stage_degrad = if args.max_stage_degrad != 0 {
+        args.max_stage_degrad
+    } else {
+        config.as_ref().and_then(|c| c.map.max_stage_degrad).unwrap_or(0)
+    };
+    let xprop = args.xprop || config.as_ref().and_then(|c| c.map.xprop).unwrap_or(false);
+
+    clilog::info!("Jacquard map args:\n{:#?}", netlist_verilog);
 
     // Detect cell library
-    let lib = detect_library_from_file(&args.netlist_verilog).expect("Failed to read netlist file");
+    let lib = detect_library_from_file(&netlist_verilog).expect("Failed to read netlist file");
     clilog::info!("Detected cell library: {}", lib);
 
     if lib == CellLibrary::Mixed {
@@ -267,14 +319,14 @@ fn cmd_map(args: MapArgs) {
 
     let netlistdb = match lib {
         CellLibrary::SKY130 => NetlistDB::from_sverilog_file(
-            &args.netlist_verilog,
-            args.top_module.as_deref(),
+            &netlist_verilog,
+            top_module.as_deref(),
             &SKY130LeafPins,
         )
         .expect("cannot build netlist"),
         CellLibrary::AIGPDK | CellLibrary::Mixed => NetlistDB::from_sverilog_file(
-            &args.netlist_verilog,
-            args.top_module.as_deref(),
+            &netlist_verilog,
+            top_module.as_deref(),
             &AIGPDKLeafPins(),
         )
         .expect("cannot build netlist"),
@@ -288,7 +340,7 @@ fn cmd_map(args: MapArgs) {
         aig.and_gate_cache.len()
     );
 
-    if args.xprop {
+    if xprop {
         let (_x_capable, stats) = aig.compute_x_capable_pins();
         println!(
             "X-propagation analysis: {}/{} pins ({:.1}%) X-capable, {} X-sources, {} fixpoint iterations",
@@ -304,7 +356,7 @@ fn cmd_map(args: MapArgs) {
         );
     }
 
-    let stageds = build_staged_aigs(&aig, &args.level_split);
+    let stageds = build_staged_aigs(&aig, &level_split);
 
     let stages_effective_parts = stageds
         .iter()
@@ -375,7 +427,7 @@ fn cmd_map(args: MapArgs) {
                 staged,
                 parts_indices_good,
                 Some(prebuilt),
-                args.max_stage_degrad,
+                max_stage_degrad,
             )
             .unwrap();
             clilog::info!("after merging: {} parts.", effective_parts.len());
@@ -384,24 +436,95 @@ fn cmd_map(args: MapArgs) {
         .collect::<Vec<_>>();
 
     let partition_file = PartitionFile {
-        level_split: args.level_split.clone(),
-        xprop_analyzed: args.xprop,
+        level_split: level_split.clone(),
+        xprop_analyzed: xprop,
         partitions: stages_effective_parts,
     };
 
-    let f = std::fs::File::create(&args.parts_out).unwrap();
+    let f = std::fs::File::create(&parts_out).unwrap();
     let mut buf = std::io::BufWriter::new(f);
     serde_bare::to_writer(&mut buf, &partition_file).unwrap();
     clilog::info!("Wrote partition file with {} stages", partition_file.partitions.len());
 }
 
 #[allow(unused_variables)]
-fn cmd_sim(args: SimArgs) {
+fn cmd_sim(args: SimArgs, config: &Option<JacquardConfig>) {
     use jacquard::sim::setup;
     use jacquard::sim::vcd_io;
 
+    // Merge CLI args with config file (CLI wins)
+    let netlist_verilog = args.netlist_verilog
+        .or_else(|| config.as_ref().and_then(|c| c.design.netlist.clone()))
+        .unwrap_or_else(|| {
+            eprintln!("Error: netlist_verilog is required (positional arg or design.netlist in jacquard.toml)");
+            std::process::exit(1);
+        });
+    let gemparts = args.gemparts
+        .or_else(|| config.as_ref().and_then(|c| c.effective_gemparts().cloned()))
+        .unwrap_or_else(|| {
+            eprintln!("Error: gemparts is required (positional arg or sim.gemparts/map.output in jacquard.toml)");
+            std::process::exit(1);
+        });
+    let input_vcd = args.input_vcd
+        .or_else(|| config.as_ref().and_then(|c| c.sim.input_vcd.clone()))
+        .unwrap_or_else(|| {
+            eprintln!("Error: input_vcd is required (positional arg or sim.input_vcd in jacquard.toml)");
+            std::process::exit(1);
+        });
+    let output_vcd = args.output_vcd
+        .or_else(|| config.as_ref().and_then(|c| c.sim.output_vcd.clone()))
+        .unwrap_or_else(|| {
+            eprintln!("Error: output_vcd is required (positional arg or sim.output_vcd in jacquard.toml)");
+            std::process::exit(1);
+        });
+    let top_module = args.top_module
+        .or_else(|| config.as_ref().and_then(|c| c.design.top_module.clone()));
+    let level_split = if args.level_split.is_empty() {
+        config.as_ref().map(|c| c.map.level_split.clone()).unwrap_or_default()
+    } else {
+        args.level_split
+    };
+    let input_vcd_scope = args.input_vcd_scope
+        .or_else(|| config.as_ref().and_then(|c| c.sim.input_vcd_scope.clone()));
+    let output_vcd_scope = args.output_vcd_scope
+        .or_else(|| config.as_ref().and_then(|c| c.sim.output_vcd_scope.clone()));
+    let check_with_cpu = args.check_with_cpu
+        || config.as_ref().and_then(|c| c.sim.check_with_cpu).unwrap_or(false);
+    let max_cycles = args.max_cycles
+        .or_else(|| config.as_ref().and_then(|c| c.sim.max_cycles));
+    let json_path = args.json_path
+        .or_else(|| config.as_ref().and_then(|c| c.sim.json_path.clone()));
+    let sdf = args.sdf
+        .or_else(|| config.as_ref().and_then(|c| c.sim.sdf.as_ref().and_then(|s| s.file.clone())));
+    let sdf_corner = if sdf.is_some() {
+        args.sdf_corner
+    } else {
+        config.as_ref()
+            .and_then(|c| c.sim.sdf.as_ref().and_then(|s| s.corner.clone()))
+            .unwrap_or_else(|| "typ".to_string())
+    };
+    let sdf_debug = args.sdf_debug
+        || config.as_ref().and_then(|c| c.sim.sdf.as_ref().and_then(|s| s.debug)).unwrap_or(false);
+    let xprop = args.xprop
+        || config.as_ref().and_then(|c| c.sim.xprop).unwrap_or(false);
+    let enable_timing = args.enable_timing
+        || config.as_ref().and_then(|c| c.sim.timing.as_ref().and_then(|t| t.enabled)).unwrap_or(false);
+    let timing_clock_period = if args.timing_clock_period != 1000 {
+        args.timing_clock_period
+    } else {
+        config.as_ref()
+            .and_then(|c| c.sim.timing.as_ref().and_then(|t| t.clock_period))
+            .unwrap_or(1000)
+    };
+    let timing_report_violations = args.timing_report_violations
+        || config.as_ref().and_then(|c| c.sim.timing.as_ref().and_then(|t| t.report_violations)).unwrap_or(false);
+    let liberty = args.liberty
+        .or_else(|| config.as_ref().and_then(|c| c.design.liberty.clone()));
+
     // Auto-detect or default num_blocks if not specified
-    let num_blocks = args.num_blocks.unwrap_or_else(|| {
+    let num_blocks_cli = args.num_blocks
+        .or_else(|| config.as_ref().and_then(|c| c.sim.num_blocks));
+    let num_blocks = num_blocks_cli.unwrap_or_else(|| {
         #[cfg(feature = "metal")]
         {
             clilog::info!("num_blocks not specified; using 1 for Metal GPU");
@@ -421,17 +544,17 @@ fn cmd_sim(args: SimArgs) {
     });
 
     let design_args = DesignArgs {
-        netlist_verilog: args.netlist_verilog.clone(),
-        top_module: args.top_module.clone(),
-        level_split: args.level_split.clone(),
-        gemparts: args.gemparts.clone(),
+        netlist_verilog: netlist_verilog.clone(),
+        top_module: top_module.clone(),
+        level_split: level_split.clone(),
+        gemparts: gemparts.clone(),
         num_blocks,
-        json_path: args.json_path.clone(),
-        sdf: args.sdf.clone(),
-        sdf_corner: args.sdf_corner.clone(),
-        sdf_debug: args.sdf_debug,
+        json_path: json_path.clone(),
+        sdf: sdf.clone(),
+        sdf_corner: sdf_corner.clone(),
+        sdf_debug,
         clock_period_ps: None,
-        xprop: args.xprop,
+        xprop,
     };
 
     #[allow(unused_mut)]
@@ -439,8 +562,8 @@ fn cmd_sim(args: SimArgs) {
     let timing_constraints = setup::build_timing_constraints(&design.script);
 
     // Parse input VCD
-    let input_vcd = std::fs::File::open(&args.input_vcd).expect("Failed to open input VCD");
-    let mut bufrd = std::io::BufReader::with_capacity(65536, input_vcd);
+    let input_vcd_file = std::fs::File::open(&input_vcd).expect("Failed to open input VCD");
+    let mut bufrd = std::io::BufReader::with_capacity(65536, input_vcd_file);
     let mut vcd_parser = vcd_ng::Parser::new(&mut bufrd);
     let header = vcd_parser.parse_header().unwrap();
     drop(vcd_parser);
@@ -452,9 +575,9 @@ fn cmd_sim(args: SimArgs) {
     // Resolve VCD scope
     let top_scope = vcd_io::resolve_vcd_scope(
         &header.items[..],
-        args.input_vcd_scope.as_deref(),
+        input_vcd_scope.as_deref(),
         &design.netlistdb,
-        args.top_module.as_deref(),
+        top_module.as_deref(),
     );
 
     // Match VCD inputs to netlist ports
@@ -467,17 +590,17 @@ fn cmd_sim(args: SimArgs) {
         &design.aig,
         &design.script,
         &design.netlistdb,
-        args.max_cycles,
+        max_cycles,
     );
 
     // Set up output VCD writer
-    let write_buf = std::fs::File::create(&args.output_vcd).expect("Failed to create output VCD");
+    let write_buf = std::fs::File::create(&output_vcd).expect("Failed to create output VCD");
     let write_buf = std::io::BufWriter::new(write_buf);
     let mut writer = vcd_ng::Writer::new(write_buf);
     let output_mapping = vcd_io::setup_output_vcd(
         &mut writer,
         &header,
-        args.output_vcd_scope.as_deref(),
+        output_vcd_scope.as_deref(),
         &design.netlistdb,
         &design.aig,
         &design.script,
@@ -540,7 +663,7 @@ fn cmd_sim(args: SimArgs) {
 
     // CPU sanity check
     #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
-    if args.check_with_cpu {
+    if check_with_cpu {
         if design.script.xprop_enabled {
             let rio = design.script.reg_io_state_size as usize;
             let (gpu_values, gpu_xmasks) = vcd_io::split_xprop_states(&gpu_states[..], rio);
@@ -574,8 +697,13 @@ fn cmd_sim(args: SimArgs) {
 
     // Post-simulation timing analysis
     #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
-    if args.enable_timing {
-        run_timing_analysis(&mut design.aig, &args);
+    if enable_timing {
+        run_timing_analysis(
+            &mut design.aig,
+            liberty.as_ref(),
+            timing_clock_period,
+            timing_report_violations,
+        );
     }
 
     // Write output VCD
@@ -642,7 +770,7 @@ fn cmd_sim(args: SimArgs) {
         println!("Total cycles simulated: {}", num_cycles);
         println!("Wall-clock time: {:.3}s", elapsed_secs);
         println!("Throughput: {:.2e} cycles/sec", cycles_per_sec);
-        println!("Output VCD: {}", args.output_vcd.display());
+        println!("Output VCD: {}", output_vcd.display());
     }
 }
 
@@ -1336,13 +1464,18 @@ fn sim_hip(
 }
 
 #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
-fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
+fn run_timing_analysis(
+    aig: &mut AIG,
+    liberty_path: Option<&PathBuf>,
+    timing_clock_period: u64,
+    timing_report_violations: bool,
+) {
     use jacquard::liberty_parser::TimingLibrary;
 
     clilog::info!("Running timing analysis on GPU simulation results...");
     let timer_timing = clilog::stimer!("timing_analysis");
 
-    let lib = if let Some(lib_path) = &args.liberty {
+    let lib = if let Some(lib_path) = liberty_path {
         TimingLibrary::from_file(lib_path).expect("Failed to load Liberty library")
     } else {
         TimingLibrary::load_aigpdk().expect("Failed to load default AIGPDK library")
@@ -1350,22 +1483,22 @@ fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
     clilog::info!("Loaded Liberty library: {}", lib.name);
 
     aig.load_timing_library(&lib);
-    aig.clock_period_ps = args.timing_clock_period;
+    aig.clock_period_ps = timing_clock_period;
 
     let report = aig.compute_timing();
     println!();
     println!("{}", report);
     println!(
         "Clock period: {} ps ({:.3} ns)",
-        args.timing_clock_period,
-        args.timing_clock_period as f64 / 1000.0
+        timing_clock_period,
+        timing_clock_period as f64 / 1000.0
     );
     println!();
 
     println!("=== Critical Paths (Top 5) ===");
     let critical_paths = aig.get_critical_paths(5);
     for (i, (endpoint, arrival)) in critical_paths.iter().enumerate() {
-        let slack = args.timing_clock_period as i64 - *arrival as i64;
+        let slack = timing_clock_period as i64 - *arrival as i64;
         println!(
             "#{}: endpoint aigpin {} arrival={} ps, slack={} ps",
             i + 1,
@@ -1376,7 +1509,7 @@ fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
     }
     println!();
 
-    if args.timing_report_violations && report.has_violations() {
+    if timing_report_violations && report.has_violations() {
         println!("=== Timing Violations ===");
         for (i, ((_cell_id, dff), (&setup_slack, &hold_slack))) in aig
             .dffs
@@ -1448,19 +1581,44 @@ fn init_logging(verbose: u8, quiet: u8) {
     clilog::set_max_print_count(clilog::Level::Warn, "NL_SV_LIT", 1);
 }
 
+/// Load config file: from explicit --config path, or auto-discover jacquard.toml.
+fn load_config(config_path: Option<&PathBuf>) -> Option<JacquardConfig> {
+    if let Some(path) = config_path {
+        match JacquardConfig::load(path) {
+            Ok(mut config) => {
+                let config_dir = path.parent().unwrap_or(std::path::Path::new("."));
+                config.resolve_paths(config_dir);
+                clilog::info!("Loaded config from {}", path.display());
+                Some(config)
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        JacquardConfig::discover().map(|(config, path)| {
+            clilog::info!("Auto-discovered config: {}", path.display());
+            config
+        })
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
     init_logging(cli.verbose, cli.quiet);
 
+    let config = load_config(cli.config.as_ref());
+
     match cli.command {
-        Commands::Map(args) => cmd_map(args),
-        Commands::Sim(args) => cmd_sim(args),
-        Commands::Cosim(args) => cmd_cosim(args),
+        Commands::Map(args) => cmd_map(args, &config),
+        Commands::Sim(args) => cmd_sim(args, &config),
+        Commands::Cosim(args) => cmd_cosim(args, &config),
     }
 }
 
 #[allow(unused_variables)]
-fn cmd_cosim(args: CosimArgs) {
+fn cmd_cosim(args: CosimArgs, project_config: &Option<JacquardConfig>) {
     #[cfg(not(feature = "metal"))]
     {
         eprintln!(
@@ -1476,16 +1634,51 @@ fn cmd_cosim(args: CosimArgs) {
         use jacquard::sim::setup;
         use jacquard::testbench::TestbenchConfig;
 
+        // Merge CLI args with config file (CLI wins)
+        let netlist_verilog = args.netlist_verilog
+            .or_else(|| project_config.as_ref().and_then(|c| c.design.netlist.clone()))
+            .unwrap_or_else(|| {
+                eprintln!("Error: netlist_verilog is required (positional arg or design.netlist in jacquard.toml)");
+                std::process::exit(1);
+            });
+        let gemparts = args.gemparts
+            .or_else(|| project_config.as_ref().and_then(|c| c.effective_gemparts().cloned()))
+            .unwrap_or_else(|| {
+                eprintln!("Error: gemparts is required (positional arg or sim.gemparts/map.output in jacquard.toml)");
+                std::process::exit(1);
+            });
+        let cosim_config_path = args.config
+            .or_else(|| project_config.as_ref().and_then(|c| c.cosim.config.clone()))
+            .unwrap_or_else(|| {
+                eprintln!("Error: --config is required (CLI flag or cosim.config in jacquard.toml)");
+                std::process::exit(1);
+            });
+        let top_module = args.top_module
+            .or_else(|| project_config.as_ref().and_then(|c| c.design.top_module.clone()));
+        let level_split = if args.level_split.is_empty() {
+            project_config.as_ref().map(|c| c.map.level_split.clone()).unwrap_or_default()
+        } else {
+            args.level_split
+        };
+        let num_blocks = if args.num_blocks != 64 {
+            args.num_blocks
+        } else {
+            project_config.as_ref().and_then(|c| c.cosim.num_blocks).unwrap_or(64)
+        };
+        let max_cycles = args.max_cycles
+            .or_else(|| project_config.as_ref().and_then(|c| c.cosim.max_cycles));
+        let clock_period = args.clock_period
+            .or_else(|| project_config.as_ref().and_then(|c| c.cosim.clock_period));
+
         // Load testbench config
-        let file = std::fs::File::open(&args.config).expect("Failed to open config file");
+        let file = std::fs::File::open(&cosim_config_path).expect("Failed to open config file");
         let reader = std::io::BufReader::new(file);
         let config: TestbenchConfig =
             serde_json::from_reader(reader).expect("Failed to parse config JSON");
         clilog::info!("Loaded testbench config: {:?}", config);
 
         // Determine clock period for SDF loading
-        let clock_period_ps = args
-            .clock_period
+        let clock_period_ps = clock_period
             .or(config.clock_period_ps)
             .or(config.timing.as_ref().map(|t| t.clock_period_ps));
 
@@ -1506,11 +1699,11 @@ fn cmd_cosim(args: CosimArgs) {
         let sdf_debug = args.sdf_debug;
 
         let design_args = DesignArgs {
-            netlist_verilog: args.netlist_verilog.clone(),
-            top_module: args.top_module.clone(),
-            level_split: args.level_split.clone(),
-            gemparts: args.gemparts.clone(),
-            num_blocks: args.num_blocks,
+            netlist_verilog: netlist_verilog.clone(),
+            top_module: top_module.clone(),
+            level_split: level_split.clone(),
+            gemparts: gemparts.clone(),
+            num_blocks,
             json_path: None,
             sdf,
             sdf_corner,
@@ -1523,12 +1716,12 @@ fn cmd_cosim(args: CosimArgs) {
         let timing_constraints = setup::build_timing_constraints(&design.script);
 
         let opts = CosimOpts {
-            max_cycles: args.max_cycles,
-            num_blocks: args.num_blocks,
+            max_cycles,
+            num_blocks,
             flash_verbose: args.flash_verbose,
             check_with_cpu: args.check_with_cpu,
             gpu_profile: args.gpu_profile,
-            clock_period: args.clock_period,
+            clock_period,
         };
 
         let result =
