@@ -198,6 +198,7 @@ fn cmd_sim(args: SimArgs) {
         sdf_debug: args.sdf_debug,
         clock_period_ps: None,
         xprop: args.xprop,
+        liberty: args.liberty.clone(),
     };
 
     #[allow(unused_mut)]
@@ -205,8 +206,8 @@ fn cmd_sim(args: SimArgs) {
 
     // Enable timing arrival readback if --timing-vcd is set
     if args.timing_vcd {
-        if args.sdf.is_none() {
-            eprintln!("Error: --timing-vcd requires --sdf");
+        if args.sdf.is_none() && args.liberty.is_none() {
+            eprintln!("Error: --timing-vcd requires --sdf or --liberty");
             std::process::exit(1);
         }
         design.script.enable_timing_arrivals();
@@ -1298,6 +1299,7 @@ fn cmd_cosim(args: CosimArgs) {
             sdf_debug,
             clock_period_ps,
             xprop: false, // cosim doesn't support xprop yet
+            liberty: None,
         };
 
         let mut design = setup::load_design(&design_args);

@@ -31,6 +31,8 @@ pub struct DesignArgs {
     pub clock_period_ps: Option<u64>,
     /// Enable selective X-propagation.
     pub xprop: bool,
+    /// Path to Liberty library file for timing data (pre-layout, no SDF needed).
+    pub liberty: Option<PathBuf>,
 }
 
 /// Result of loading a design: everything needed for simulation.
@@ -168,6 +170,23 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
             args.sdf_debug,
             args.clock_period_ps,
         );
+    }
+
+    // Load Liberty-only timing if provided and no SDF
+    if args.sdf.is_none() {
+        if let Some(ref lib_path) = args.liberty {
+            use crate::liberty_parser::TimingLibrary;
+            let lib = TimingLibrary::from_file(lib_path)
+                .expect("Failed to load Liberty library");
+            let clock_ps = args.clock_period_ps.unwrap_or(25000);
+            clilog::info!(
+                "Loading Liberty timing: {:?} (clock_period={}ps)",
+                lib_path,
+                clock_ps
+            );
+            script.load_timing(&aig, &lib, clock_ps);
+            script.inject_timing_to_script();
+        }
     }
 
     // Print script hash
