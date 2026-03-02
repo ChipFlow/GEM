@@ -4,7 +4,10 @@
 //!
 //! Shared between all simulation binaries.
 
+use std::io::Seek;
 use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use crate::aig::{DriverType, AIG};
 use crate::aigpdk::AIGPDKLeafPins;
@@ -14,6 +17,18 @@ use crate::pe::Partition;
 use crate::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
 use crate::staging::build_staged_aigs;
 use netlistdb::NetlistDB;
+
+/// Partition file metadata and contents.
+/// Stores partitions along with the parameters used during mapping.
+#[derive(Serialize, Deserialize)]
+pub struct PartitionFile {
+    /// Level-split thresholds used during mapping.
+    pub level_split: Vec<usize>,
+    /// Whether X-propagation analysis was enabled during mapping.
+    pub xprop_analyzed: bool,
+    /// The actual partitions (stages of partitions).
+    pub partitions: Vec<Vec<Partition>>,
+}
 
 /// Parameters for loading a design.
 pub struct DesignArgs {
@@ -94,11 +109,38 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
         }
     }
 
-    let stageds = build_staged_aigs(&aig, &args.level_split);
-
+    // Load partition file (try new format with metadata first, fall back to old format)
     let f = std::fs::File::open(&args.gemparts).unwrap();
     let mut buf = std::io::BufReader::new(f);
-    let parts_in_stages: Vec<Vec<Partition>> = serde_bare::from_reader(&mut buf).unwrap();
+
+    let (parts_in_stages, level_split_from_file) = match serde_bare::from_reader::<_, PartitionFile>(&mut buf) {
+        Ok(pf) => {
+            clilog::info!(
+                "Loaded partition file with embedded metadata (level_split: {:?}, xprop_analyzed: {})",
+                pf.level_split,
+                pf.xprop_analyzed
+            );
+            (pf.partitions, Some(pf.level_split))
+        }
+        Err(_) => {
+            // Fall back to old format: just the partitions
+            buf.seek(std::io::SeekFrom::Start(0)).ok();
+            let parts: Vec<Vec<Partition>> = serde_bare::from_reader(&mut buf)
+                .expect("Could not deserialize partition file (neither new nor old format)");
+            clilog::info!("Loaded partition file (old format without metadata)");
+            (parts, None)
+        }
+    };
+
+    // Use level_split from file if available and CLI didn't specify one
+    let level_split = if args.level_split.is_empty() {
+        level_split_from_file.unwrap_or_default()
+    } else {
+        args.level_split.clone()
+    };
+
+    let stageds = build_staged_aigs(&aig, &level_split);
+
     clilog::info!(
         "# of effective partitions in each stage: {:?}",
         parts_in_stages

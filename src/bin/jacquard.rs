@@ -9,17 +9,25 @@ use jacquard::aig::AIG;
 use jacquard::aigpdk::AIGPDKLeafPins;
 use jacquard::pe::{process_partitions, Partition};
 use jacquard::repcut::RCHyperGraph;
-use jacquard::sim::setup::DesignArgs;
+use jacquard::sim::setup::{DesignArgs, PartitionFile};
 use jacquard::sky130::{detect_library_from_file, CellLibrary, SKY130LeafPins};
 use jacquard::staging::build_staged_aigs;
 use netlistdb::NetlistDB;
 use rayon::prelude::*;
 
 #[derive(Parser)]
-#[command(name = "jacquard", about = "Jacquard — GPU-accelerated RTL logic simulator")]
+#[command(name = "jacquard", about = "Jacquard — GPU-accelerated RTL logic simulator", version, long_version = concat!(env!("CARGO_PKG_VERSION"), "\n\n", "See https://github.com/chipflow/jacquard for documentation"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Increase verbosity (can be repeated: -vv for trace level).
+    #[clap(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
+    /// Decrease verbosity (can be repeated: -qq for error level).
+    #[clap(short, long, global = true, action = clap::ArgAction::Count)]
+    quiet: u8,
 }
 
 #[derive(Subcommand)]
@@ -94,16 +102,19 @@ struct SimArgs {
     gemparts: PathBuf,
 
     /// VCD input signal path.
-    input_vcd: String,
+    input_vcd: PathBuf,
 
     /// Output VCD path (must be writable).
-    output_vcd: String,
+    output_vcd: PathBuf,
 
     /// Number of GPU blocks to use.
     ///
     /// For CUDA: set to 2x the number of GPU SMs.
+    /// For HIP: set to 2x the number of GPU CUs.
     /// For Metal: set to 1.
-    num_blocks: usize,
+    /// If not provided, defaults to 64 (suitable for many NVIDIA/AMD GPUs).
+    #[clap(long)]
+    num_blocks: Option<usize>,
 
     /// Top module name in the netlist.
     #[clap(long)]
@@ -372,9 +383,16 @@ fn cmd_map(args: MapArgs) {
         })
         .collect::<Vec<_>>();
 
+    let partition_file = PartitionFile {
+        level_split: args.level_split.clone(),
+        xprop_analyzed: args.xprop,
+        partitions: stages_effective_parts,
+    };
+
     let f = std::fs::File::create(&args.parts_out).unwrap();
     let mut buf = std::io::BufWriter::new(f);
-    serde_bare::to_writer(&mut buf, &stages_effective_parts).unwrap();
+    serde_bare::to_writer(&mut buf, &partition_file).unwrap();
+    clilog::info!("Wrote partition file with {} stages", partition_file.partitions.len());
 }
 
 #[allow(unused_variables)]
@@ -382,12 +400,32 @@ fn cmd_sim(args: SimArgs) {
     use jacquard::sim::setup;
     use jacquard::sim::vcd_io;
 
+    // Auto-detect or default num_blocks if not specified
+    let num_blocks = args.num_blocks.unwrap_or_else(|| {
+        #[cfg(feature = "metal")]
+        {
+            clilog::info!("num_blocks not specified; using 1 for Metal GPU");
+            1
+        }
+        #[cfg(all(not(feature = "metal"), any(feature = "cuda", feature = "hip")))]
+        {
+            clilog::info!("num_blocks not specified; defaulting to 64 (suitable for most GPUs)");
+            clilog::info!("For optimal performance, set --num-blocks to 2x the number of SMs (CUDA) or CUs (HIP)");
+            64
+        }
+        #[cfg(not(any(feature = "metal", feature = "cuda", feature = "hip")))]
+        {
+            eprintln!("Build with --features metal, --features cuda, or --features hip to enable GPU simulation");
+            std::process::exit(1);
+        }
+    });
+
     let design_args = DesignArgs {
         netlist_verilog: args.netlist_verilog.clone(),
         top_module: args.top_module.clone(),
         level_split: args.level_split.clone(),
         gemparts: args.gemparts.clone(),
-        num_blocks: args.num_blocks,
+        num_blocks,
         json_path: args.json_path.clone(),
         sdf: args.sdf.clone(),
         sdf_corner: args.sdf_corner.clone(),
@@ -401,7 +439,7 @@ fn cmd_sim(args: SimArgs) {
     let timing_constraints = setup::build_timing_constraints(&design.script);
 
     // Parse input VCD
-    let input_vcd = std::fs::File::open(&args.input_vcd).unwrap();
+    let input_vcd = std::fs::File::open(&args.input_vcd).expect("Failed to open input VCD");
     let mut bufrd = std::io::BufReader::with_capacity(65536, input_vcd);
     let mut vcd_parser = vcd_ng::Parser::new(&mut bufrd);
     let header = vcd_parser.parse_header().unwrap();
@@ -433,7 +471,7 @@ fn cmd_sim(args: SimArgs) {
     );
 
     // Set up output VCD writer
-    let write_buf = std::fs::File::create(&args.output_vcd).unwrap();
+    let write_buf = std::fs::File::create(&args.output_vcd).expect("Failed to create output VCD");
     let write_buf = std::io::BufWriter::new(write_buf);
     let mut writer = vcd_ng::Writer::new(write_buf);
     let output_mapping = vcd_io::setup_output_vcd(
@@ -450,6 +488,45 @@ fn cmd_sim(args: SimArgs) {
     let offsets_timestamps = parsed.offsets_timestamps;
     let num_cycles = offsets_timestamps.len();
 
+    #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
+    let (gpu_states, sim_elapsed) = {
+        #[cfg(feature = "metal")]
+        {
+            let sim_start = std::time::Instant::now();
+            let states = sim_metal(
+                &design,
+                &input_states,
+                &offsets_timestamps,
+                &timing_constraints,
+            );
+            (states, sim_start.elapsed())
+        }
+
+        #[cfg(all(feature = "cuda", not(feature = "metal")))]
+        {
+            let sim_start = std::time::Instant::now();
+            let states = sim_cuda(
+                &design,
+                &input_states,
+                &offsets_timestamps,
+                &timing_constraints,
+            );
+            (states, sim_start.elapsed())
+        }
+
+        #[cfg(all(feature = "hip", not(feature = "metal"), not(feature = "cuda")))]
+        {
+            let sim_start = std::time::Instant::now();
+            let states = sim_hip(
+                &design,
+                &input_states,
+                &offsets_timestamps,
+                &timing_constraints,
+            );
+            (states, sim_start.elapsed())
+        }
+    };
+
     #[cfg(not(any(feature = "metal", feature = "cuda", feature = "hip")))]
     {
         eprintln!(
@@ -460,36 +537,6 @@ fn cmd_sim(args: SimArgs) {
         );
         std::process::exit(1);
     }
-
-    #[cfg(feature = "metal")]
-    let gpu_states = {
-        sim_metal(
-            &design,
-            &input_states,
-            &offsets_timestamps,
-            &timing_constraints,
-        )
-    };
-
-    #[cfg(all(feature = "cuda", not(feature = "metal")))]
-    let gpu_states = {
-        sim_cuda(
-            &design,
-            &input_states,
-            &offsets_timestamps,
-            &timing_constraints,
-        )
-    };
-
-    #[cfg(all(feature = "hip", not(feature = "metal"), not(feature = "cuda")))]
-    let gpu_states = {
-        sim_hip(
-            &design,
-            &input_states,
-            &offsets_timestamps,
-            &timing_constraints,
-        )
-    };
 
     // CPU sanity check
     #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
@@ -580,6 +627,22 @@ fn cmd_sim(args: SimArgs) {
             &offsets_timestamps,
             &gpu_states[..],
         );
+    }
+
+    // Print simulation summary stats
+    #[cfg(any(feature = "metal", feature = "cuda", feature = "hip"))]
+    {
+        let elapsed_secs = sim_elapsed.as_secs_f64();
+        let cycles_per_sec = if elapsed_secs > 0.0 {
+            num_cycles as f64 / elapsed_secs
+        } else {
+            0.0
+        };
+        println!("\n=== Simulation Summary ===");
+        println!("Total cycles simulated: {}", num_cycles);
+        println!("Wall-clock time: {:.3}s", elapsed_secs);
+        println!("Throughput: {:.2e} cycles/sec", cycles_per_sec);
+        println!("Output VCD: {}", args.output_vcd.display());
     }
 }
 
@@ -1347,10 +1410,47 @@ fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
     clilog::finish!(timer_timing);
 }
 
-fn main() {
-    clilog::init_stderr_color_debug();
+fn init_logging(verbose: u8, quiet: u8) {
+    use simplelog::*;
+    let level = match (verbose, quiet) {
+        (0, 0) => LevelFilter::Info,
+        (1, 0) => LevelFilter::Debug,
+        (v, 0) if v >= 2 => LevelFilter::Trace,
+        (0, 1) => LevelFilter::Warn,
+        (0, q) if q >= 2 => LevelFilter::Error,
+        // Both set: verbose takes precedence
+        (v, _) if v > 0 => {
+            match v {
+                1 => LevelFilter::Debug,
+                _ => LevelFilter::Trace,
+            }
+        }
+        (_, q) => {
+            match q {
+                1 => LevelFilter::Warn,
+                _ => LevelFilter::Error,
+            }
+        }
+    };
+
+    TermLogger::init(
+        level,
+        ConfigBuilder::new()
+            .set_location_level(LevelFilter::Debug)
+            .set_thread_level(LevelFilter::Trace)
+            .add_filter_ignore_str("rustyline")
+            .build(),
+        TerminalMode::Stderr,
+        ColorChoice::Auto,
+    )
+    .unwrap();
+
     clilog::set_max_print_count(clilog::Level::Warn, "NL_SV_LIT", 1);
+}
+
+fn main() {
     let cli = Cli::parse();
+    init_logging(cli.verbose, cli.quiet);
 
     match cli.command {
         Commands::Map(args) => cmd_map(args),

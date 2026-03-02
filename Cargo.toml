@@ -20,6 +20,7 @@ serde = { version = "1.0.208", features = ["derive"] }
 smallvec = "1.13"
 serde_bare = "0.5.0"
 serde_json = "1.0"
+simplelog = "0.12.2"
 sverilogparse = { version = "0.4.2", path = "vendor/eda-infra-rs/sverilogparse" }
 tempdir = "0.3.7"
 ulib = { version = "0.3.13", path = "vendor/eda-infra-rs/ulib" }
