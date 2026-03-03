@@ -496,7 +496,12 @@ jobs:
             designs/mcu_soc_sky130/pins.lock tests/mcu_soc/ \
             --netlist tests/mcu_soc/data/6_final.v \
             --firmware designs/mcu_soc_sky130/build/software/software.bin \
-            --port-mapping
+            --port-mapping \
+            --constant-port por_l=1 \
+            --constant-port porb_h=1 \
+            --constant-port porb_l=1 \
+            --constant-port resetb_h=1 \
+            --constant-port resetb_l=1
 
       - name: Run GPU co-simulation (100K ticks)
         timeout-minutes: 15

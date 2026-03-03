@@ -61,5 +61,12 @@
     },
     "constant_inputs": {
         "6": 1
+    },
+    "constant_ports": {
+        "por_l": 1,
+        "porb_h": 1,
+        "porb_l": 1,
+        "resetb_h": 1,
+        "resetb_l": 1
     }
 }

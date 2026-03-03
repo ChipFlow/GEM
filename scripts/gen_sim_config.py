@@ -160,6 +160,7 @@ def gen_sim_config(
     events_reference: str | None = None,
     port_mapping: bool = False,
     multi_clock: bool = False,
+    constant_ports: dict[str, int] | None = None,
 ) -> dict:
     """Generate sim_config.json content from pins.lock data."""
     process = pins_lock.get("process", "unknown")
@@ -255,6 +256,11 @@ def gen_sim_config(
                  f"{len(output_map)} outputs, "
                  f"{len(const_inputs)} constants")
 
+    # Non-GPIO constant ports (e.g. Caravel power-on-reset signals)
+    if constant_ports:
+        config["constant_ports"] = constant_ports
+        log.info(f"Constant ports: {constant_ports}")
+
     # Multi-clock domain support
     if multi_clock:
         additional_clocks = _find_additional_clocks(
@@ -314,11 +320,24 @@ def main() -> int:
     parser.add_argument("--multi-clock", action="store_true",
                         help="Auto-detect and configure multiple clock domains "
                         "(e.g. system clock + JTAG TCK)")
+    parser.add_argument("--constant-port", action="append", default=[],
+                        metavar="NAME=VALUE",
+                        help="Non-GPIO primary input to drive constant "
+                        "(e.g. --constant-port por_l=1). Can be repeated.")
 
     args = parser.parse_args()
 
     with open(args.pins_lock) as f:
         pins_lock = json.load(f)
+
+    # Parse --constant-port NAME=VALUE entries
+    const_ports: dict[str, int] = {}
+    for entry in args.constant_port:
+        if "=" not in entry:
+            log.error(f"Invalid --constant-port format: {entry!r} (expected NAME=VALUE)")
+            return 1
+        name, val_str = entry.split("=", 1)
+        const_ports[name] = int(val_str)
 
     config = gen_sim_config(
         pins_lock,
@@ -332,6 +351,7 @@ def main() -> int:
         events_reference=args.events_reference,
         port_mapping=args.port_mapping,
         multi_clock=args.multi_clock,
+        constant_ports=const_ports or None,
     )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
