@@ -1,0 +1,771 @@
+OSS_CVC_7.00b-x86_64-rhel6x of 07/07/14 (Linux-elf).
+Copyright (c) 1991-2014 Tachyon Design Automation Corp.
+  All Rights reserved.  Licensed software subject to prohibitions and
+  restrictions.  See OSS CVC artistic license included with release.
+Today is Sat Feb 28 15:51:27 2026.
+Elaborating source file "tb_cvc.v"
+Elaborating source file "sky130_cells.v"
+Elaborating source file "cf_sram.v"
+Elaborating source file "6_final.v"
+**6_final.v(154763) WARN** [531] _58736__6883(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396130) WARN** [531] _55623__6820(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396131) WARN** [531] _58846__6821(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396132) WARN** [531] _58847__6822(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396133) WARN** [531] _58849__6823(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396134) WARN** [531] _58850__6824(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396135) WARN** [531] _58852__6825(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396136) WARN** [531] _58853__6826(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396137) WARN** [531] _58854__6827(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396138) WARN** [531] _58855__6828(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396139) WARN** [531] _58856__6829(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396140) WARN** [531] _58857__6830(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396141) WARN** [531] _58858__6831(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396142) WARN** [531] _58859__6832(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396143) WARN** [531] _58876__6833(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396144) WARN** [531] _58877__6834(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396145) WARN** [531] _58878__6835(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396146) WARN** [531] _58879__6836(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396147) WARN** [531] _58880__6837(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396148) WARN** [531] _58881__6838(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396149) WARN** [531] _58882__6839(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396150) WARN** [531] _58883__6840(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396151) WARN** [531] _58884__6841(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396152) WARN** [531] _58885__6842(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396153) WARN** [531] _58886__6843(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396154) WARN** [531] _58887__6844(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396155) WARN** [531] _58888__6845(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396156) WARN** [531] _58889__6846(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396157) WARN** [531] _58890__6847(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396158) WARN** [531] _58891__6848(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396159) WARN** [531] _58892__6849(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396160) WARN** [531] _58893__6850(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396161) WARN** [531] _58895__6851(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396162) WARN** [531] _58899__6852(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396163) WARN** [531] _58903__6853(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396164) WARN** [531] _58904__6854(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396165) WARN** [531] _58906__6855(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396166) WARN** [531] _58907__6856(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396167) WARN** [531] _58909__6857(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396168) WARN** [531] _58910__6858(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396169) WARN** [531] _58912__6859(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396170) WARN** [531] _58913__6860(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396171) WARN** [531] _58915__6861(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396172) WARN** [531] _58916__6862(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396173) WARN** [531] _58917__6863(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396174) WARN** [531] _58918__6864(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396175) WARN** [531] _58927__6865(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396176) WARN** [531] _58928__6866(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396177) WARN** [531] _58929__6867(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396178) WARN** [531] _58930__6868(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396179) WARN** [531] _58931__6869(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396180) WARN** [531] _58932__6870(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396181) WARN** [531] _58933__6871(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396182) WARN** [531] _58934__6872(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396183) WARN** [531] _58935__6873(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396184) WARN** [531] _58939__6874(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396185) WARN** [531] \soc.sram.mem.0.0_6875 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396186) WARN** [531] \soc.sram.mem.0.0_6876 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396187) WARN** [531] \soc.sram.mem.0.0_6877 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396188) WARN** [531] \soc.sram.mem.0.0_6878 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396189) WARN** [531] \soc.sram.mem.0.0_6879 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396190) WARN** [531] \soc.sram.mem.0.0_6880 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396191) WARN** [531] \soc.sram.mem.0.0_6881 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396192) WARN** [531] \soc.sram.mem.0.0_6882 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396193) WARN** [531] _58848__6884(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396194) WARN** [531] _58851__6885(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396195) WARN** [531] _58860__6886(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396196) WARN** [531] _58861__6887(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396197) WARN** [531] _58862__6888(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396198) WARN** [531] _58863__6889(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396199) WARN** [531] _58864__6890(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396200) WARN** [531] _58865__6891(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396201) WARN** [531] _58866__6892(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396202) WARN** [531] _58867__6893(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396203) WARN** [531] _58868__6894(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396204) WARN** [531] _58869__6895(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396205) WARN** [531] _58870__6896(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396206) WARN** [531] _58871__6897(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396207) WARN** [531] _58872__6898(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396208) WARN** [531] _58873__6899(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396209) WARN** [531] _58874__6900(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396210) WARN** [531] _58875__6901(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396211) WARN** [531] _58894__6902(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396212) WARN** [531] _58896__6903(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396213) WARN** [531] _58897__6904(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396214) WARN** [531] _58898__6905(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396215) WARN** [531] _58900__6906(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396216) WARN** [531] _58901__6907(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396217) WARN** [531] _58902__6908(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396218) WARN** [531] _58905__6909(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396219) WARN** [531] _58908__6910(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396220) WARN** [531] _58911__6911(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396221) WARN** [531] _58914__6912(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396222) WARN** [531] _58919__6913(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396223) WARN** [531] _58920__6914(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396224) WARN** [531] _58921__6915(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396225) WARN** [531] _58922__6916(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396226) WARN** [531] _58923__6917(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396227) WARN** [531] _58924__6918(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396228) WARN** [531] _58925__6919(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396229) WARN** [531] _58926__6920(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396230) WARN** [531] _58936__6921(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396231) WARN** [531] _58937__6922(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396232) WARN** [531] _58938__6923(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396233) WARN** [531] _58940__6924(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396234) WARN** [531] _58941__6925(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396235) WARN** [531] _58942__6926(sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396236) WARN** [531] \soc.sram.mem.0.0_6927 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396237) WARN** [531] \soc.sram.mem.0.0_6928 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(396238) WARN** [531] \soc.sram.mem.0.0_6929 (sky130_fd_sc_hd__conb_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397163) WARN** [531] clkload0(sky130_fd_sc_hd__clkinv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397164) WARN** [531] clkload1(sky130_fd_sc_hd__inv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397165) WARN** [531] clkload2(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397166) WARN** [531] clkload3(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397167) WARN** [531] clkload4(sky130_fd_sc_hd__clkinv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397168) WARN** [531] clkload5(sky130_fd_sc_hd__inv_12) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397169) WARN** [531] clkload6(sky130_fd_sc_hd__inv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397170) WARN** [531] clkload7(sky130_fd_sc_hd__inv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397171) WARN** [531] clkload8(sky130_fd_sc_hd__inv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397172) WARN** [531] clkload9(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397173) WARN** [531] clkload10(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397174) WARN** [531] clkload11(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397175) WARN** [531] clkload12(sky130_fd_sc_hd__clkinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397176) WARN** [531] clkload13(sky130_fd_sc_hd__inv_12) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397177) WARN** [531] clkload14(sky130_fd_sc_hd__inv_12) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397178) WARN** [531] clkload15(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397179) WARN** [531] clkload16(sky130_fd_sc_hd__clkinv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397180) WARN** [531] clkload17(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397181) WARN** [531] clkload18(sky130_fd_sc_hd__inv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397182) WARN** [531] clkload19(sky130_fd_sc_hd__inv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397183) WARN** [531] clkload20(sky130_fd_sc_hd__inv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397184) WARN** [531] clkload21(sky130_fd_sc_hd__clkinv_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397185) WARN** [531] clkload22(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397186) WARN** [531] clkload23(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397187) WARN** [531] clkload24(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397188) WARN** [531] clkload25(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397189) WARN** [531] clkload26(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397190) WARN** [531] clkload27(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397191) WARN** [531] clkload28(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397192) WARN** [531] clkload29(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397193) WARN** [531] clkload30(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397194) WARN** [531] clkload31(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397195) WARN** [531] clkload32(sky130_fd_sc_hd__clkinv_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397196) WARN** [531] clkload33(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397197) WARN** [531] clkload34(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397198) WARN** [531] clkload35(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397199) WARN** [531] clkload36(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397200) WARN** [531] clkload37(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397201) WARN** [531] clkload38(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397202) WARN** [531] clkload39(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397203) WARN** [531] clkload40(sky130_fd_sc_hd__inv_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397204) WARN** [531] clkload41(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397205) WARN** [531] clkload42(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397206) WARN** [531] clkload43(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397207) WARN** [531] clkload44(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397208) WARN** [531] clkload45(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397209) WARN** [531] clkload46(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397210) WARN** [531] clkload47(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397211) WARN** [531] clkload48(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397212) WARN** [531] clkload49(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397213) WARN** [531] clkload50(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397214) WARN** [531] clkload51(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397215) WARN** [531] clkload52(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397216) WARN** [531] clkload53(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397217) WARN** [531] clkload54(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397218) WARN** [531] clkload55(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397219) WARN** [531] clkload56(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397220) WARN** [531] clkload57(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397221) WARN** [531] clkload58(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397222) WARN** [531] clkload59(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397223) WARN** [531] clkload60(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397224) WARN** [531] clkload61(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397225) WARN** [531] clkload62(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397226) WARN** [531] clkload63(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397227) WARN** [531] clkload64(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397228) WARN** [531] clkload65(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397229) WARN** [531] clkload66(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397230) WARN** [531] clkload67(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397231) WARN** [531] clkload68(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397232) WARN** [531] clkload69(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397233) WARN** [531] clkload70(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397234) WARN** [531] clkload71(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397235) WARN** [531] clkload72(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397236) WARN** [531] clkload73(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397237) WARN** [531] clkload74(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397238) WARN** [531] clkload75(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397239) WARN** [531] clkload76(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397240) WARN** [531] clkload77(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397241) WARN** [531] clkload78(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397242) WARN** [531] clkload79(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397243) WARN** [531] clkload80(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397244) WARN** [531] clkload81(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397245) WARN** [531] clkload82(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397246) WARN** [531] clkload83(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397247) WARN** [531] clkload84(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397248) WARN** [531] clkload85(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397249) WARN** [531] clkload86(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397250) WARN** [531] clkload87(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397251) WARN** [531] clkload88(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397252) WARN** [531] clkload89(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397253) WARN** [531] clkload90(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397254) WARN** [531] clkload91(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397255) WARN** [531] clkload92(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397256) WARN** [531] clkload93(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397257) WARN** [531] clkload94(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397258) WARN** [531] clkload95(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397259) WARN** [531] clkload96(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397260) WARN** [531] clkload97(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397261) WARN** [531] clkload98(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397262) WARN** [531] clkload99(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397263) WARN** [531] clkload100(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397264) WARN** [531] clkload101(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397265) WARN** [531] clkload102(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397266) WARN** [531] clkload103(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397267) WARN** [531] clkload104(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397268) WARN** [531] clkload105(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397269) WARN** [531] clkload106(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397270) WARN** [531] clkload107(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397271) WARN** [531] clkload108(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397272) WARN** [531] clkload109(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397273) WARN** [531] clkload110(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397274) WARN** [531] clkload111(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397275) WARN** [531] clkload112(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397276) WARN** [531] clkload113(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397277) WARN** [531] clkload114(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397278) WARN** [531] clkload115(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397279) WARN** [531] clkload116(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397280) WARN** [531] clkload117(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397281) WARN** [531] clkload118(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397282) WARN** [531] clkload119(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397283) WARN** [531] clkload120(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397284) WARN** [531] clkload121(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397285) WARN** [531] clkload122(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397286) WARN** [531] clkload123(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397287) WARN** [531] clkload124(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397288) WARN** [531] clkload125(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397289) WARN** [531] clkload126(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397290) WARN** [531] clkload127(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397291) WARN** [531] clkload128(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397292) WARN** [531] clkload129(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397293) WARN** [531] clkload130(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397294) WARN** [531] clkload131(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397295) WARN** [531] clkload132(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397296) WARN** [531] clkload133(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397297) WARN** [531] clkload134(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397298) WARN** [531] clkload135(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397299) WARN** [531] clkload136(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397300) WARN** [531] clkload137(sky130_fd_sc_hd__clkinv_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397301) WARN** [531] clkload138(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397302) WARN** [531] clkload139(sky130_fd_sc_hd__clkinv_1) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397303) WARN** [531] clkload140(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397304) WARN** [531] clkload141(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397305) WARN** [531] clkload142(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397306) WARN** [531] clkload143(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397307) WARN** [531] clkload144(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397308) WARN** [531] clkload145(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397309) WARN** [531] clkload146(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397310) WARN** [531] clkload147(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397311) WARN** [531] clkload148(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397312) WARN** [531] clkload149(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397313) WARN** [531] clkload150(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397314) WARN** [531] clkload151(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397315) WARN** [531] clkload152(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397316) WARN** [531] clkload153(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397317) WARN** [531] clkload154(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397318) WARN** [531] clkload155(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397319) WARN** [531] clkload156(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397320) WARN** [531] clkload157(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397321) WARN** [531] clkload158(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397322) WARN** [531] clkload159(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397323) WARN** [531] clkload160(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397324) WARN** [531] clkload161(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397325) WARN** [531] clkload162(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397326) WARN** [531] clkload163(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397327) WARN** [531] clkload164(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397328) WARN** [531] clkload165(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397329) WARN** [531] clkload166(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397330) WARN** [531] clkload167(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397331) WARN** [531] clkload168(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397332) WARN** [531] clkload169(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397333) WARN** [531] clkload170(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397334) WARN** [531] clkload171(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397335) WARN** [531] clkload172(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397336) WARN** [531] clkload173(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397337) WARN** [531] clkload174(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397338) WARN** [531] clkload175(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397339) WARN** [531] clkload176(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397340) WARN** [531] clkload177(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397341) WARN** [531] clkload178(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397342) WARN** [531] clkload179(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397343) WARN** [531] clkload180(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397344) WARN** [531] clkload181(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397345) WARN** [531] clkload182(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397346) WARN** [531] clkload183(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397347) WARN** [531] clkload184(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397348) WARN** [531] clkload185(sky130_fd_sc_hd__inv_6) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397349) WARN** [531] clkload186(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397350) WARN** [531] clkload187(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397351) WARN** [531] clkload188(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397352) WARN** [531] clkload189(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397353) WARN** [531] clkload190(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397354) WARN** [531] clkload191(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397355) WARN** [531] clkload192(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397356) WARN** [531] clkload193(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397357) WARN** [531] clkload194(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397358) WARN** [531] clkload195(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397359) WARN** [531] clkload196(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397360) WARN** [531] clkload197(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397361) WARN** [531] clkload198(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397362) WARN** [531] clkload199(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397363) WARN** [531] clkload200(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397364) WARN** [531] clkload201(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397365) WARN** [531] clkload202(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397366) WARN** [531] clkload203(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397367) WARN** [531] clkload204(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397368) WARN** [531] clkload205(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397369) WARN** [531] clkload206(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397370) WARN** [531] clkload207(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397371) WARN** [531] clkload208(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397372) WARN** [531] clkload209(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397373) WARN** [531] clkload210(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397374) WARN** [531] clkload211(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397375) WARN** [531] clkload212(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397376) WARN** [531] clkload213(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397377) WARN** [531] clkload214(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397378) WARN** [531] clkload215(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397379) WARN** [531] clkload216(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397380) WARN** [531] clkload217(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397381) WARN** [531] clkload218(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397382) WARN** [531] clkload219(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397383) WARN** [531] clkload220(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397384) WARN** [531] clkload221(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397385) WARN** [531] clkload222(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397386) WARN** [531] clkload223(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397387) WARN** [531] clkload224(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397388) WARN** [531] clkload225(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397389) WARN** [531] clkload226(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397390) WARN** [531] clkload227(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397391) WARN** [531] clkload228(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397392) WARN** [531] clkload229(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397393) WARN** [531] clkload230(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397394) WARN** [531] clkload231(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397395) WARN** [531] clkload232(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397396) WARN** [531] clkload233(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397397) WARN** [531] clkload234(sky130_fd_sc_hd__clkinv_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397398) WARN** [531] clkload235(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397399) WARN** [531] clkload236(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397400) WARN** [531] clkload237(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397401) WARN** [531] clkload238(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397402) WARN** [531] clkload239(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397403) WARN** [531] clkload240(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397404) WARN** [531] clkload241(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397405) WARN** [531] clkload242(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397406) WARN** [531] clkload243(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397407) WARN** [531] clkload244(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397408) WARN** [531] clkload245(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397409) WARN** [531] clkload246(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397410) WARN** [531] clkload247(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397411) WARN** [531] clkload248(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397412) WARN** [531] clkload249(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397413) WARN** [531] clkload250(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397414) WARN** [531] clkload251(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397415) WARN** [531] clkload252(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397416) WARN** [531] clkload253(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397417) WARN** [531] clkload254(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397418) WARN** [531] clkload255(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397419) WARN** [531] clkload256(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397420) WARN** [531] clkload257(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397421) WARN** [531] clkload258(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397422) WARN** [531] clkload259(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397423) WARN** [531] clkload260(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397424) WARN** [531] clkload261(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397425) WARN** [531] clkload262(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397426) WARN** [531] clkload263(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397427) WARN** [531] clkload264(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397428) WARN** [531] clkload265(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397429) WARN** [531] clkload266(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397430) WARN** [531] clkload267(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397431) WARN** [531] clkload268(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397432) WARN** [531] clkload269(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397433) WARN** [531] clkload270(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397434) WARN** [531] clkload271(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397435) WARN** [531] clkload272(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397436) WARN** [531] clkload273(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397437) WARN** [531] clkload274(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397438) WARN** [531] clkload275(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397439) WARN** [531] clkload276(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397440) WARN** [531] clkload277(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397441) WARN** [531] clkload278(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397442) WARN** [531] clkload279(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397443) WARN** [531] clkload280(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397444) WARN** [531] clkload281(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397445) WARN** [531] clkload282(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397446) WARN** [531] clkload283(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397447) WARN** [531] clkload284(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397448) WARN** [531] clkload285(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397449) WARN** [531] clkload286(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397450) WARN** [531] clkload287(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397451) WARN** [531] clkload288(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397452) WARN** [531] clkload289(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397453) WARN** [531] clkload290(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397454) WARN** [531] clkload291(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397455) WARN** [531] clkload292(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397456) WARN** [531] clkload293(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397457) WARN** [531] clkload294(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397458) WARN** [531] clkload295(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397459) WARN** [531] clkload296(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397460) WARN** [531] clkload297(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397461) WARN** [531] clkload298(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397462) WARN** [531] clkload299(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397463) WARN** [531] clkload300(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397464) WARN** [531] clkload301(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397465) WARN** [531] clkload302(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397466) WARN** [531] clkload303(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397467) WARN** [531] clkload304(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397468) WARN** [531] clkload305(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397469) WARN** [531] clkload306(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397470) WARN** [531] clkload307(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397471) WARN** [531] clkload308(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397472) WARN** [531] clkload309(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397473) WARN** [531] clkload310(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397474) WARN** [531] clkload311(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397475) WARN** [531] clkload312(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397476) WARN** [531] clkload313(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397477) WARN** [531] clkload314(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397478) WARN** [531] clkload315(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397479) WARN** [531] clkload316(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397480) WARN** [531] clkload317(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397481) WARN** [531] clkload318(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397482) WARN** [531] clkload319(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397483) WARN** [531] clkload320(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397484) WARN** [531] clkload321(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397485) WARN** [531] clkload322(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397486) WARN** [531] clkload323(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397487) WARN** [531] clkload324(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397488) WARN** [531] clkload325(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397489) WARN** [531] clkload326(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397490) WARN** [531] clkload327(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397491) WARN** [531] clkload328(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397492) WARN** [531] clkload329(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397493) WARN** [531] clkload330(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397494) WARN** [531] clkload331(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397495) WARN** [531] clkload332(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397496) WARN** [531] clkload333(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397497) WARN** [531] clkload334(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397498) WARN** [531] clkload335(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397499) WARN** [531] clkload336(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397500) WARN** [531] clkload337(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397501) WARN** [531] clkload338(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397502) WARN** [531] clkload339(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397503) WARN** [531] clkload340(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397504) WARN** [531] clkload341(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397505) WARN** [531] clkload342(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397506) WARN** [531] clkload343(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397507) WARN** [531] clkload344(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397508) WARN** [531] clkload345(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397509) WARN** [531] clkload346(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397510) WARN** [531] clkload347(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397511) WARN** [531] clkload348(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397512) WARN** [531] clkload349(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397513) WARN** [531] clkload350(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397514) WARN** [531] clkload351(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397515) WARN** [531] clkload352(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397516) WARN** [531] clkload353(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397517) WARN** [531] clkload354(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397518) WARN** [531] clkload355(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397519) WARN** [531] clkload356(sky130_fd_sc_hd__clkinv_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397520) WARN** [531] clkload357(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397521) WARN** [531] clkload358(sky130_fd_sc_hd__clkinvlp_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397522) WARN** [531] clkload359(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397523) WARN** [531] clkload360(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397524) WARN** [531] clkload361(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397525) WARN** [531] clkload362(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397526) WARN** [531] clkload363(sky130_fd_sc_hd__clkinv_2) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397527) WARN** [531] clkload364(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397528) WARN** [531] clkload365(sky130_fd_sc_hd__clkbuf_8) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397529) WARN** [531] clkload366(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397530) WARN** [531] clkload367(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397531) WARN** [531] clkload368(sky130_fd_sc_hd__clkbuf_4) explicit connection list fewer ports 1 connected than type's 2
+**6_final.v(397532) WARN** [531] clkload369(sky130_fd_sc_hd__bufinv_16) explicit connection list fewer ports 1 connected than type's 2
+Highest level modules:
+tb_cvc
+**cf_sram.v(46) WARN** [616] path destination DO[0] does not have a driver - path delay no effect
+**cf_sram.v(47) WARN** [616] path destination DO[1] does not have a driver - path delay no effect
+**cf_sram.v(48) WARN** [616] path destination DO[2] does not have a driver - path delay no effect
+**cf_sram.v(49) WARN** [616] path destination DO[3] does not have a driver - path delay no effect
+**cf_sram.v(50) WARN** [616] path destination DO[4] does not have a driver - path delay no effect
+**cf_sram.v(51) WARN** [616] path destination DO[5] does not have a driver - path delay no effect
+**cf_sram.v(52) WARN** [616] path destination DO[6] does not have a driver - path delay no effect
+**cf_sram.v(53) WARN** [616] path destination DO[7] does not have a driver - path delay no effect
+**cf_sram.v(54) WARN** [616] path destination DO[8] does not have a driver - path delay no effect
+**cf_sram.v(55) WARN** [616] path destination DO[9] does not have a driver - path delay no effect
+**cf_sram.v(56) WARN** [616] path destination DO[10] does not have a driver - path delay no effect
+**cf_sram.v(57) WARN** [616] path destination DO[11] does not have a driver - path delay no effect
+**cf_sram.v(58) WARN** [616] path destination DO[12] does not have a driver - path delay no effect
+**cf_sram.v(59) WARN** [616] path destination DO[13] does not have a driver - path delay no effect
+**cf_sram.v(60) WARN** [616] path destination DO[14] does not have a driver - path delay no effect
+**cf_sram.v(61) WARN** [616] path destination DO[15] does not have a driver - path delay no effect
+**cf_sram.v(62) WARN** [616] path destination DO[16] does not have a driver - path delay no effect
+**cf_sram.v(63) WARN** [616] path destination DO[17] does not have a driver - path delay no effect
+**cf_sram.v(64) WARN** [616] path destination DO[18] does not have a driver - path delay no effect
+**cf_sram.v(65) WARN** [616] path destination DO[19] does not have a driver - path delay no effect
+**cf_sram.v(66) WARN** [616] path destination DO[20] does not have a driver - path delay no effect
+**cf_sram.v(67) WARN** [616] path destination DO[21] does not have a driver - path delay no effect
+**cf_sram.v(68) WARN** [616] path destination DO[22] does not have a driver - path delay no effect
+**cf_sram.v(69) WARN** [616] path destination DO[23] does not have a driver - path delay no effect
+**cf_sram.v(70) WARN** [616] path destination DO[24] does not have a driver - path delay no effect
+**cf_sram.v(71) WARN** [616] path destination DO[25] does not have a driver - path delay no effect
+**cf_sram.v(72) WARN** [616] path destination DO[26] does not have a driver - path delay no effect
+**cf_sram.v(73) WARN** [616] path destination DO[27] does not have a driver - path delay no effect
+**cf_sram.v(74) WARN** [616] path destination DO[28] does not have a driver - path delay no effect
+**cf_sram.v(75) WARN** [616] path destination DO[29] does not have a driver - path delay no effect
+**cf_sram.v(76) WARN** [616] path destination DO[30] does not have a driver - path delay no effect
+**cf_sram.v(77) WARN** [616] path destination DO[31] does not have a driver - path delay no effect
+**6_final_nocheck.sdf(9) WARN** [662] (VOLTAGE value missing in rtriple field "typ"
+**6_final_nocheck.sdf(11) WARN** [662] (TEMPERATURE value missing in rtriple field "typ"
+**6_final_nocheck.sdf(388803) ERROR** [1385] (IOPATH [dest.] form port ScanOutCC not a port of CF_SRAM_1024x32
+**6_final_nocheck.sdf(388805) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388807) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388809) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388811) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388813) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388815) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388817) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388819) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388821) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388823) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388825) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388827) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388829) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388831) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388833) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388835) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388837) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388839) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388841) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388843) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388845) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388847) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388849) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388851) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388853) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388855) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388857) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388859) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388861) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388863) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388865) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388867) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+**6_final_nocheck.sdf(388869) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388871) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388873) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388875) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388877) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388879) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388881) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388883) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388885) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388887) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388889) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388891) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388893) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388895) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388897) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388899) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388901) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388903) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388905) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388907) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388909) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388911) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388913) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388915) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388917) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388919) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388921) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388923) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388925) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388927) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388929) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388931) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+**6_final_nocheck.sdf(388933) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388935) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388937) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388939) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388941) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388943) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388945) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388947) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388949) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388951) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388953) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388955) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388957) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388959) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388961) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388963) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388965) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388967) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388969) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388971) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388973) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388975) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388977) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388979) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388981) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388983) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388985) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388987) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388989) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388991) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388993) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388995) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+  **97 SDF errors during $sdf_annotate of "6_final_nocheck.sdf" context scope tb_cvc.uut.top_inst
+  Compiling module 1 of 262.  Compiling module 2 of 262.  Compiling module 3 of 262.  Compiling module 4 of 262.  Compiling module 5 of 262.  Compiling module 6 of 262.  Compiling module 7 of 262.  Compiling module 8 of 262.  Compiling module 9 of 262.  Compiling module 10 of 262.  Compiling module 11 of 262.  Compiling module 12 of 262.  Compiling module 13 of 262.  Compiling module 14 of 262.  Compiling module 15 of 262.  Compiling module 16 of 262.  Compiling module 17 of 262.  Compiling module 18 of 262.  Compiling module 19 of 262.  Compiling module 20 of 262.  Compiling module 21 of 262.  Compiling module 22 of 262.  Compiling module 23 of 262.  Compiling module 24 of 262.  Compiling module 25 of 262.  Compiling module 26 of 262.  Compiling module 27 of 262.  Compiling module 28 of 262.  Compiling module 29 of 262.  Compiling module 30 of 262.  Compiling module 31 of 262.  Compiling module 32 of 262.  Compiling module 33 of 262.  Compiling module 34 of 262.  Compiling module 35 of 262.  Compiling module 36 of 262.  Compiling module 37 of 262.  Compiling module 38 of 262.  Compiling module 39 of 262.  Compiling module 40 of 262.  Compiling module 41 of 262.  Compiling module 42 of 262.  Compiling module 43 of 262.  Compiling module 44 of 262.  Compiling module 45 of 262.  Compiling module 46 of 262.  Compiling module 47 of 262.  Compiling module 48 of 262.  Compiling module 49 of 262.  Compiling module 50 of 262.  Compiling module 51 of 262.  Compiling module 52 of 262.  Compiling module 53 of 262.  Compiling module 54 of 262.  Compiling module 55 of 262.  Compiling module 56 of 262.  Compiling module 57 of 262.  Compiling module 58 of 262.  Compiling module 59 of 262.  Compiling module 60 of 262.  Compiling module 61 of 262.  Compiling module 62 of 262.  Compiling module 63 of 262.  Compiling module 64 of 262.  Compiling module 65 of 262.  Compiling module 66 of 262.  Compiling module 67 of 262.  Compiling module 68 of 262.  Compiling module 69 of 262.  Compiling module 70 of 262.  Compiling module 71 of 262.  Compiling module 72 of 262.  Compiling module 73 of 262.  Compiling module 74 of 262.  Compiling module 75 of 262.  Compiling module 76 of 262.  Compiling module 77 of 262.  Compiling module 78 of 262.  Compiling module 79 of 262.  Compiling module 80 of 262.  Compiling module 81 of 262.  Compiling module 82 of 262.  Compiling module 83 of 262.  Compiling module 84 of 262.  Compiling module 85 of 262.  Compiling module 86 of 262.  Compiling module 87 of 262.  Compiling module 88 of 262.  Compiling module 89 of 262.  Compiling module 90 of 262.  Compiling module 91 of 262.  Compiling module 92 of 262.  Compiling module 93 of 262.  Compiling module 94 of 262.  Compiling module 95 of 262.  Compiling module 96 of 262.  Compiling module 97 of 262.  Compiling module 98 of 262.  Compiling module 99 of 262.  Compiling module 100 of 262.  Compiling module 101 of 262.  Compiling module 102 of 262.  Compiling module 103 of 262.  Compiling module 104 of 262.  Compiling module 105 of 262.  Compiling module 106 of 262.  Compiling module 107 of 262.  Compiling module 108 of 262.  Compiling module 109 of 262.  Compiling module 110 of 262.  Compiling module 111 of 262.  Compiling module 112 of 262.  Compiling module 113 of 262.  Compiling module 114 of 262.  Compiling module 115 of 262.  Compiling module 116 of 262.  Compiling module 117 of 262.  Compiling module 118 of 262.  Compiling module 119 of 262.  Compiling module 120 of 262.  Compiling module 121 of 262.  Compiling module 122 of 262.  Compiling module 123 of 262.  Compiling module 124 of 262.  Compiling module 125 of 262.  Compiling module 126 of 262.  Compiling module 127 of 262.  Compiling module 128 of 262.  Compiling module 129 of 262.  Compiling module 130 of 262.  Compiling module 131 of 262.  Compiling module 132 of 262.  Compiling module 133 of 262.  Compiling module 134 of 262.  Compiling module 135 of 262.  Compiling module 136 of 262.  Compiling module 137 of 262.  Compiling module 138 of 262.  Compiling module 139 of 262.  Compiling module 140 of 262.  Compiling module 141 of 262.  Compiling module 142 of 262.  Compiling module 143 of 262.  Compiling module 144 of 262.  Compiling module 145 of 262.  Compiling module 146 of 262.  Compiling module 147 of 262.  Compiling module 148 of 262.  Compiling module 149 of 262.  Compiling module 150 of 262.  Compiling module 151 of 262.  Compiling module 152 of 262.  Compiling module 153 of 262.  Compiling module 154 of 262.  Compiling module 155 of 262.  Compiling module 156 of 262.  Compiling module 157 of 262.  Compiling module 158 of 262.  Compiling module 159 of 262.  Compiling module 160 of 262.  Compiling module 161 of 262.  Compiling module 162 of 262.  Compiling module 163 of 262.  Compiling module 164 of 262.  Compiling module 165 of 262.  Compiling module 166 of 262.  Compiling module 167 of 262.  Compiling module 168 of 262.  Compiling module 169 of 262.  Compiling module 170 of 262.  Compiling module 171 of 262.  Compiling module 172 of 262.  Compiling module 173 of 262.  Compiling module 174 of 262.  Compiling module 175 of 262.  Compiling module 176 of 262.  Compiling module 177 of 262.  Compiling module 178 of 262.  Compiling module 179 of 262.  Compiling module 180 of 262.  Compiling module 181 of 262.  Compiling module 182 of 262.  Compiling module 183 of 262.  Compiling module 184 of 262.  Compiling module 185 of 262.  Compiling module 186 of 262.  Compiling module 187 of 262.  Compiling module 188 of 262.  Compiling module 189 of 262.  Compiling module 190 of 262.  Compiling module 191 of 262.  Compiling module 192 of 262.  Compiling module 193 of 262.  Compiling module 194 of 262.  Compiling module 195 of 262.  Compiling module 196 of 262.  Compiling module 197 of 262.  Compiling module 198 of 262.  Compiling module 199 of 262.  Compiling module 200 of 262.  Compiling module 201 of 262.  Compiling module 202 of 262.  Compiling module 203 of 262.  Compiling module 204 of 262.  Compiling module 205 of 262.  Compiling module 206 of 262.  Compiling module 207 of 262.  Compiling module 208 of 262.  Compiling module 209 of 262.  Compiling module 210 of 262.  Compiling module 211 of 262.  Compiling module 212 of 262.  Compiling module 213 of 262.  Compiling module 214 of 262.  Compiling module 215 of 262.  Compiling module 216 of 262.  Compiling module 217 of 262.  Compiling module 218 of 262.  Compiling module 219 of 262.  Compiling module 220 of 262.  Compiling module 221 of 262.  Compiling module 222 of 262.  Compiling module 223 of 262.  Compiling module 224 of 262.  Compiling module 225 of 262.  Compiling module 226 of 262.  Compiling module 227 of 262.  Compiling module 228 of 262.  Compiling module 229 of 262.  Compiling module 230 of 262.  Compiling module 231 of 262.  Compiling module 232 of 262.  Compiling module 233 of 262.  Compiling module 234 of 262.  Compiling module 235 of 262.  Compiling module 236 of 262.  Compiling module 237 of 262.  Compiling module 238 of 262.  Compiling module 239 of 262.  Compiling module 240 of 262.  Compiling module 241 of 262.  Compiling module 242 of 262.  Compiling module 243 of 262.  Compiling module 244 of 262.  Compiling module 245 of 262.  Compiling module 246 of 262.  Compiling module 247 of 262.  Compiling module 248 of 262.  Compiling module 249 of 262.  Compiling module 250 of 262.  Compiling module 251 of 262.  Compiling module 252 of 262.  Compiling module 253 of 262.  Compiling module 254 of 262.  Compiling module 255 of 262.  Compiling module 256 of 262.  Compiling module 257 of 262.  Compiling module 258 of 262.  Compiling module 259 of 262.  Compiling module 260 of 262.  Compiling module 261 of 262.  Compiling module 262 of 262.
+  CVC compilation 28.2 seconds elapsed.
+
+  EXECUTABLE SAVED TO 'cvcsim'.
+
+End of OSS_CVC_7.00b-x86_64-rhel6x at Sat Feb 28 15:51:56 2026 (elapsed 29.1 seconds).
+OSS_CVC_7.00b-x86_64-rhel6x of 07/07/14 (Linux-elf).
+Copyright (c) 1991-2014 Tachyon Design Automation Corp.
+  All Rights reserved.  Licensed software subject to prohibitions and
+  restrictions.  See OSS CVC artistic license included with release.
+Today is Sat Feb 28 15:51:56 2026.
+Highest level modules:
+tb_cvc
+**cf_sram.v(46) WARN** [616] path destination DO[0] does not have a driver - path delay no effect
+**cf_sram.v(47) WARN** [616] path destination DO[1] does not have a driver - path delay no effect
+**cf_sram.v(48) WARN** [616] path destination DO[2] does not have a driver - path delay no effect
+**cf_sram.v(49) WARN** [616] path destination DO[3] does not have a driver - path delay no effect
+**cf_sram.v(50) WARN** [616] path destination DO[4] does not have a driver - path delay no effect
+**cf_sram.v(51) WARN** [616] path destination DO[5] does not have a driver - path delay no effect
+**cf_sram.v(52) WARN** [616] path destination DO[6] does not have a driver - path delay no effect
+**cf_sram.v(53) WARN** [616] path destination DO[7] does not have a driver - path delay no effect
+**cf_sram.v(54) WARN** [616] path destination DO[8] does not have a driver - path delay no effect
+**cf_sram.v(55) WARN** [616] path destination DO[9] does not have a driver - path delay no effect
+**cf_sram.v(56) WARN** [616] path destination DO[10] does not have a driver - path delay no effect
+**cf_sram.v(57) WARN** [616] path destination DO[11] does not have a driver - path delay no effect
+**cf_sram.v(58) WARN** [616] path destination DO[12] does not have a driver - path delay no effect
+**cf_sram.v(59) WARN** [616] path destination DO[13] does not have a driver - path delay no effect
+**cf_sram.v(60) WARN** [616] path destination DO[14] does not have a driver - path delay no effect
+**cf_sram.v(61) WARN** [616] path destination DO[15] does not have a driver - path delay no effect
+**cf_sram.v(62) WARN** [616] path destination DO[16] does not have a driver - path delay no effect
+**cf_sram.v(63) WARN** [616] path destination DO[17] does not have a driver - path delay no effect
+**cf_sram.v(64) WARN** [616] path destination DO[18] does not have a driver - path delay no effect
+**cf_sram.v(65) WARN** [616] path destination DO[19] does not have a driver - path delay no effect
+**cf_sram.v(66) WARN** [616] path destination DO[20] does not have a driver - path delay no effect
+**cf_sram.v(67) WARN** [616] path destination DO[21] does not have a driver - path delay no effect
+**cf_sram.v(68) WARN** [616] path destination DO[22] does not have a driver - path delay no effect
+**cf_sram.v(69) WARN** [616] path destination DO[23] does not have a driver - path delay no effect
+**cf_sram.v(70) WARN** [616] path destination DO[24] does not have a driver - path delay no effect
+**cf_sram.v(71) WARN** [616] path destination DO[25] does not have a driver - path delay no effect
+**cf_sram.v(72) WARN** [616] path destination DO[26] does not have a driver - path delay no effect
+**cf_sram.v(73) WARN** [616] path destination DO[27] does not have a driver - path delay no effect
+**cf_sram.v(74) WARN** [616] path destination DO[28] does not have a driver - path delay no effect
+**cf_sram.v(75) WARN** [616] path destination DO[29] does not have a driver - path delay no effect
+**cf_sram.v(76) WARN** [616] path destination DO[30] does not have a driver - path delay no effect
+**cf_sram.v(77) WARN** [616] path destination DO[31] does not have a driver - path delay no effect
+**6_final_nocheck.sdf(9) WARN** [662] (VOLTAGE value missing in rtriple field "typ"
+**6_final_nocheck.sdf(11) WARN** [662] (TEMPERATURE value missing in rtriple field "typ"
+**6_final_nocheck.sdf(388803) ERROR** [1385] (IOPATH [dest.] form port ScanOutCC not a port of CF_SRAM_1024x32
+**6_final_nocheck.sdf(388805) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388807) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388809) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388811) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388813) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388815) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388817) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388819) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388821) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388823) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388825) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388827) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388829) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388831) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388833) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388835) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388837) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388839) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388841) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388843) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388845) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388847) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388849) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388851) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388853) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388855) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388857) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388859) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388861) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388863) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388865) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388867) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+**6_final_nocheck.sdf(388869) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388871) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388873) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388875) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388877) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388879) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388881) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388883) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388885) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388887) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388889) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388891) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388893) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388895) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388897) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388899) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388901) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388903) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388905) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388907) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388909) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388911) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388913) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388915) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388917) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388919) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388921) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388923) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388925) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388927) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388929) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388931) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+**6_final_nocheck.sdf(388933) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388935) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388937) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388939) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388941) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388943) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388945) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388947) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388949) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388951) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388953) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388955) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388957) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388959) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388961) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388963) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388965) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388967) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388969) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388971) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388973) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388975) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388977) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388979) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388981) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388983) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388985) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388987) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388989) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388991) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388993) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388995) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+  **97 SDF errors during $sdf_annotate of "6_final_nocheck.sdf" context scope tb_cvc.uut.top_inst
+
+Halted at location **stimulus_gen.v(4433) time 40060000 from call to $finish.
+  There were 0 error(s), 34 warning(s), and 5031 inform(s).

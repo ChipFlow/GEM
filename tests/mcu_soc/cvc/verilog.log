@@ -1,0 +1,142 @@
+OSS_CVC_7.00b-x86_64-rhel6x of 07/07/14 (Linux-elf).
+Copyright (c) 1991-2014 Tachyon Design Automation Corp.
+  All Rights reserved.  Licensed software subject to prohibitions and
+  restrictions.  See OSS CVC artistic license included with release.
+Today is Sat Feb 28 15:51:56 2026.
+Highest level modules:
+tb_cvc
+**cf_sram.v(46) WARN** [616] path destination DO[0] does not have a driver - path delay no effect
+**cf_sram.v(47) WARN** [616] path destination DO[1] does not have a driver - path delay no effect
+**cf_sram.v(48) WARN** [616] path destination DO[2] does not have a driver - path delay no effect
+**cf_sram.v(49) WARN** [616] path destination DO[3] does not have a driver - path delay no effect
+**cf_sram.v(50) WARN** [616] path destination DO[4] does not have a driver - path delay no effect
+**cf_sram.v(51) WARN** [616] path destination DO[5] does not have a driver - path delay no effect
+**cf_sram.v(52) WARN** [616] path destination DO[6] does not have a driver - path delay no effect
+**cf_sram.v(53) WARN** [616] path destination DO[7] does not have a driver - path delay no effect
+**cf_sram.v(54) WARN** [616] path destination DO[8] does not have a driver - path delay no effect
+**cf_sram.v(55) WARN** [616] path destination DO[9] does not have a driver - path delay no effect
+**cf_sram.v(56) WARN** [616] path destination DO[10] does not have a driver - path delay no effect
+**cf_sram.v(57) WARN** [616] path destination DO[11] does not have a driver - path delay no effect
+**cf_sram.v(58) WARN** [616] path destination DO[12] does not have a driver - path delay no effect
+**cf_sram.v(59) WARN** [616] path destination DO[13] does not have a driver - path delay no effect
+**cf_sram.v(60) WARN** [616] path destination DO[14] does not have a driver - path delay no effect
+**cf_sram.v(61) WARN** [616] path destination DO[15] does not have a driver - path delay no effect
+**cf_sram.v(62) WARN** [616] path destination DO[16] does not have a driver - path delay no effect
+**cf_sram.v(63) WARN** [616] path destination DO[17] does not have a driver - path delay no effect
+**cf_sram.v(64) WARN** [616] path destination DO[18] does not have a driver - path delay no effect
+**cf_sram.v(65) WARN** [616] path destination DO[19] does not have a driver - path delay no effect
+**cf_sram.v(66) WARN** [616] path destination DO[20] does not have a driver - path delay no effect
+**cf_sram.v(67) WARN** [616] path destination DO[21] does not have a driver - path delay no effect
+**cf_sram.v(68) WARN** [616] path destination DO[22] does not have a driver - path delay no effect
+**cf_sram.v(69) WARN** [616] path destination DO[23] does not have a driver - path delay no effect
+**cf_sram.v(70) WARN** [616] path destination DO[24] does not have a driver - path delay no effect
+**cf_sram.v(71) WARN** [616] path destination DO[25] does not have a driver - path delay no effect
+**cf_sram.v(72) WARN** [616] path destination DO[26] does not have a driver - path delay no effect
+**cf_sram.v(73) WARN** [616] path destination DO[27] does not have a driver - path delay no effect
+**cf_sram.v(74) WARN** [616] path destination DO[28] does not have a driver - path delay no effect
+**cf_sram.v(75) WARN** [616] path destination DO[29] does not have a driver - path delay no effect
+**cf_sram.v(76) WARN** [616] path destination DO[30] does not have a driver - path delay no effect
+**cf_sram.v(77) WARN** [616] path destination DO[31] does not have a driver - path delay no effect
+**6_final_nocheck.sdf(9) WARN** [662] (VOLTAGE value missing in rtriple field "typ"
+**6_final_nocheck.sdf(11) WARN** [662] (TEMPERATURE value missing in rtriple field "typ"
+**6_final_nocheck.sdf(388803) ERROR** [1385] (IOPATH [dest.] form port ScanOutCC not a port of CF_SRAM_1024x32
+**6_final_nocheck.sdf(388805) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388807) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388809) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388811) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388813) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388815) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388817) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388819) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388821) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388823) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388825) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388827) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388829) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388831) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388833) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388835) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388837) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388839) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388841) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388843) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388845) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388847) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388849) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388851) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388853) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388855) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388857) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388859) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388861) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388863) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388865) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388867) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+**6_final_nocheck.sdf(388869) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388871) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388873) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388875) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388877) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388879) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388881) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388883) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388885) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388887) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388889) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388891) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388893) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388895) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388897) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388899) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388901) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388903) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388905) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388907) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388909) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388911) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388913) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388915) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388917) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388919) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388921) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388923) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388925) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388927) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388929) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388931) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+**6_final_nocheck.sdf(388933) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[0]
+**6_final_nocheck.sdf(388935) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[1]
+**6_final_nocheck.sdf(388937) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[2]
+**6_final_nocheck.sdf(388939) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[3]
+**6_final_nocheck.sdf(388941) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[4]
+**6_final_nocheck.sdf(388943) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[5]
+**6_final_nocheck.sdf(388945) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[6]
+**6_final_nocheck.sdf(388947) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[7]
+**6_final_nocheck.sdf(388949) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[8]
+**6_final_nocheck.sdf(388951) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[9]
+**6_final_nocheck.sdf(388953) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[10]
+**6_final_nocheck.sdf(388955) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[11]
+**6_final_nocheck.sdf(388957) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[12]
+**6_final_nocheck.sdf(388959) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[13]
+**6_final_nocheck.sdf(388961) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[14]
+**6_final_nocheck.sdf(388963) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[15]
+**6_final_nocheck.sdf(388965) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[16]
+**6_final_nocheck.sdf(388967) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[17]
+**6_final_nocheck.sdf(388969) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[18]
+**6_final_nocheck.sdf(388971) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[19]
+**6_final_nocheck.sdf(388973) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[20]
+**6_final_nocheck.sdf(388975) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[21]
+**6_final_nocheck.sdf(388977) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[22]
+**6_final_nocheck.sdf(388979) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[23]
+**6_final_nocheck.sdf(388981) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[24]
+**6_final_nocheck.sdf(388983) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[25]
+**6_final_nocheck.sdf(388985) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[26]
+**6_final_nocheck.sdf(388987) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[27]
+**6_final_nocheck.sdf(388989) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[28]
+**6_final_nocheck.sdf(388991) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[29]
+**6_final_nocheck.sdf(388993) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[30]
+**6_final_nocheck.sdf(388995) ERROR** [1369] no module CF_SRAM_1024x32 specify path (first component used) matches (COND ... (IOPATH CLKin DO[31]
+  **97 SDF errors during $sdf_annotate of "6_final_nocheck.sdf" context scope tb_cvc.uut.top_inst
+
+Halted at location **stimulus_gen.v(4433) time 40060000 from call to $finish.
+  There were 0 error(s), 34 warning(s), and 5031 inform(s).
