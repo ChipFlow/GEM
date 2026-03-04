@@ -399,29 +399,24 @@ cargo run -r --features metal --bin jacquard -- sim --help
 # Simulation (CUDA - Linux, requires CUDA toolkit)
 cargo run -r --features cuda --bin jacquard -- sim --help
 </code></pre>
-<h2 id="map-the-design-with-jacquard"><a class="header" href="#map-the-design-with-jacquard">Map the Design with Jacquard</a></h2>
-<p>Jacquard compiles and links to <a href="https://github.com/gzz2000/mt-kahypar-sc">mt-kahypar-sc</a> for hypergraph partitioning automatically.</p>
-<p>Run the following command to start the Boolean processor mapping.</p>
-<pre><code class="language-sh">cargo run -r --bin jacquard -- map path/to/gatelevel.gv path/to/result.gemparts
-</code></pre>
-<p>The mapped result will be stored in a binary file <code>result.gemparts</code>.</p>
-<p>If the mapping failed due to failure to partition deep circuits (which often shows as trying to partition a circuit with only 0 or 1 endpoints), try adding a <code>--level-split</code> option to force a stage split. For example <code>--level-split 30</code> or <code>--level-split 20,40</code>. If you used this, remember to add the same <code>--level-split</code> option when you simulate.</p>
 <h2 id="simulate-the-design"><a class="header" href="#simulate-the-design">Simulate the Design</a></h2>
+<p>Jacquard automatically partitions the design at startup using <a href="https://github.com/gzz2000/mt-kahypar-sc">mt-kahypar-sc</a> hypergraph partitioning.</p>
+<p>If partitioning fails due to deep circuits (which often shows as trying to partition a circuit with only 0 or 1 endpoints), try adding a <code>--level-split</code> option to force a stage split. For example <code>--level-split 30</code> or <code>--level-split 20,40</code>.</p>
 <h3 id="metal-macos"><a class="header" href="#metal-macos">Metal (macOS)</a></h3>
 <p>Use <code>NUM_BLOCKS=1</code> for Metal.</p>
-<pre><code class="language-sh">cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1
+<pre><code class="language-sh">cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/input.vcd path/to/output.vcd 1
 </code></pre>
 <h3 id="cuda-linux"><a class="header" href="#cuda-linux">CUDA (Linux)</a></h3>
 <p>Replace <code>NUM_BLOCKS</code> with twice the number of physical streaming multiprocessors (SMs) of your GPU.</p>
-<pre><code class="language-sh">cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS
+<pre><code class="language-sh">cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/input.vcd path/to/output.vcd NUM_BLOCKS
 </code></pre>
 <h3 id="vcd-scope-handling"><a class="header" href="#vcd-scope-handling">VCD Scope Handling</a></h3>
 <p>Jacquard automatically detects the correct VCD scope containing your design's ports. In most cases, you don't need to specify <code>--input-vcd-scope</code>. If auto-detection fails or you need to override it, use:</p>
 <pre><code class="language-sh"># Metal
-cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd 1 --input-vcd-scope "testbench/dut"
+cargo run -r --features metal --bin jacquard -- sim path/to/gatelevel.gv path/to/input.vcd path/to/output.vcd 1 --input-vcd-scope "testbench/dut"
 
 # CUDA
-cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/result.gemparts path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input-vcd-scope "testbench/dut"
+cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/input.vcd path/to/output.vcd NUM_BLOCKS --input-vcd-scope "testbench/dut"
 </code></pre>
 <p>Use slash separators (<code>/</code>) for hierarchical paths, not dots. See <a href="troubleshooting-vcd.html">troubleshooting-vcd.md</a> for details.</p>
 <p>The simulated output ports value will be stored in <code>output.vcd</code>.</p>
@@ -505,11 +500,10 @@ cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/
 </ul>
 <p><strong>Process</strong>:</p>
 <ul>
-<li>Interactive partitioning (<code>jacquard map</code>)</li>
+<li>Interactive partitioning (runs automatically at simulation start)</li>
 <li>Tries 1 partition first, then increases if needed</li>
 <li>Merges partitions to minimize inter-partition communication</li>
 </ul>
-<p><strong>Output</strong>: <code>.gemparts</code> file with partition assignments</p>
 <h3 id="5-flattenedscript-gpu-instruction-generation"><a class="header" href="#5-flattenedscript-gpu-instruction-generation">5. FlattenedScript (GPU Instruction Generation)</a></h3>
 <p><strong>Process</strong>: Generates GPU execution script from partitions</p>
 <p><strong>Script Components</strong>:</p>
@@ -674,7 +668,31 @@ Display: cell=24, enable_pos=5154 (word=161, bit=2), format='...', args=[...]
 <li>Reset timing issues
 <strong>Status</strong>: Identified through third-party test suite</li>
 </ul>
-<h3 id="3-format-string-preservation"><a class="header" href="#3-format-string-preservation">3. Format String Preservation</a></h3>
+<h3 id="3-no-latch-or-asynchronous-sequential-logic-support"><a class="header" href="#3-no-latch-or-asynchronous-sequential-logic-support">3. No Latch or Asynchronous Sequential Logic Support</a></h3>
+<p><strong>Issue</strong>: Loom only supports edge-triggered D flip-flops (DFFs) as sequential elements. Latch-based designs (SR latches, transparent latches, master-slave latch pairs) and asynchronous sequential logic are not supported.</p>
+<p><strong>Impact</strong>: Designs using latches will either:</p>
+<ul>
+<li>Fail during AIG conversion (unrecognized cell type)</li>
+<li>Be silently treated as combinational logic (incorrect simulation)</li>
+</ul>
+<p><strong>What this means in practice</strong>:</p>
+<ul>
+<li>Gate-level netlists must be synthesized to a DFF-only cell library (AIGPDK or SKY130)</li>
+<li>CVC's built-in test suite (<code>tests_and_examples/install.test/</code>) uses NAND-latch flip-flops (e.g., <code>dfpsetd.v</code>, <code>sdfia04.v</code>) and cannot be used as Loom reference tests</li>
+<li>Self-timed designs with internal clock generation (e.g., CVC's <code>das_lfsr</code> benchmark) are also unsupported</li>
+</ul>
+<p><strong>What would be needed to support latches</strong>:</p>
+<ol>
+<li><strong>New DriverType variant</strong>: Add <code>Latch(enable, data)</code> to <code>DriverType</code> in <code>aig.rs</code>, representing a level-sensitive storage element</li>
+<li><strong>Two-phase evaluation</strong>: Latches are transparent when enabled, requiring evaluation within a clock phase rather than only at clock edges. The current cycle-based simulation model (evaluate all combinational logic, then capture DFF outputs) would need to iterate until latch outputs stabilize</li>
+<li><strong>AIG conversion</strong>: Map latch library cells (e.g., SKY130 <code>dlxtp</code>) to the new <code>Latch</code> driver, identifying enable and data pins</li>
+<li><strong>GPU kernel changes</strong>: The writeout stage currently uses <code>clken_perm</code> for DFF clock gating. Latches would need a different mechanism: while enable is high, output tracks input continuously rather than capturing on an edge</li>
+<li><strong>Timing</strong>: Latch timing is more complex — setup/hold is relative to the enable edge, and time borrowing across latch boundaries is a key use case in high-performance designs</li>
+<li><strong>Convergence</strong>: Combinational loops through transparent latches must be detected and iterated to a fixed point, or flagged as errors</li>
+</ol>
+<p><strong>Complexity estimate</strong>: Moderate-to-high. The main challenge is the evaluation model change — DFF-only simulation is a clean "capture at edge" model, while latches require iterative evaluation within clock phases.</p>
+<p><strong>Status</strong>: Not planned. Loom targets synthesis flows that produce DFF-only netlists.</p>
+<h3 id="4-format-string-preservation"><a class="header" href="#4-format-string-preservation">4. Format String Preservation</a></h3>
 <p><strong>Issue</strong>: Yosys synthesis may not preserve <code>gem_format</code> attributes
 <strong>Impact</strong>: Display messages show placeholders instead of actual format strings
 <strong>Workaround</strong>: Extract format strings from pre-synthesis JSON
@@ -910,19 +928,94 @@ __shared__ u8 shared_arrival[256][32];  // Per-bit arrivals
 <li>CPU performs timing analysis on results</li>
 <li>Validates infrastructure without kernel changes</li>
 </ul>
-<h3 id="phase-3-gpu-arrival-tracking-future"><a class="header" href="#phase-3-gpu-arrival-tracking-future">Phase 3: GPU Arrival Tracking (Future)</a></h3>
+<h3 id="phase-3-gpu-arrival-tracking-completed"><a class="header" href="#phase-3-gpu-arrival-tracking-completed">Phase 3: GPU Arrival Tracking (Completed)</a></h3>
 <ul>
-<li>Add <code>shared_arrival[256]</code> to kernel</li>
-<li>Track arrivals during boomerang reduction</li>
-<li>Report max arrival at cycle boundaries</li>
-<li>Check violations at DFF endpoints</li>
+<li>Added <code>shared_arrival[256]</code> (u16) to Metal and CUDA kernels</li>
+<li>Arrivals tracked during boomerang reduction at all hierarchy levels</li>
+<li>Per-gate delays injected via script padding slots from SDF data</li>
+<li>DFF timing constraint checking at cycle boundaries (setup/hold)</li>
+<li>Timing-aware VCD output (<code>--timing-vcd</code> flag)</li>
+<li>Validated against CVC reference simulator (88ps / 7.1% conservative overestimate)</li>
 </ul>
-<h3 id="phase-4-full-integration-future"><a class="header" href="#phase-4-full-integration-future">Phase 4: Full Integration (Future)</a></h3>
+<h3 id="phase-4-full-integration-partial"><a class="header" href="#phase-4-full-integration-partial">Phase 4: Full Integration (Partial)</a></h3>
 <ul>
-<li>Timing violation events via event buffer</li>
-<li>Per-cycle timing reports</li>
-<li>Integration with output VCD</li>
+<li>Timing violation events via event buffer (completed)</li>
+<li>Per-cycle timing reports (completed)</li>
+<li>Integration with output VCD (completed via <code>--timing-vcd</code>)</li>
+<li>Timing-aware bit packing for reduced approximation error (future)</li>
 </ul>
+<h2 id="conservative-timing-model-sources-of-overestimation"><a class="header" href="#conservative-timing-model-sources-of-overestimation">Conservative Timing Model: Sources of Overestimation</a></h2>
+<p>Loom's GPU timing is intentionally conservative — it may over-estimate arrival times
+but will never under-estimate them. This is important for setup violation detection:
+false positives are safe, false negatives would miss real bugs.</p>
+<p>There are three independent sources of conservatism, each adding to the overestimate:</p>
+<h3 id="source-1-maxrise-fall-per-cell"><a class="header" href="#source-1-maxrise-fall-per-cell">Source 1: max(rise, fall) per cell</a></h3>
+<p>The GPU kernel tracks a single u16 arrival per thread position. It cannot distinguish
+between rising and falling signal transitions because each thread processes 32 packed
+Boolean signals simultaneously — there's no per-bit transition direction available.</p>
+<p><strong>How it works</strong>: For each cell, <code>inject_timing_to_script()</code> computes:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>delay = max(gate_delays[pin].rise_ps, gate_delays[pin].fall_ps)
+<span class="boring">}</span></code></pre></pre>
+<p><strong>Impact</strong>: For the SKY130 inv_chain test (16 inverters), rise delays average ~10ps
+larger than fall delays. In a real inverter chain, transitions alternate (rise→fall→rise),
+so half the cells use the smaller fall delay. Loom uses the larger rise delay for all.</p>
+<p><strong>Measured</strong>: 80ps overestimate on 1235ps (6.5%) for 16 inverters with ~10ps rise/fall
+asymmetry per cell.</p>
+<h3 id="source-2-max-wire-delay-across-all-input-pins"><a class="header" href="#source-2-max-wire-delay-across-all-input-pins">Source 2: max wire delay across all input pins</a></h3>
+<p>For multi-input cells (AND gates, MUXes), INTERCONNECT delays to different input pins
+may differ significantly. Loom takes the maximum across all input pins:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// wire_delays_per_cell: dest_cellid → max(all input wire delays)
+entry.rise_ps = entry.rise_ps.max(ic.delay.rise_ps);
+entry.fall_ps = entry.fall_ps.max(ic.delay.fall_ps);
+<span class="boring">}</span></code></pre></pre>
+<p><strong>Impact</strong>: If an AND gate has input A arriving via a 10ps wire and input B via a
+200ps wire, Loom assigns 200ps to the cell regardless of which input is on the
+critical path. An event-driven simulator would correctly propagate the 10ps arrival
+on input A independently.</p>
+<p><strong>When this matters</strong>: Designs with highly asymmetric routing (e.g., one input is
+local, another crosses the chip). Well-routed designs typically have balanced wire
+delays to multi-input cells.</p>
+<h3 id="source-3-max-arrival-across-32-packed-signals-per-thread"><a class="header" href="#source-3-max-arrival-across-32-packed-signals-per-thread">Source 3: max arrival across 32 packed signals per thread</a></h3>
+<p>Each thread position holds 32 independent Boolean signals. Loom tracks one arrival
+per thread position (the maximum across all 32 signals):</p>
+<pre><code>Thread 50: [signal_A: 5ps, signal_B: 23ps, signal_C: 8ps, ...]
+Tracked:   arrival[50] = 23ps (max of all 32)
+</code></pre>
+<p><strong>Impact</strong>: If signals with very different timing are packed into the same thread,
+the fastest signals inherit the slowest signal's arrival time.</p>
+<p><strong>Mitigation</strong>: The bit-packing algorithm can sort signals by estimated timing before
+assignment (see "Timing-Aware Bit Packing" section). This keeps similar-timing signals
+together, reducing the max approximation error.</p>
+<h3 id="combined-effect"><a class="header" href="#combined-effect">Combined Effect</a></h3>
+<p>These sources are multiplicative in the worst case. For the inv_chain test:</p>
+<div class="table-wrapper"><table><thead><tr><th>Source</th><th>Contribution</th><th>Notes</th></tr></thead><tbody>
+<tr><td>max(rise, fall)</td><td>+80ps</td><td>8 inverters × 10ps asymmetry</td></tr>
+<tr><td>max wire delay</td><td>+8ps</td><td>8 wires × 1ps asymmetry</td></tr>
+<tr><td>max per thread</td><td>0ps</td><td>Only 1 signal per thread in this test</td></tr>
+<tr><td><strong>Total overestimate</strong></td><td><strong>88ps / 7.1%</strong></td><td>vs CVC transition-accurate result</td></tr>
+</tbody></table>
+</div>
+<p>For larger designs with more routing asymmetry and denser bit packing, the combined
+overestimate could be larger. The bit-packing sort (Source 3) is the most actionable
+mitigation.</p>
+<h3 id="cvc-reference-validation"><a class="header" href="#cvc-reference-validation">CVC Reference Validation</a></h3>
+<p>The inv_chain design (2 DFFs + 16 SKY130 inverters) was validated against CVC
+(open-src-cvc), an event-driven Verilog simulator with native SDF back-annotation:</p>
+<pre><code>CVC:  clk_to_q=350ps  chain=885ps  total=1235ps  (transition-accurate)
+Loom: clk_to_q=350ps  chain=973ps  total=1323ps  (conservative max)
+Difference: 88ps (7.1% overestimate)
+</code></pre>
+<p>Both simulators agree on CLK→Q delay (350ps) because the DFF has a single output
+transition direction per clock edge. The chain delay differs because CVC tracks
+actual rise/fall polarity through each inverter.</p>
+<p><strong>To run the CVC comparison locally</strong>:</p>
+<pre><code class="language-bash">bash tests/timing_test/cvc/run_cvc.sh
+</code></pre>
+<p>Requires Docker (builds CVC from source on first run).</p>
 <h2 id="delay-data-encoding"><a class="header" href="#delay-data-encoding">Delay Data Encoding</a></h2>
 <h3 id="script-format"><a class="header" href="#script-format">Script Format</a></h3>
 <p>The existing boomerang section has padding that can store delay data:</p>
@@ -1111,7 +1204,6 @@ Band 3: 30+ps    → Threads 192-255
 <ol>
 <li><strong>SDF file</strong> with back-annotated delays from your place-and-route tool</li>
 <li><strong>Gate-level netlist</strong> synthesized to <code>aigpdk.lib</code> cells</li>
-<li><strong>Compiled <code>.gemparts</code></strong> file from <code>jacquard map</code></li>
 </ol>
 <h3 id="step-by-step"><a class="header" href="#step-by-step">Step-by-step</a></h3>
 <ol>
@@ -1125,21 +1217,21 @@ ls my_build/6_final.sdf
 <p><strong>Run the simulator</strong> with <code>--sdf</code> and a clock period:</p>
 <p><strong>Metal (macOS)</strong>:</p>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv design.gemparts input.vcd output.vcd 1 \
+    design.gv input.vcd output.vcd 1 \
     --sdf design.sdf \
     --sdf-corner typ
 </code></pre>
 <p><strong>CUDA (NVIDIA)</strong>:</p>
 <pre><code class="language-bash">cargo run -r --features cuda --bin jacquard -- sim \
-    design.gv design.gemparts input.vcd output.vcd 8 \
+    design.gv input.vcd output.vcd 8 \
     --sdf design.sdf \
     --sdf-corner typ \
     --enable-timing \
     --timing-clock-period 1200
 </code></pre>
-<p><strong>gpu_sim (co-simulation)</strong>:</p>
-<pre><code class="language-bash">cargo run -r --features metal --bin gpu_sim -- \
-    design.gv design.gemparts \
+<p><strong>cosim (co-simulation)</strong>:</p>
+<pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- cosim \
+    design.gv \
     --config testbench.json \
     --sdf design.sdf \
     --sdf-corner typ
@@ -1158,15 +1250,9 @@ ls my_build/6_final.sdf
 </tbody></table>
 </div>
 <h3 id="example-inv_chain_pnr-test-case"><a class="header" href="#example-inv_chain_pnr-test-case">Example: inv_chain_pnr Test Case</a></h3>
-<pre><code class="language-bash"># Map the design
-cargo run -r --features metal --bin jacquard -- map \
-    tests/timing_test/inv_chain_pnr/6_final.v \
-    tests/timing_test/inv_chain_pnr/inv_chain.gemparts
-
-# Run with SDF timing
+<pre><code class="language-bash"># Run with SDF timing
 cargo run -r --features metal --bin jacquard -- sim \
     tests/timing_test/inv_chain_pnr/6_final.v \
-    tests/timing_test/inv_chain_pnr/inv_chain.gemparts \
     tests/timing_test/inv_chain_pnr/input.vcd \
     tests/timing_test/inv_chain_pnr/output.vcd 1 \
     --sdf tests/timing_test/inv_chain_pnr/6_final.sdf
@@ -1225,18 +1311,13 @@ uv run netlist-graph drivers design.v "dff_name.D" -d 10
 # Search for DFFs matching a pattern
 uv run netlist-graph search design.v "dff_out*"
 </code></pre>
-<h3 id="4-detailed-cpu-timing-analysis"><a class="header" href="#4-detailed-cpu-timing-analysis">4. Detailed CPU Timing Analysis</a></h3>
-<p>For per-signal accuracy (no 32-signal approximation), use <code>timing_sim_cpu</code>:</p>
-<pre><code class="language-bash"># Generate a watchlist for signals of interest
-cd scripts/netlist_graph
-uv run netlist-graph watchlist design.v watch.json dff_name signal1 signal2
-
-# Run CPU timing simulation with per-signal tracing
-cargo run -r --bin timing_sim_cpu -- design.v input.vcd \
-    --liberty sky130.lib --clock-period 1200 \
-    --watchlist watch.json --trace-output trace.csv
+<h3 id="4-detailed-timing-analysis-with-cvc"><a class="header" href="#4-detailed-timing-analysis-with-cvc">4. Detailed Timing Analysis with CVC</a></h3>
+<p>For per-signal accuracy (no 32-signal approximation), use CVC (open-src-cvc) with SDF back-annotation:</p>
+<pre><code class="language-bash"># Run CVC with SDF timing
+cvc64 +typdelays tb.v design.v
+./cvcsim
 </code></pre>
-<p>The CSV trace shows per-cycle arrival times for each watched signal, allowing you to pinpoint exactly which path is critical.</p>
+<p>CVC provides event-driven simulation with full SDF support (IOPATH + INTERCONNECT delays), allowing you to pinpoint exactly which path is critical.</p>
 <h2 id="the-approximation-caveat"><a class="header" href="#the-approximation-caveat">The Approximation Caveat</a></h2>
 <p>GEM tracks <strong>one arrival time per 32-signal group</strong> (one GPU thread position). The tracked value is the maximum arrival across all 32 signals in that thread. This means:</p>
 <ul>
@@ -1246,7 +1327,7 @@ cargo run -r --bin timing_sim_cpu -- design.v input.vcd \
 <h3 id="reducing-false-positives"><a class="header" href="#reducing-false-positives">Reducing False Positives</a></h3>
 <p>If a violation is reported but you suspect it's a false positive from the approximation:</p>
 <ol>
-<li><strong>Use <code>timing_sim_cpu</code></strong> for per-signal accuracy (see <a href="timing-violations.html#4-detailed-cpu-timing-analysis">Detailed CPU Timing Analysis</a> above).</li>
+<li><strong>Use CVC</strong> for per-signal accuracy (see <a href="timing-violations.html#4-detailed-timing-analysis-with-cvc">Detailed Timing Analysis with CVC</a> above).</li>
 <li><strong>Timing-aware bit packing</strong> groups signals with similar arrival times into the same thread, reducing the approximation error. See <code>docs/timing-simulation.md</code> § "Timing-Aware Bit Packing" for details.</li>
 </ol>
 <h2 id="common-scenarios"><a class="header" href="#common-scenarios">Common Scenarios</a></h2>
@@ -1451,7 +1532,7 @@ implementations of each phase that handle the new cell types' pin names and
 reset/set conventions.</p>
 <h2 id="step-8-cli-integration"><a class="header" href="#step-8-cli-integration">Step 8: CLI Integration</a></h2>
 <p><strong>Reference</strong>: <code>src/bin/jacquard.rs</code></p>
-<p>The <code>cmd_map</code> function detects the library and creates the netlist with the
+<p>The <code>load_design</code> function detects the library and creates the netlist with the
 appropriate pin provider:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -1568,11 +1649,11 @@ INFO Auto-detected VCD scope: safe_tb/uut (matched common pattern 'uut')
 <h3 id="manual-override"><a class="header" href="#manual-override">Manual Override</a></h3>
 <p>If auto-detection fails or selects the wrong scope, use <code>--input-vcd-scope</code> to specify manually:</p>
 <pre><code class="language-bash"># Slash-separated path to the DUT scope
-jacquard sim design.gv design.gemparts input.vcd output.vcd 8 \
+jacquard sim design.gv input.vcd output.vcd 8 \
     --input-vcd-scope "testbench/dut"
 
 # For nested hierarchies
-jacquard sim design.gv design.gemparts input.vcd output.vcd 8 \
+jacquard sim design.gv input.vcd output.vcd 8 \
     --input-vcd-scope "top_tb/subsystem/my_module"
 </code></pre>
 <p><strong>Note</strong>: Use slash separators (<code>/</code>), not dots (<code>.</code>).</p>
@@ -1720,7 +1801,7 @@ if __name__ == '__main__':
 <h2 id="solution-3-vcd-scope-option-experimental"><a class="header" href="#solution-3-vcd-scope-option-experimental">Solution 3: VCD Scope Option (Experimental)</a></h2>
 <p>GEM provides <code>--input-vcd-scope</code> to specify which module hierarchy to read:</p>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv parts.gemparts input.vcd output.vcd 48 \
+    design.gv input.vcd output.vcd 48 \
     --input-vcd-scope module_name
 </code></pre>
 <p><strong>Known Issue</strong>: Currently, signal matching still fails even with correct scope specified. This is under investigation.</p>
@@ -1772,7 +1853,7 @@ if __name__ == '__main__':
 <p>After fixing VCD issues, validate GEM is reading inputs correctly:</p>
 <h3 id="1-run-with-cpu-verification"><a class="header" href="#1-run-with-cpu-verification">1. Run with CPU Verification</a></h3>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv parts.gemparts input.vcd output.vcd 48 \
+    design.gv input.vcd output.vcd 48 \
     --check-with-cpu
 </code></pre>
 <p>This compares GPU results against CPU gate-level simulation. Should print:</p>
@@ -1790,7 +1871,7 @@ grep '^[01]!' reference.vcd
 </code></pre>
 <h3 id="3-check-cycle-count"><a class="header" href="#3-check-cycle-count">3. Check Cycle Count</a></h3>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv parts.gemparts input.vcd output.vcd 48 \
+    design.gv input.vcd output.vcd 48 \
     2&gt;&amp;1 | grep "total number of cycles"
 </code></pre>
 <p>Should match your testbench's simulation time / clock period.</p>

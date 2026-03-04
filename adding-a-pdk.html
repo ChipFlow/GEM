@@ -352,7 +352,7 @@ implementations of each phase that handle the new cell types' pin names and
 reset/set conventions.</p>
 <h2 id="step-8-cli-integration"><a class="header" href="#step-8-cli-integration">Step 8: CLI Integration</a></h2>
 <p><strong>Reference</strong>: <code>src/bin/jacquard.rs</code></p>
-<p>The <code>cmd_map</code> function detects the library and creates the netlist with the
+<p>The <code>load_design</code> function detects the library and creates the netlist with the
 appropriate pin provider:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {

@@ -234,11 +234,10 @@
 </ul>
 <p><strong>Process</strong>:</p>
 <ul>
-<li>Interactive partitioning (<code>jacquard map</code>)</li>
+<li>Interactive partitioning (runs automatically at simulation start)</li>
 <li>Tries 1 partition first, then increases if needed</li>
 <li>Merges partitions to minimize inter-partition communication</li>
 </ul>
-<p><strong>Output</strong>: <code>.gemparts</code> file with partition assignments</p>
 <h3 id="5-flattenedscript-gpu-instruction-generation"><a class="header" href="#5-flattenedscript-gpu-instruction-generation">5. FlattenedScript (GPU Instruction Generation)</a></h3>
 <p><strong>Process</strong>: Generates GPU execution script from partitions</p>
 <p><strong>Script Components</strong>:</p>
@@ -403,7 +402,31 @@ Display: cell=24, enable_pos=5154 (word=161, bit=2), format='...', args=[...]
 <li>Reset timing issues
 <strong>Status</strong>: Identified through third-party test suite</li>
 </ul>
-<h3 id="3-format-string-preservation"><a class="header" href="#3-format-string-preservation">3. Format String Preservation</a></h3>
+<h3 id="3-no-latch-or-asynchronous-sequential-logic-support"><a class="header" href="#3-no-latch-or-asynchronous-sequential-logic-support">3. No Latch or Asynchronous Sequential Logic Support</a></h3>
+<p><strong>Issue</strong>: Loom only supports edge-triggered D flip-flops (DFFs) as sequential elements. Latch-based designs (SR latches, transparent latches, master-slave latch pairs) and asynchronous sequential logic are not supported.</p>
+<p><strong>Impact</strong>: Designs using latches will either:</p>
+<ul>
+<li>Fail during AIG conversion (unrecognized cell type)</li>
+<li>Be silently treated as combinational logic (incorrect simulation)</li>
+</ul>
+<p><strong>What this means in practice</strong>:</p>
+<ul>
+<li>Gate-level netlists must be synthesized to a DFF-only cell library (AIGPDK or SKY130)</li>
+<li>CVC's built-in test suite (<code>tests_and_examples/install.test/</code>) uses NAND-latch flip-flops (e.g., <code>dfpsetd.v</code>, <code>sdfia04.v</code>) and cannot be used as Loom reference tests</li>
+<li>Self-timed designs with internal clock generation (e.g., CVC's <code>das_lfsr</code> benchmark) are also unsupported</li>
+</ul>
+<p><strong>What would be needed to support latches</strong>:</p>
+<ol>
+<li><strong>New DriverType variant</strong>: Add <code>Latch(enable, data)</code> to <code>DriverType</code> in <code>aig.rs</code>, representing a level-sensitive storage element</li>
+<li><strong>Two-phase evaluation</strong>: Latches are transparent when enabled, requiring evaluation within a clock phase rather than only at clock edges. The current cycle-based simulation model (evaluate all combinational logic, then capture DFF outputs) would need to iterate until latch outputs stabilize</li>
+<li><strong>AIG conversion</strong>: Map latch library cells (e.g., SKY130 <code>dlxtp</code>) to the new <code>Latch</code> driver, identifying enable and data pins</li>
+<li><strong>GPU kernel changes</strong>: The writeout stage currently uses <code>clken_perm</code> for DFF clock gating. Latches would need a different mechanism: while enable is high, output tracks input continuously rather than capturing on an edge</li>
+<li><strong>Timing</strong>: Latch timing is more complex — setup/hold is relative to the enable edge, and time borrowing across latch boundaries is a key use case in high-performance designs</li>
+<li><strong>Convergence</strong>: Combinational loops through transparent latches must be detected and iterated to a fixed point, or flagged as errors</li>
+</ol>
+<p><strong>Complexity estimate</strong>: Moderate-to-high. The main challenge is the evaluation model change — DFF-only simulation is a clean "capture at edge" model, while latches require iterative evaluation within clock phases.</p>
+<p><strong>Status</strong>: Not planned. Loom targets synthesis flows that produce DFF-only netlists.</p>
+<h3 id="4-format-string-preservation"><a class="header" href="#4-format-string-preservation">4. Format String Preservation</a></h3>
 <p><strong>Issue</strong>: Yosys synthesis may not preserve <code>gem_format</code> attributes
 <strong>Impact</strong>: Display messages show placeholders instead of actual format strings
 <strong>Workaround</strong>: Extract format strings from pre-synthesis JSON

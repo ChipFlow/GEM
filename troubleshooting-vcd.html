@@ -177,11 +177,11 @@ INFO Auto-detected VCD scope: safe_tb/uut (matched common pattern 'uut')
 <h3 id="manual-override"><a class="header" href="#manual-override">Manual Override</a></h3>
 <p>If auto-detection fails or selects the wrong scope, use <code>--input-vcd-scope</code> to specify manually:</p>
 <pre><code class="language-bash"># Slash-separated path to the DUT scope
-jacquard sim design.gv design.gemparts input.vcd output.vcd 8 \
+jacquard sim design.gv input.vcd output.vcd 8 \
     --input-vcd-scope "testbench/dut"
 
 # For nested hierarchies
-jacquard sim design.gv design.gemparts input.vcd output.vcd 8 \
+jacquard sim design.gv input.vcd output.vcd 8 \
     --input-vcd-scope "top_tb/subsystem/my_module"
 </code></pre>
 <p><strong>Note</strong>: Use slash separators (<code>/</code>), not dots (<code>.</code>).</p>
@@ -329,7 +329,7 @@ if __name__ == '__main__':
 <h2 id="solution-3-vcd-scope-option-experimental"><a class="header" href="#solution-3-vcd-scope-option-experimental">Solution 3: VCD Scope Option (Experimental)</a></h2>
 <p>GEM provides <code>--input-vcd-scope</code> to specify which module hierarchy to read:</p>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv parts.gemparts input.vcd output.vcd 48 \
+    design.gv input.vcd output.vcd 48 \
     --input-vcd-scope module_name
 </code></pre>
 <p><strong>Known Issue</strong>: Currently, signal matching still fails even with correct scope specified. This is under investigation.</p>
@@ -381,7 +381,7 @@ if __name__ == '__main__':
 <p>After fixing VCD issues, validate GEM is reading inputs correctly:</p>
 <h3 id="1-run-with-cpu-verification"><a class="header" href="#1-run-with-cpu-verification">1. Run with CPU Verification</a></h3>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv parts.gemparts input.vcd output.vcd 48 \
+    design.gv input.vcd output.vcd 48 \
     --check-with-cpu
 </code></pre>
 <p>This compares GPU results against CPU gate-level simulation. Should print:</p>
@@ -399,7 +399,7 @@ grep '^[01]!' reference.vcd
 </code></pre>
 <h3 id="3-check-cycle-count"><a class="header" href="#3-check-cycle-count">3. Check Cycle Count</a></h3>
 <pre><code class="language-bash">cargo run -r --features metal --bin jacquard -- sim \
-    design.gv parts.gemparts input.vcd output.vcd 48 \
+    design.gv input.vcd output.vcd 48 \
     2&gt;&amp;1 | grep "total number of cycles"
 </code></pre>
 <p>Should match your testbench's simulation time / clock period.</p>
