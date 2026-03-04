@@ -8,6 +8,7 @@
 __pycache__/
 *.pyc
 *.swp
+.pdm-python
 
 # Claude Code session data
 .claude/
