@@ -2536,13 +2536,18 @@ pub fn run_cosim(
     // CLI --clock-period overrides config file clock_period_ps; default 1000ps (1GHz) if neither set
     let clock_period_ps = opts.clock_period.or(config.clock_period_ps).unwrap_or(1000);
     let clock_hz = 1_000_000_000_000u64 / clock_period_ps;
+    let uart_baud = config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200);
+    let uart_cycles_per_bit = config
+        .uart
+        .as_ref()
+        .and_then(|u| u.cycles_per_bit)
+        .unwrap_or_else(|| (clock_hz / uart_baud as u64) as u32 * 2);
     clilog::info!(
         "Clock period: {} ps ({} MHz), UART cycles_per_bit: {}",
         clock_period_ps,
         clock_hz / 1_000_000,
-        clock_hz / config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200) as u64
+        uart_cycles_per_bit
     );
-    let uart_baud = config.uart.as_ref().map(|u| u.baud_rate).unwrap_or(115200);
     let uart_tx_gpio = config.uart.as_ref().map(|u| u.tx_gpio);
 
     // ── Initialize Metal simulator and GPU state buffers ─────────────────
@@ -2975,7 +2980,7 @@ pub fn run_cosim(
         p.tx_out_pos = uart_tx_gpio
             .and_then(|tx| gpio_map.output_bits.get(&tx).copied())
             .unwrap_or(0);
-        p.cycles_per_bit = (clock_hz / uart_baud as u64) as u32;
+        p.cycles_per_bit = uart_cycles_per_bit;
     }
 
     // UartChannel (shared ring buffer, CPU drains after each batch)

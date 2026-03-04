@@ -311,6 +311,11 @@ pub struct UartConfig {
     pub tx_gpio: usize,
     pub rx_gpio: usize,
     pub baud_rate: u32,
+    /// Override for GPU UART decoder cycles_per_bit.
+    /// If not set, defaults to 2 * (clock_hz / baud_rate).
+    /// The 2x factor is empirically required for Amaranth-generated UART designs
+    /// (root cause not yet fully understood).
+    pub cycles_per_bit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
