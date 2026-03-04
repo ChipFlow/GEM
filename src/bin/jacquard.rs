@@ -5,7 +5,6 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use jacquard::aig::AIG;
 use jacquard::sim::setup::DesignArgs;
 
 #[derive(Parser)]
@@ -31,6 +30,12 @@ enum Commands {
     /// a cycle-accurate co-simulation with GPU-side SPI flash and UART models.
     /// Requires building with `--features metal`.
     Cosim(CosimArgs),
+
+    /// Dump AIG critical paths with timing details.
+    ///
+    /// Analyzes the AIG timing and shows the critical paths from source to sink,
+    /// including cell origins (synthesis cells), gate delays, and cumulative arrivals.
+    DumpPaths(DumpPathsArgs),
 }
 
 #[derive(Parser)]
@@ -188,6 +193,40 @@ struct CosimArgs {
     /// by their computed arrival times. Forces single-tick mode.
     #[clap(long)]
     timing_vcd: Option<PathBuf>,
+}
+
+#[derive(Parser)]
+struct DumpPathsArgs {
+    /// Gate-level Verilog path synthesized with AIGPDK or SKY130 library.
+    netlist_verilog: PathBuf,
+
+    /// Top module name in the netlist.
+    #[clap(long)]
+    top_module: Option<String>,
+
+    /// Level split thresholds (must match values used during mapping).
+    #[clap(long, value_delimiter = ',')]
+    level_split: Vec<usize>,
+
+    /// Path to Liberty library file for timing data.
+    #[clap(long)]
+    liberty: Option<PathBuf>,
+
+    /// Clock period in picoseconds for timing analysis.
+    #[clap(long, default_value = "1000")]
+    clock_period: u64,
+
+    /// Path to SDF file for per-instance back-annotated delays.
+    #[clap(long)]
+    sdf: Option<PathBuf>,
+
+    /// SDF corner selection: min, typ, or max.
+    #[clap(long, default_value = "typ")]
+    sdf_corner: String,
+
+    /// Number of critical paths to dump (default: 5).
+    #[clap(long, default_value = "5")]
+    limit: usize,
 }
 
 #[allow(unused_variables)]
@@ -1224,6 +1263,52 @@ fn run_timing_analysis(aig: &mut AIG, args: &SimArgs) {
     clilog::finish!(timer_timing);
 }
 
+fn cmd_dump_paths(args: DumpPathsArgs) {
+    use jacquard::liberty_parser::TimingLibrary;
+    use jacquard::sim::setup;
+
+    clilog::info!("Loading design for critical path analysis...");
+    let timer = clilog::stimer!("load_design");
+
+    let design_args = DesignArgs {
+        netlist_verilog: args.netlist_verilog.clone(),
+        top_module: args.top_module.clone(),
+        level_split: args.level_split.clone(),
+        num_blocks: 1, // Not needed for path analysis
+        json_path: None,
+        sdf: args.sdf.clone(),
+        sdf_corner: args.sdf_corner.clone(),
+        sdf_debug: false,
+        clock_period_ps: Some(args.clock_period),
+        xprop: false,
+        liberty: args.liberty.clone(),
+    };
+
+    let mut design = setup::load_design(&design_args);
+    clilog::finish!(timer);
+
+    clilog::info!("Loading timing library...");
+    let lib = if let Some(lib_path) = &args.liberty {
+        TimingLibrary::from_file(lib_path).expect("Failed to load Liberty library")
+    } else {
+        TimingLibrary::load_aigpdk().expect("Failed to load default AIGPDK library")
+    };
+    clilog::info!("Loaded Liberty library: {}", lib.name);
+
+    let aig = &mut design.aig;
+    aig.load_timing_library(&lib);
+    aig.clock_period_ps = args.clock_period;
+
+    clilog::info!("Computing timing analysis...");
+    let timer_timing = clilog::stimer!("compute_timing");
+    let _report = aig.compute_timing();
+    clilog::finish!(timer_timing);
+
+    // Dump critical paths
+    let output = aig.dump_critical_paths_detailed(args.limit);
+    println!("{}", output);
+}
+
 fn main() {
     clilog::init_stderr_color_debug();
     clilog::set_max_print_count(clilog::Level::Warn, "NL_SV_LIT", 1);
@@ -1232,6 +1317,7 @@ fn main() {
     match cli.command {
         Commands::Sim(args) => cmd_sim(args),
         Commands::Cosim(args) => cmd_cosim(args),
+        Commands::DumpPaths(args) => cmd_dump_paths(args),
     }
 }
 

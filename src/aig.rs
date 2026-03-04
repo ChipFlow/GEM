@@ -2108,6 +2108,86 @@ impl AIG {
 
         path
     }
+
+    /// Dump detailed critical paths with cell origins, delays, and cumulative arrivals.
+    ///
+    /// Returns a formatted string showing:
+    /// - For each critical endpoint, the full path from source to sink
+    /// - Each node's cell origin (synthesis cell that created it)
+    /// - Gate delays from the Liberty library
+    /// - Cumulative arrival times
+    pub fn dump_critical_paths_detailed(&self, limit: usize) -> String {
+        let mut output = String::new();
+        output.push_str("=== AIG Critical Path Analysis ===\n\n");
+
+        let critical_paths = self.get_critical_paths(limit);
+
+        for (endpoint_idx, (endpoint, arrival)) in critical_paths.iter().enumerate() {
+            let slack = self.clock_period_ps as i64 - *arrival as i64;
+
+            // Determine endpoint label
+            let endpoint_label = if self.primary_outputs.contains(endpoint) {
+                format!("Primary Output (aigpin {})", endpoint)
+            } else {
+                // Find which DFF this belongs to
+                let mut dff_label = format!("DFF D-input (aigpin {})", endpoint);
+                for (_cell_id, dff) in &self.dffs {
+                    if (dff.d_iv >> 1) == *endpoint {
+                        dff_label = format!("DFF D-input (aigpin {}) [unknown DFF]", endpoint);
+                        break;
+                    }
+                }
+                dff_label
+            };
+
+            output.push_str(&format!(
+                "#{}: {} arrival={} ps, slack={} ps\n",
+                endpoint_idx + 1,
+                endpoint_label,
+                arrival,
+                slack
+            ));
+
+            // Trace the path back
+            let path = self.trace_critical_path(*endpoint);
+
+            output.push_str("Path (source → sink):\n");
+            for (depth, (node, node_arrival)) in path.iter().enumerate() {
+                let (rise_delay, fall_delay) = self.gate_delays[*node];
+                let driver_label = match &self.drivers[*node] {
+                    DriverType::AndGate(_, _) => "AND".to_string(),
+                    DriverType::InputPort(_) => "INPUT".to_string(),
+                    DriverType::InputClockFlag(_, _) => "CLOCK".to_string(),
+                    DriverType::DFF(_) => "DFF_Q".to_string(),
+                    DriverType::SRAM(_) => "SRAM_READ".to_string(),
+                    DriverType::Tie0 => "TIE0".to_string(),
+                };
+
+                let max_delay = rise_delay.max(fall_delay);
+                output.push_str(&format!(
+                    "  [{:2}] aigpin {:5} | type: {:10} | delay: {:5} ps | arrival: {:5} ps",
+                    depth, node, driver_label, max_delay, node_arrival
+                ));
+
+                // Show cell origins if available
+                if !self.aigpin_cell_origins[*node].is_empty() {
+                    let origins = &self.aigpin_cell_origins[*node];
+                    for (cell_id, cell_type, pin_name) in origins {
+                        output.push_str(&format!(
+                            " | cell: {} {} (id:{})",
+                            cell_type, pin_name, cell_id
+                        ));
+                    }
+                } else if *node > 0 {
+                    output.push_str(" | (internal)");
+                }
+                output.push('\n');
+            }
+            output.push('\n');
+        }
+
+        output
+    }
 }
 
 /// A reusable topological traverser with dense visited buffer.
