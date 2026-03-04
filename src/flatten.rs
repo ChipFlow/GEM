@@ -415,6 +415,10 @@ impl FlatteningPart {
                     self.num_srams += 1;
                 }
                 EndpointGroup::PrimaryOutput(idx) => {
+                    if idx <= 1 {
+                        // Skip constant primary outputs — handled separately in second loop.
+                        continue;
+                    }
                     comb_outputs_activations
                         .entry(idx >> 1)
                         .or_default()
@@ -427,6 +431,11 @@ impl FlatteningPart {
                         .insert(2, None);
                 }
                 EndpointGroup::DFF(dff) => {
+                    if dff.d_iv <= 1 {
+                        // Skip constant-D DFFs — they don't need output placement.
+                        // Their Q will be mapped to const_zero_pos in the second loop.
+                        continue;
+                    }
                     comb_outputs_activations
                         .entry(dff.d_iv >> 1)
                         .or_default()
@@ -596,6 +605,7 @@ impl FlatteningPart {
         input_map: &mut IndexMap<usize, u32>,
         staged_io_map: &mut IndexMap<usize, u32>,
         output_map: &mut IndexMap<usize, u32>,
+        const_zero_pos: u32,
     ) {
         self.sram_duplicate_permute = vec![0; 1 << BOOMERANG_NUM_STAGES];
         self.sram_duplicate_inv = vec![0u32; NUM_THREADS_V1];
@@ -681,17 +691,26 @@ impl FlatteningPart {
                     staged_io_map.insert(idx, pos);
                 }
                 EndpointGroup::DFF(dff) => {
-                    if dff.d_iv <= 1 {
-                        // DFF with constant D input (0 or 1).
-                        // This can happen with AIGPDK DFFSR where D=const and S/R
-                        // simplify the expression to a constant.
-                        // Map Q to position 0 (approximate; the DFF is degenerate).
+                    if dff.d_iv == 0 {
+                        // DFF with constant-0 D input. Q is always 0.
+                        // Map Q to const_zero_pos (a guaranteed-zero bit in the
+                        // padding area, NOT position 0 which is the posedge flag).
+                        input_map.insert(dff.q, const_zero_pos);
+                        continue;
+                    }
+                    if dff.d_iv == 1 {
+                        // DFF with constant-1 D input (D = NOT(Tie0) = 1).
+                        // Q transitions 0→1 after first clock edge and stays 1.
+                        // Map to const_zero_pos as approximation (starts at 0,
+                        // which is the correct initial value; it would need a
+                        // proper state position to track the 0→1 transition).
                         clilog::warn!(
                             DFF_CONST_ERR,
-                            "dff d_iv={} (constant {}), not fully optimized netlist. mapping Q to pos 0.",
-                            dff.d_iv, dff.d_iv
+                            "dff d_iv=1 (constant 1), Q mapped to const_zero_pos={}. \
+                             Q will read 0 instead of transitioning to 1.",
+                            const_zero_pos
                         );
-                        input_map.insert(dff.q, 0);
+                        input_map.insert(dff.q, const_zero_pos);
                         continue;
                     }
                     let pos = self.state_start * 32
@@ -1048,7 +1067,14 @@ fn build_flattened_script_v1(
 
     let num_major_stages = parts_in_stages.len();
 
-    let states_start = ((input_layout.len() + 31) / 32) as u32;
+    // Reserve a guaranteed-zero bit position for constant-D DFFs.
+    // This must be in the padding area of the primary input words (never written to).
+    let const_zero_pos = input_layout.len() as u32;
+    let mut states_start = ((input_layout.len() + 31) / 32) as u32;
+    if const_zero_pos == states_start * 32 {
+        // No padding bits available, add one extra word for constant pool
+        states_start += 1;
+    }
     let mut sum_state_start = states_start;
     let mut sum_srams_start = 0;
 
@@ -1139,6 +1165,7 @@ fn build_flattened_script_v1(
                 &mut input_map,
                 &mut staged_io_map,
                 &mut output_map,
+                const_zero_pos,
             );
         }
         stages_blocks_parts.push(blocks_parts);
