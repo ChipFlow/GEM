@@ -420,7 +420,7 @@ def main() -> int:
                         help="CVC stdout log with RESULT: lines")
     parser.add_argument("--cvc-vcd", type=Path, required=True,
                         help="CVC output VCD")
-    parser.add_argument("--jacquard-vcd", "--loom-vcd", type=Path, required=True,
+    parser.add_argument("--jacquard-vcd", type=Path, required=True,
                         help="Jacquard --timing-vcd output")
     parser.add_argument("--clock-period-ps", type=int, required=True,
                         help="Clock period in picoseconds")

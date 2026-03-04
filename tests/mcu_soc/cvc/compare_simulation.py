@@ -489,7 +489,7 @@ def main() -> None:
                 else:
                     skip_bits.add(int(part))
             i += 2
-        elif args[i] in ("--jacquard-timing-vcd", "--loom-timing-vcd") and i + 1 < len(args):
+        elif args[i] == "--jacquard-timing-vcd" and i + 1 < len(args):
             jacquard_timing_vcd = Path(args[i + 1])
             i += 2
         elif args[i] == "--cvc-timing-vcd" and i + 1 < len(args):
