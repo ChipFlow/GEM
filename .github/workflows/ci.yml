@@ -929,19 +929,25 @@ jobs:
             echo "SKIP: CVC output VCD not found (CVC simulation may have failed)" | tee mcu_comparison.txt
             exit 0
           fi
-          uv run tests/mcu_soc/cvc/compare_outputs.py \
+          LOOM_TIMING_VCD="metal-results/tests/mcu_soc/loom_timed_mcu.vcd"
+          TIMING_ARGS=""
+          if [ -f "$LOOM_TIMING_VCD" ]; then
+            TIMING_ARGS="--loom-timing-vcd $LOOM_TIMING_VCD"
+          fi
+          uv run tests/mcu_soc/cvc/compare_simulation.py \
             "$LOOM_VCD" "$CVC_VCD" \
             --skip-cycles 5 \
             --num-cycles 10000 \
             --skip-bits 0-5 \
             --config metal-results/tests/mcu_soc/sim_config.json \
+            $TIMING_ARGS \
             2>&1 | tee mcu_comparison.txt
 
       - name: Report
         if: always()
         run: |
           {
-            echo "## MCU SoC Functional Comparison (CVC vs Loom)"
+            echo "## MCU SoC Simulation Comparison (CVC vs Loom)"
             echo ""
             echo "\`\`\`"
             cat mcu_comparison.txt 2>/dev/null || echo "No comparison output"
