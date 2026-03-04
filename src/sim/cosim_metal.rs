@@ -2410,7 +2410,7 @@ pub fn run_cosim(
         .uart
         .as_ref()
         .and_then(|u| u.cycles_per_bit)
-        .unwrap_or_else(|| (clock_hz / uart_baud as u64) as u32 * 2);
+        .unwrap_or_else(|| (clock_hz / uart_baud as u64) as u32);
     clilog::info!(
         "Clock period: {} ps ({} MHz), UART cycles_per_bit: {}",
         clock_period_ps,
