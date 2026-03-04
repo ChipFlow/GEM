@@ -283,7 +283,7 @@ WARN (GATESIM_VCDI_MISSING_PI) Primary input port (HierName(), "reset", None) no
 
 ### 3. No Latch or Asynchronous Sequential Logic Support
 
-**Issue**: Loom only supports edge-triggered D flip-flops (DFFs) as sequential elements. Latch-based designs (SR latches, transparent latches, master-slave latch pairs) and asynchronous sequential logic are not supported.
+**Issue**: Jacquard only supports edge-triggered D flip-flops (DFFs) as sequential elements. Latch-based designs (SR latches, transparent latches, master-slave latch pairs) and asynchronous sequential logic are not supported.
 
 **Impact**: Designs using latches will either:
 - Fail during AIG conversion (unrecognized cell type)
@@ -291,7 +291,7 @@ WARN (GATESIM_VCDI_MISSING_PI) Primary input port (HierName(), "reset", None) no
 
 **What this means in practice**:
 - Gate-level netlists must be synthesized to a DFF-only cell library (AIGPDK or SKY130)
-- CVC's built-in test suite (`tests_and_examples/install.test/`) uses NAND-latch flip-flops (e.g., `dfpsetd.v`, `sdfia04.v`) and cannot be used as Loom reference tests
+- CVC's built-in test suite (`tests_and_examples/install.test/`) uses NAND-latch flip-flops (e.g., `dfpsetd.v`, `sdfia04.v`) and cannot be used as Jacquard reference tests
 - Self-timed designs with internal clock generation (e.g., CVC's `das_lfsr` benchmark) are also unsupported
 
 **What would be needed to support latches**:
@@ -304,7 +304,7 @@ WARN (GATESIM_VCDI_MISSING_PI) Primary input port (HierName(), "reset", None) no
 
 **Complexity estimate**: Moderate-to-high. The main challenge is the evaluation model change — DFF-only simulation is a clean "capture at edge" model, while latches require iterative evaluation within clock phases.
 
-**Status**: Not planned. Loom targets synthesis flows that produce DFF-only netlists.
+**Status**: Not planned. Jacquard targets synthesis flows that produce DFF-only netlists.
 
 ### 4. Format String Preservation
 **Issue**: Yosys synthesis may not preserve `gem_format` attributes

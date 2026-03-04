@@ -66,7 +66,7 @@ module tb_cvc;
     .out(out)
   );
 
-  // VCD output for comparison with Loom
+  // VCD output for comparison with Jacquard
   initial begin
     $dumpfile("cvc_multi_depth_output.vcd");
     $dumpvars(0, uut);

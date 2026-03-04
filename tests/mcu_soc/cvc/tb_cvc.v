@@ -1,17 +1,17 @@
 // CVC SDF-annotated testbench for MCU SoC timing validation.
 //
-// Replays stimulus captured from Loom cosim and compares against CVC's
+// Replays stimulus captured from Jacquard cosim and compares against CVC's
 // event-driven SDF simulation as a reference.
 //
 // Setup:
-//   1. Generate stimulus: loom cosim ... --stimulus-vcd stimulus.vcd
+//   1. Generate stimulus: jacquard cosim ... --stimulus-vcd stimulus.vcd
 //   2. Convert: uv run convert_stimulus.py stimulus.vcd stimulus_gen.v
 //   3. Generate cell models: uv run gen_cell_models.py
 //   4. Run CVC:
 //        cvc64 +typdelays tb_cvc.v sky130_cells.v 6_final.v && ./cvcsim
 //
 // Outputs:
-//   cvc_output.vcd  — GPIO output waveforms for comparison with Loom
+//   cvc_output.vcd  — GPIO output waveforms for comparison with Jacquard
 
 `timescale 1ps/1ps
 
@@ -107,7 +107,7 @@ module tb_cvc;
     mask_rev = 32'h0;
   end
 
-  // ---- Stimulus (generated from Loom cosim VCD) ----
+  // ---- Stimulus (generated from Jacquard cosim VCD) ----
   `include "stimulus_gen.v"
 
 endmodule

@@ -5,7 +5,7 @@
 
 all: inv_chain.v.gv logic_cone.v.gv inv_chain.sdf logic_cone.sdf
 
-# Convert Verilog to AIG graph format for loom
+# Convert Verilog to AIG graph format for Jacquard
 %.v.gv: %.v
 	@echo "Converting $< to AIG..."
 	cargo run -r --bin jacquard -- map $< > $@ 2>&1 || { \

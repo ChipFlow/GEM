@@ -143,7 +143,7 @@ jobs:
           cargo run --release --features metal --bin jacquard -- sim \
             tests/timing_test/inv_chain_pnr/inv_chain.v \
             tests/timing_test/inv_chain_pnr/inv_chain_stimulus.vcd \
-            tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
+            tests/timing_test/inv_chain_pnr/jacquard_timed_output.vcd \
             1 \
             --sdf tests/timing_test/inv_chain_pnr/inv_chain_test_ps.sdf \
             --sdf-corner typ \
@@ -158,7 +158,7 @@ jobs:
           path: |
             tests/timing_test/ci_output.vcd
             tests/timing_test/ci_xprop_output.vcd
-            tests/timing_test/inv_chain_pnr/loom_timed_output.vcd
+            tests/timing_test/inv_chain_pnr/jacquard_timed_output.vcd
             metal_timing.txt
             metal_xprop.txt
             metal_timed.txt
@@ -540,7 +540,7 @@ jobs:
             --sdf tests/mcu_soc/data/6_final_stripped.sdf \
             --sdf-corner typ \
             --stimulus-vcd tests/mcu_soc/stimulus.vcd \
-            --timing-vcd tests/mcu_soc/loom_timed_mcu.vcd \
+            --timing-vcd tests/mcu_soc/jacquard_timed_mcu.vcd \
             2>&1 | tee cosim_stimulus.txt
 
       - name: Replay stimulus (non-timed, for CVC comparison)
@@ -550,7 +550,7 @@ jobs:
           cargo run --release --features metal --bin jacquard -- sim \
             tests/mcu_soc/data/6_final.v \
             tests/mcu_soc/stimulus.vcd \
-            tests/mcu_soc/loom_replay_mcu.vcd \
+            tests/mcu_soc/jacquard_replay_mcu.vcd \
             1 \
             --top-module top \
             --max-cycles 10000 \
@@ -589,8 +589,8 @@ jobs:
             metal_mcu_replay.txt
             tests/mcu_soc/sim_config.json
             tests/mcu_soc/stimulus.vcd
-            tests/mcu_soc/loom_replay_mcu.vcd
-            tests/mcu_soc/loom_timed_mcu.vcd
+            tests/mcu_soc/jacquard_replay_mcu.vcd
+            tests/mcu_soc/jacquard_timed_mcu.vcd
 
   # Build documentation (cargo doc + mdbook) and deploy to GitHub Pages
   docs:
@@ -742,9 +742,9 @@ jobs:
             tests/timing_test/inv_chain_pnr/cvc_output.log
             tests/timing_test/inv_chain_pnr/cvc_inv_chain_output.vcd
 
-  # Compare timing results between CVC (event-driven) and Loom (GPU)
+  # Compare timing results between CVC (event-driven) and Jacquard (GPU)
   timing-comparison:
-    name: Timing Comparison (CVC vs Loom)
+    name: Timing Comparison (CVC vs Jacquard)
     runs-on: ubuntu-latest
     needs: [metal, cvc-reference]
     if: always() && needs.metal.result == 'success' && needs.cvc-reference.result == 'success'
@@ -770,7 +770,7 @@ jobs:
           uv run scripts/compare_timing.py \
             --cvc-log cvc-results/tests/timing_test/inv_chain_pnr/cvc_output.log \
             --cvc-vcd cvc-results/tests/timing_test/inv_chain_pnr/cvc_inv_chain_output.vcd \
-            --loom-vcd metal-results/tests/timing_test/inv_chain_pnr/loom_timed_output.vcd \
+            --jacquard-vcd metal-results/tests/timing_test/inv_chain_pnr/jacquard_timed_output.vcd \
             --clock-period-ps 10000 \
             --clock-signal CLK \
             --output-signal Q \
@@ -781,7 +781,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Timing Comparison (CVC vs Loom)"
+            echo "## Timing Comparison (CVC vs Jacquard)"
             echo ""
             echo "\`\`\`"
             cat comparison.txt 2>/dev/null || echo "No comparison output"
@@ -894,7 +894,7 @@ jobs:
             tests/mcu_soc/cvc/cvc_sim.log
             tests/mcu_soc/cvc/cvc_output.vcd
 
-  # Compare MCU SoC results between CVC (event-driven) and Loom (GPU)
+  # Compare MCU SoC results between CVC (event-driven) and Jacquard (GPU)
   mcu-soc-comparison:
     name: MCU SoC Functional Comparison
     runs-on: ubuntu-latest
@@ -917,25 +917,25 @@ jobs:
           name: mcu-soc-cvc-results
           path: cvc-results/
 
-      - name: Compare outputs (non-timed Loom vs CVC)
+      - name: Compare outputs (non-timed Jacquard vs CVC)
         run: |
-          LOOM_VCD="metal-results/tests/mcu_soc/loom_replay_mcu.vcd"
+          JACQUARD_VCD="metal-results/tests/mcu_soc/jacquard_replay_mcu.vcd"
           CVC_VCD="cvc-results/cvc_output.vcd"
-          if [ ! -f "$LOOM_VCD" ]; then
-            echo "SKIP: Loom replay VCD not found" | tee mcu_comparison.txt
+          if [ ! -f "$JACQUARD_VCD" ]; then
+            echo "SKIP: Jacquard replay VCD not found" | tee mcu_comparison.txt
             exit 0
           fi
           if [ ! -f "$CVC_VCD" ]; then
             echo "SKIP: CVC output VCD not found (CVC simulation may have failed)" | tee mcu_comparison.txt
             exit 0
           fi
-          LOOM_TIMING_VCD="metal-results/tests/mcu_soc/loom_timed_mcu.vcd"
+          JACQUARD_TIMING_VCD="metal-results/tests/mcu_soc/jacquard_timed_mcu.vcd"
           TIMING_ARGS=""
-          if [ -f "$LOOM_TIMING_VCD" ]; then
-            TIMING_ARGS="--loom-timing-vcd $LOOM_TIMING_VCD"
+          if [ -f "$JACQUARD_TIMING_VCD" ]; then
+            TIMING_ARGS="--jacquard-timing-vcd $JACQUARD_TIMING_VCD"
           fi
           uv run tests/mcu_soc/cvc/compare_simulation.py \
-            "$LOOM_VCD" "$CVC_VCD" \
+            "$JACQUARD_VCD" "$CVC_VCD" \
             --skip-cycles 5 \
             --num-cycles 10000 \
             --skip-bits 0-5 \
@@ -947,7 +947,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## MCU SoC Simulation Comparison (CVC vs Loom)"
+            echo "## MCU SoC Simulation Comparison (CVC vs Jacquard)"
             echo ""
             echo "\`\`\`"
             cat mcu_comparison.txt 2>/dev/null || echo "No comparison output"

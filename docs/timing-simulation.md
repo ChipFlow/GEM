@@ -290,7 +290,7 @@ This is feasible but significantly increases memory pressure and computation.
 
 ## Conservative Timing Model: Sources of Overestimation
 
-Loom's GPU timing is intentionally conservative — it may over-estimate arrival times
+Jacquard's GPU timing is intentionally conservative — it may over-estimate arrival times
 but will never under-estimate them. This is important for setup violation detection:
 false positives are safe, false negatives would miss real bugs.
 
@@ -309,7 +309,7 @@ delay = max(gate_delays[pin].rise_ps, gate_delays[pin].fall_ps)
 
 **Impact**: For the SKY130 inv_chain test (16 inverters), rise delays average ~10ps
 larger than fall delays. In a real inverter chain, transitions alternate (rise→fall→rise),
-so half the cells use the smaller fall delay. Loom uses the larger rise delay for all.
+so half the cells use the smaller fall delay. Jacquard uses the larger rise delay for all.
 
 **Measured**: 80ps overestimate on 1235ps (6.5%) for 16 inverters with ~10ps rise/fall
 asymmetry per cell.
@@ -317,7 +317,7 @@ asymmetry per cell.
 ### Source 2: max wire delay across all input pins
 
 For multi-input cells (AND gates, MUXes), INTERCONNECT delays to different input pins
-may differ significantly. Loom takes the maximum across all input pins:
+may differ significantly. Jacquard takes the maximum across all input pins:
 
 ```rust
 // wire_delays_per_cell: dest_cellid → max(all input wire delays)
@@ -326,7 +326,7 @@ entry.fall_ps = entry.fall_ps.max(ic.delay.fall_ps);
 ```
 
 **Impact**: If an AND gate has input A arriving via a 10ps wire and input B via a
-200ps wire, Loom assigns 200ps to the cell regardless of which input is on the
+200ps wire, Jacquard assigns 200ps to the cell regardless of which input is on the
 critical path. An event-driven simulator would correctly propagate the 10ps arrival
 on input A independently.
 
@@ -336,7 +336,7 @@ delays to multi-input cells.
 
 ### Source 3: max arrival across 32 packed signals per thread
 
-Each thread position holds 32 independent Boolean signals. Loom tracks one arrival
+Each thread position holds 32 independent Boolean signals. Jacquard tracks one arrival
 per thread position (the maximum across all 32 signals):
 
 ```
@@ -373,7 +373,7 @@ The inv_chain design (2 DFFs + 16 SKY130 inverters) was validated against CVC
 
 ```
 CVC:  clk_to_q=350ps  chain=885ps  total=1235ps  (transition-accurate)
-Loom: clk_to_q=350ps  chain=973ps  total=1323ps  (conservative max)
+Jacquard: clk_to_q=350ps  chain=973ps  total=1323ps  (conservative max)
 Difference: 88ps (7.1% overestimate)
 ```
 

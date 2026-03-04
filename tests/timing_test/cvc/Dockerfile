@@ -1,5 +1,5 @@
 # CVC (open-src-cvc) Verilog simulator for SDF timing validation.
-# Build: docker build --platform linux/amd64 -t loom-cvc tests/timing_test/cvc
+# Build: docker build --platform linux/amd64 -t jacquard-cvc tests/timing_test/cvc
 #
 # CVC compiles Verilog to native machine code, so the runtime image
 # needs gcc and binutils in addition to the cvc64 binary.

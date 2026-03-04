@@ -6,7 +6,7 @@
 #
 # Prerequisites:
 #   1. Generate stimulus VCD:
-#      cargo run -r --features metal --bin loom -- cosim \
+#      cargo run -r --features metal --bin jacquard -- cosim \
 #        tests/mcu_soc/data/6_final.v \
 #        --config tests/mcu_soc/sim_config_sky130.json \
 #        --top-module openframe_project_wrapper \
@@ -32,7 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 DATA_DIR="$REPO_ROOT/tests/mcu_soc/data"
 CVC_DIR="$SCRIPT_DIR"
 OUTPUT_DIR="$CVC_DIR/output"
-IMAGE_NAME="loom-cvc"
+IMAGE_NAME="jacquard-cvc"
 
 mkdir -p "$OUTPUT_DIR"
 

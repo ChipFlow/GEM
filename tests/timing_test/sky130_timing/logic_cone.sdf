@@ -1,7 +1,7 @@
 (SDFVERSION "3.0")
 (DESIGN "logic_cone")
 (DATE "logic_cone pre-layout Liberty-only SDF")
-(VENDOR "Loom")
+(VENDOR "Jacquard")
 (PROGRAM "gen_liberty_sdf.py")
 (VERSION "1.0")
 (HIERARCHY "logic_cone")

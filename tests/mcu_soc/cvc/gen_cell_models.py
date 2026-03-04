@@ -210,7 +210,7 @@ def read_udp(udp_dir_name: str) -> str | None:
 
     udp_text = match.group(1)
 
-    # Initialize DFF UDPs to 0 (matching Loom's 0-initialization).
+    # Initialize DFF UDPs to 0 (matching Jacquard's 0-initialization).
     # Without this, CVC starts all DFF outputs at X and X-propagation
     # prevents the design from functioning during comparison.
     udp_text = re.sub(

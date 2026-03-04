@@ -1,4 +1,4 @@
-// Auto-generated stimulus from Loom cosim VCD
+// Auto-generated stimulus from Jacquard cosim VCD
 // Source: stimulus.vcd
 // Signals: 19, Events: 20001
 // Ports: ['gpio_in'] + []

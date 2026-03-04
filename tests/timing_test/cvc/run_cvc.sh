@@ -6,7 +6,7 @@
 #
 # Builds the CVC Docker image (cached after first run), then runs the
 # inv_chain testbench with SDF back-annotation. Compares the reported
-# total delay against Loom's expected 1323ps.
+# total delay against Jacquard's expected 1323ps.
 #
 # Outputs:
 #   tests/timing_test/cvc/output/cvc_output.log            (stdout from CVC sim)
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 INV_CHAIN_DIR="$REPO_ROOT/tests/timing_test/inv_chain_pnr"
 OUTPUT_DIR="$SCRIPT_DIR/output"
-IMAGE_NAME="loom-cvc"
+IMAGE_NAME="jacquard-cvc"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -60,17 +60,17 @@ if grep -q "RESULT: total_delay=" "$OUTPUT_DIR/cvc_output.log"; then
     CVC_CHAIN=$(grep "RESULT: chain_delay=" "$OUTPUT_DIR/cvc_output.log" | sed 's/.*=//')
     LOOM_TOTAL=1323
     echo "CVC:  clk_to_q=${CVC_CLK_TO_Q}ps  chain=${CVC_CHAIN}ps  total=${CVC_TOTAL}ps"
-    echo "Loom: clk_to_q=350ps  chain=973ps  total=${LOOM_TOTAL}ps"
+    echo "Jacquard: clk_to_q=350ps  chain=973ps  total=${LOOM_TOTAL}ps"
     echo ""
 
-    # Loom uses max(rise, fall) per cell — a conservative approximation since
+    # Jacquard uses max(rise, fall) per cell — a conservative approximation since
     # the GPU kernel processes 32 packed signals and can't track per-signal
     # transition direction. CVC tracks actual rise/fall transitions.
     # Expected overestimate: 8 inverters × 10ps IOPATH + 8 wires × 1ps = 88ps.
     DIFF=$((LOOM_TOTAL - CVC_TOTAL))
-    echo "Difference: ${DIFF}ps (Loom conservative overestimate)"
+    echo "Difference: ${DIFF}ps (Jacquard conservative overestimate)"
     if [ "$DIFF" -ge 0 ] && [ "$DIFF" -le 200 ]; then
-        echo "PASS: Loom within expected conservative bound"
+        echo "PASS: Jacquard within expected conservative bound"
     else
         echo "FAIL: Unexpected difference (expected 0-200ps overestimate)"
         exit 1

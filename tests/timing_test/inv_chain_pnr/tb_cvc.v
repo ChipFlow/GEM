@@ -83,7 +83,7 @@ module tb_cvc;
     forever #5000 CLK = ~CLK;
   end
 
-  // Stimulus: matches the pattern used by inv_chain_stimulus.vcd for Loom
+  // Stimulus: matches the pattern used by inv_chain_stimulus.vcd for Jacquard
   // Cycle 0: D=0 latched
   // Cycle 1: D=1 latched (set D=1 shortly after cycle 0 clock edge)
   // Cycle 2: D=0 latched (set D=0 shortly after cycle 1 clock edge)

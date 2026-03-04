@@ -24,7 +24,7 @@ GEM's timing simulation (`--timing-vcd` and `--enable-timing` flags) must be val
 ```bash
 # Example: MCU SoC functional comparison
 uv run tests/mcu_soc/cvc/compare_outputs.py \
-    loom_output.vcd cvc_output.vcd \
+    jacquard_output.vcd cvc_output.vcd \
     --skip-cycles 5  # Skip first 5 cycles (reset/initialization)
 ```
 
@@ -75,7 +75,7 @@ cargo run -r --features metal --bin jacquard -- sim \
 ```
 
 **Expected results**:
-- Loom Q arrival ≈ CVC total_delay (within ±5%)
+- Jacquard Q arrival ≈ CVC total_delay (within ±5%)
 - Both simulators show monotonic delay increase with each inverter stage
 
 ### MCU SoC post-layout (Complex Case)
@@ -95,11 +95,11 @@ uv run tests/mcu_soc/cvc/strip_sdf_checks.py \
     tests/mcu_soc/data/6_final.sdf \
     tests/mcu_soc/data/6_final_stripped.sdf
 
-# 2. Generate Loom timing VCD
+# 2. Generate Jacquard timing VCD
 cargo run -r --features metal --bin jacquard -- sim \
     tests/mcu_soc/data/6_final.v \
     tests/mcu_soc/stimulus.vcd \
-    tests/mcu_soc/loom_timed_mcu.vcd 1 \
+    tests/mcu_soc/jacquard_timed_mcu.vcd 1 \
     --sdf tests/mcu_soc/data/6_final_stripped.sdf \
     --sdf-corner typ \
     --timing-vcd \
@@ -114,14 +114,14 @@ cvc64 +typdelays tests/mcu_soc/cvc/tb_cvc.v \
 
 # 4. Compare functional outputs
 uv run tests/mcu_soc/cvc/compare_outputs.py \
-    tests/mcu_soc/loom_timed_mcu.vcd \
+    tests/mcu_soc/jacquard_timed_mcu.vcd \
     tests/mcu_soc/cvc/cvc_output.vcd \
     --skip-cycles 5
 ```
 
 **Expected results**:
 - Functional output: Exact match (or documented difference with explanation)
-- Arrival times: Loom values ≥ CVC due to conservative path accumulation
+- Arrival times: Jacquard values ≥ CVC due to conservative path accumulation
 - CI: Comparison completes without errors
 
 ### Pre-layout Library Timing
@@ -151,19 +151,19 @@ python3 gen_liberty_sdf.py logic_cone.v
 cvc64 +typdelays tb_inv_chain.v inv_chain.v 2>&1 | tee cvc.log
 ./cvcsim
 
-# Run Loom GPU simulation
+# Run Jacquard GPU simulation
 cargo run -r --features metal --bin jacquard -- sim \
-    inv_chain.v stimulus.vcd loom_output.vcd 1 \
+    inv_chain.v stimulus.vcd jacquard_output.vcd 1 \
     --sdf inv_chain.sdf \
     --timing-vcd
 
 # Compare outputs
-uv run ../../mcu_soc/cvc/compare_outputs.py loom_output.vcd cvc_output.vcd
+uv run ../../mcu_soc/cvc/compare_outputs.py jacquard_output.vcd cvc_output.vcd
 ```
 
 **Expected results**:
 - Functional output: Exact match (logic correctness)
-- Arrival times: Loom ≥ CVC (conservative accumulation expected)
+- Arrival times: Jacquard ≥ CVC (conservative accumulation expected)
 - No SDF parsing errors or malformed delays
 
 **Purpose**: Pre-layout tests catch timing issues early without P&R turnaround (30+ min). Library-only delays provide floor (lower bound); post-layout adds routing parasitics for final validation.
@@ -174,9 +174,9 @@ uv run ../../mcu_soc/cvc/compare_outputs.py loom_output.vcd cvc_output.vcd
 
 The main CI pipeline (`.github/workflows/ci.yml`) includes:
 
-1. **mcu-soc-metal job**: Generates Loom timing VCD
+1. **mcu-soc-metal job**: Generates Jacquard timing VCD
    - Includes SDF stripping step (strip_sdf_checks.py)
-   - Produces loom_timed_mcu.vcd with arrival time annotations
+   - Produces jacquard_timed_mcu.vcd with arrival time annotations
 
 2. **mcu-soc-cvc job**: Generates CVC reference output
    - Uses stripped SDF (6_final_nocheck.sdf)
@@ -237,7 +237,7 @@ Post-layout designs include routing delays and P&R context:
 
 **Why**: Boomerang architecture evaluates in hierarchical stages. To know Q arrival, you sum delays from all stages.
 
-**Mitigation**: Compare Loom Q arrival against CVC RESULT: total_delay (if available), or accept that arrival times differ but functional output matches.
+**Mitigation**: Compare Jacquard Q arrival against CVC RESULT: total_delay (if available), or accept that arrival times differ but functional output matches.
 
 ### 2. SDF Parser Robustness
 
@@ -274,7 +274,7 @@ Post-layout designs include routing delays and P&R context:
    - Compare first 5-10 cycles after reset
    - Verify reset logic is synchronized
 
-4. **Compare against Loom non-timed version**:
+4. **Compare against Jacquard non-timed version**:
    ```bash
    # Run without timing VCD
    cargo run -r --features metal --bin jacquard -- sim \

@@ -1,4 +1,4 @@
-// Auto-generated stimulus from Loom cosim VCD
+// Auto-generated stimulus from Jacquard cosim VCD
 // Source: stimulus.vcd
 // Signals: 301, Events: 2001
 // Ports: ['gpio_in', 'gpio_in_h', 'gpio_loopback_one', 'gpio_loopback_zero', 'mask_rev'] + ['por_l', 'porb_h', 'porb_l', 'resetb_h', 'resetb_l']

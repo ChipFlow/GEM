@@ -6,7 +6,7 @@
 #
 # Builds the CVC Docker image (cached after first run), then runs the
 # multi_depth testbench with SDF back-annotation. Reports per-group
-# arrival times for comparison against Loom's timing simulation.
+# arrival times for comparison against Jacquard's timing simulation.
 #
 # Outputs:
 #   tests/timing_test/multi_depth/cvc_output.log              (stdout from CVC sim)
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 MULTI_DEPTH_DIR="$SCRIPT_DIR"
 CVC_DIR="$REPO_ROOT/tests/timing_test/cvc"
-IMAGE_NAME="loom-cvc"
+IMAGE_NAME="jacquard-cvc"
 
 # Build the CVC image if not present (reuses same Dockerfile as inv_chain)
 if ! docker image inspect "$IMAGE_NAME" > /dev/null 2>&1; then

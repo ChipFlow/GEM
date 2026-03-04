@@ -61,7 +61,7 @@ only combinational path delays and setup/hold times from library timing models.
 ### Run with CVC
 
 ```sh
-# Run with CVC (requires open-src-cvc Docker image: loom-cvc)
+# Run with CVC (requires open-src-cvc Docker image: jacquard-cvc)
 cvc64 +typdelays tb_inv_chain.v inv_chain.v
 ./cvcsim
 
@@ -69,13 +69,13 @@ cvc64 +typdelays tb_logic_cone.v logic_cone.v
 ./cvcsim
 ```
 
-### Compare Loom vs CVC
+### Compare Jacquard vs CVC
 
-Use the comparison script in the parent directory to validate that Loom's
+Use the comparison script in the parent directory to validate that Jacquard's
 GPU timing simulation matches CVC's reference timing:
 
 ```sh
-bash ../inv_chain_pnr/../compare_timing.py cvc_output.vcd loom_output.vcd
+bash ../inv_chain_pnr/../compare_timing.py cvc_output.vcd jacquard_output.vcd
 ```
 
 ## Files

@@ -2,17 +2,17 @@
 
 **Status**: Implementation plan for Goal step 8 (final step)
 
-**Objective**: Enable arrival time readback in cosim mode so timing-annotated VCD can be produced without a separate `loom sim` replay. Completes timing validation feature parity with `loom sim`.
+**Objective**: Enable arrival time readback in cosim mode so timing-annotated VCD can be produced without a separate `jacquard sim` replay. Completes timing validation feature parity with `jacquard sim`.
 
 ## Current State
 
-### loom sim ✅ (Complete)
+### jacquard sim ✅ (Complete)
 - Metal: `--timing-vcd` fully functional with arrival time readback
 - CUDA/HIP: In progress (step 7 - kernel FFI bindings)
 - Produces timing-annotated VCD with arrival times for all signals
 - Validated against CVC reference simulator
 
-### loom cosim ❌ (No timing support)
+### jacquard cosim ❌ (No timing support)
 - Supports co-simulation with external testbenches (via Verilog VCD)
 - **Does NOT support** `--timing-vcd` flag currently
 - CPU-GPU synchronized stepping; peripheral models run on CPU
@@ -23,16 +23,16 @@
 **Current workflow** (suboptimal):
 ```bash
 # Step 1: Run cosim to get functional outputs
-loom cosim --input stimulus.vcd --output functional.vcd
+jacquard cosim --input stimulus.vcd --output functional.vcd
 
 # Step 2: Run again with timing to get arrival times (slow!)
-loom sim --input stimulus.vcd --output timed.vcd --sdf design.sdf --timing-vcd
+jacquard sim --input stimulus.vcd --output timed.vcd --sdf design.sdf --timing-vcd
 ```
 
 **Desired workflow** (step 8):
 ```bash
 # Single command produces both functional + timing outputs
-loom cosim --input stimulus.vcd --output timed.vcd \
+jacquard cosim --input stimulus.vcd --output timed.vcd \
     --sdf design.sdf --timing-vcd
 ```
 

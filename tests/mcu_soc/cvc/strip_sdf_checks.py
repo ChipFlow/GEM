@@ -6,7 +6,7 @@
 
 CVC requires matching specify-block timing checks for every SDF TIMINGCHECK
 entry, and has trouble with escaped port names in INTERCONNECT entries.
-For initial Loom vs CVC waveform comparison, IOPATH delays suffice.
+For initial Jacquard vs CVC waveform comparison, IOPATH delays suffice.
 
 Strips:
   - TIMINGCHECK blocks (no matching specify checks)

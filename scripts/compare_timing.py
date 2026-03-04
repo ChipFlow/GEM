@@ -2,27 +2,27 @@
 # requires-python = ">=3.10"
 # dependencies = []
 # ///
-"""Compare timing results between CVC (event-driven) and Loom (GPU) simulators.
+"""Compare timing results between CVC (event-driven) and Jacquard (GPU) simulators.
 
-Parses CVC's RESULT: lines and Loom's timed VCD to compare signal arrival
-times. The primary comparison is Loom's Q arrival (full path from CLK edge
+Parses CVC's RESULT: lines and Jacquard's timed VCD to compare signal arrival
+times. The primary comparison is Jacquard's Q arrival (full path from CLK edge
 through combo logic to output register Q) vs CVC's total_delay RESULT
 (CLK -> dff_out.D path measured by the CVC testbench).
 
 Timing model differences:
-  CVC VCD:  Q transitions at CLK + dff_out_CLK_to_Q (~360ps) because CVC is
-            event-driven and models DFF capture/output separately.
-  Loom VCD: Q transitions at CLK + full_combo_path (~1323ps) because Loom
-            propagates arrival times through the entire combinational path.
+  CVC VCD:      Q transitions at CLK + dff_out_CLK_to_Q (~360ps) because CVC is
+                event-driven and models DFF capture/output separately.
+  Jacquard VCD: Q transitions at CLK + full_combo_path (~1323ps) because Jacquard
+                propagates arrival times through the entire combinational path.
 
-So the meaningful comparison is Loom Q arrival vs CVC total_delay, NOT
-Loom Q arrival vs CVC Q arrival from VCD.
+So the meaningful comparison is Jacquard Q arrival vs CVC total_delay, NOT
+Jacquard Q arrival vs CVC Q arrival from VCD.
 
 Usage:
     uv run scripts/compare_timing.py \
         --cvc-log cvc_output.log \
         --cvc-vcd cvc_inv_chain_output.vcd \
-        --loom-vcd loom_timed_output.vcd \
+        --jacquard-vcd jacquard_timed_output.vcd \
         --clock-period-ps 10000 \
         --clock-signal CLK \
         --output-signal Q
@@ -302,10 +302,10 @@ def measure_arrivals_no_clock(
 
 @dataclass
 class MetricComparison:
-    """One comparison between a CVC reference value and Loom measured value."""
+    """One comparison between a CVC reference value and Jacquard measured value."""
     name: str
     cvc_ps: int
-    loom_ps: int
+    jacquard_ps: int
     diff_ps: int
     diff_pct: float
     status: str  # PASS, WARN, FAIL
@@ -319,9 +319,9 @@ def compute_status(
 ) -> str:
     """Determine PASS/WARN/FAIL status for a timing comparison."""
     if diff_ps < 0 and abs(diff_pct) > max_optimistic_pct:
-        return "FAIL"  # Loom is optimistic (underestimates delay)
+        return "FAIL"  # Jacquard is optimistic (underestimates delay)
     if diff_pct > max_conservative_pct:
-        return "WARN"  # Loom is too conservative
+        return "WARN"  # Jacquard is too conservative
     return "PASS"
 
 
@@ -329,13 +329,13 @@ def format_report(
     cvc_results: dict[str, int],
     metric_comparisons: list[MetricComparison],
     cvc_vcd_arrivals: list[tuple[int, int, str]],
-    loom_vcd_arrivals: list[tuple[int, int, str]],
+    jacquard_vcd_arrivals: list[tuple[int, int, str]],
     clock_signal: str,
     output_signal: str,
 ) -> str:
     """Format the comparison report."""
     lines: list[str] = []
-    lines.append("=== Timing Comparison: CVC vs Loom (inv_chain_pnr) ===")
+    lines.append("=== Timing Comparison: CVC vs Jacquard (inv_chain_pnr) ===")
     lines.append("")
 
     # CVC reference values
@@ -349,16 +349,16 @@ def format_report(
     lines.append("")
 
     # Primary comparison: structural metrics
-    lines.append("Primary Comparison (Loom Q arrival vs CVC total_delay):")
-    lines.append("  Loom's timed VCD propagates the full combo path delay to Q,")
-    lines.append("  so Loom's Q arrival corresponds to CVC's total_delay metric.")
+    lines.append("Primary Comparison (Jacquard Q arrival vs CVC total_delay):")
+    lines.append("  Jacquard's timed VCD propagates the full combo path delay to Q,")
+    lines.append("  so Jacquard's Q arrival corresponds to CVC's total_delay metric.")
     lines.append("")
     if metric_comparisons:
-        lines.append(f"  | {'Metric':>20} | {'CVC (ps)':>8} | {'Loom (ps)':>9} | {'Diff (ps)':>9} | {'Diff (%)':>8} | {'Status':>6} |")
-        lines.append(f"  |{'-'*22}|{'-'*10}|{'-'*11}|{'-'*11}|{'-'*10}|{'-'*8}|")
+        lines.append(f"  | {'Metric':>20} | {'CVC (ps)':>8} | {'Jacquard (ps)':>13} | {'Diff (ps)':>9} | {'Diff (%)':>8} | {'Status':>6} |")
+        lines.append(f"  |{'-'*22}|{'-'*10}|{'-'*15}|{'-'*11}|{'-'*10}|{'-'*8}|")
         for mc in metric_comparisons:
             lines.append(
-                f"  | {mc.name:>20} | {mc.cvc_ps:>8} | {mc.loom_ps:>9} "
+                f"  | {mc.name:>20} | {mc.cvc_ps:>8} | {mc.jacquard_ps:>13} "
                 f"| {mc.diff_ps:>+9d} | {mc.diff_pct:>+7.1f}% | {mc.status:>6} |"
             )
     else:
@@ -370,14 +370,14 @@ def format_report(
     if cvc_vcd_arrivals:
         # Deduplicate to show unique arrival values
         cvc_unique = sorted(set(a for _, a, _ in cvc_vcd_arrivals))
-        lines.append(f"  CVC (dff_out CLK->Q only): {cvc_unique} ps")
+        lines.append(f"  CVC (dff_out CLK->Q only):      {cvc_unique} ps")
     else:
         lines.append("  CVC: (no arrivals measured)")
-    if loom_vcd_arrivals:
-        loom_unique = sorted(set(a for _, a, _ in loom_vcd_arrivals))
-        lines.append(f"  Loom (full combo path):     {loom_unique} ps")
+    if jacquard_vcd_arrivals:
+        jq_unique = sorted(set(a for _, a, _ in jacquard_vcd_arrivals))
+        lines.append(f"  Jacquard (full combo path):     {jq_unique} ps")
     else:
-        lines.append("  Loom: (no arrivals measured)")
+        lines.append("  Jacquard: (no arrivals measured)")
     lines.append("")
 
     # Not yet comparable
@@ -385,9 +385,9 @@ def format_report(
     clk_to_q = cvc_results.get("clk_to_q")
     chain = cvc_results.get("chain_delay")
     if clk_to_q is not None:
-        lines.append(f"  clk_to_q (dff_in CLK->Q): CVC={clk_to_q}ps, Loom=N/A")
+        lines.append(f"  clk_to_q (dff_in CLK->Q): CVC={clk_to_q}ps, Jacquard=N/A")
     if chain is not None:
-        lines.append(f"  chain_delay (q1->c[15]):   CVC={chain}ps, Loom=N/A")
+        lines.append(f"  chain_delay (q1->c[15]):   CVC={chain}ps, Jacquard=N/A")
     lines.append("")
 
     # Overall result
@@ -415,13 +415,13 @@ def format_report(
 # ---------------------------------------------------------------------------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare CVC vs Loom timing results")
+    parser = argparse.ArgumentParser(description="Compare CVC vs Jacquard timing results")
     parser.add_argument("--cvc-log", type=Path, required=True,
                         help="CVC stdout log with RESULT: lines")
     parser.add_argument("--cvc-vcd", type=Path, required=True,
                         help="CVC output VCD")
-    parser.add_argument("--loom-vcd", type=Path, required=True,
-                        help="Loom --timing-vcd output")
+    parser.add_argument("--jacquard-vcd", "--loom-vcd", type=Path, required=True,
+                        help="Jacquard --timing-vcd output")
     parser.add_argument("--clock-period-ps", type=int, required=True,
                         help="Clock period in picoseconds")
     parser.add_argument("--clock-signal", default="CLK",
@@ -442,12 +442,12 @@ def main() -> int:
 
     # Parse VCDs
     cvc_vcd = parse_vcd(args.cvc_vcd)
-    loom_vcd = parse_vcd(args.loom_vcd)
+    jq_vcd = parse_vcd(args.jacquard_vcd)
 
     log.info("CVC VCD: %d signals, timescale=%.0f ps",
              len(cvc_vcd.signals), cvc_vcd.timescale_ps)
-    log.info("Loom VCD: %d signals, timescale=%.0f ps",
-             len(loom_vcd.signals), loom_vcd.timescale_ps)
+    log.info("Jacquard VCD: %d signals, timescale=%.0f ps",
+             len(jq_vcd.signals), jq_vcd.timescale_ps)
 
     # Measure arrivals from VCDs
     cvc_clock = find_signal(cvc_vcd, args.clock_signal)
@@ -459,38 +459,38 @@ def main() -> int:
         cvc_arrivals = measure_arrivals_no_clock(
             cvc_vcd, args.output_signal, args.clock_period_ps)
 
-    loom_clock = find_signal(loom_vcd, args.clock_signal)
-    if loom_clock:
-        loom_arrivals = measure_arrivals(
-            loom_vcd, args.clock_signal, args.output_signal, args.clock_period_ps)
+    jq_clock = find_signal(jq_vcd, args.clock_signal)
+    if jq_clock:
+        jq_arrivals = measure_arrivals(
+            jq_vcd, args.clock_signal, args.output_signal, args.clock_period_ps)
     else:
-        log.info("Loom VCD has no clock signal; inferring edges from period")
-        loom_arrivals = measure_arrivals_no_clock(
-            loom_vcd, args.output_signal, args.clock_period_ps)
+        log.info("Jacquard VCD has no clock signal; inferring edges from period")
+        jq_arrivals = measure_arrivals_no_clock(
+            jq_vcd, args.output_signal, args.clock_period_ps)
 
     log.info("CVC VCD Q arrivals: %s", cvc_arrivals)
-    log.info("Loom VCD Q arrivals: %s", loom_arrivals)
+    log.info("Jacquard VCD Q arrivals: %s", jq_arrivals)
 
-    # Primary comparison: Loom's steady-state Q arrival vs CVC total_delay
-    # Loom's Q arrival includes the full combo path, matching CVC's total_delay.
+    # Primary comparison: Jacquard's steady-state Q arrival vs CVC total_delay
+    # Jacquard's Q arrival includes the full combo path, matching CVC's total_delay.
     metric_comparisons: list[MetricComparison] = []
 
-    # Get Loom's steady-state arrival (skip cycle 0 which may be initial state)
-    loom_steady = [a for c, a, _ in loom_arrivals if c > 0]
-    if not loom_steady:
-        loom_steady = [a for _, a, _ in loom_arrivals]
+    # Get Jacquard's steady-state arrival (skip cycle 0 which may be initial state)
+    jq_steady = [a for c, a, _ in jq_arrivals if c > 0]
+    if not jq_steady:
+        jq_steady = [a for _, a, _ in jq_arrivals]
 
-    if loom_steady and "total_delay" in cvc_results:
-        # Use the most common (modal) Loom arrival as the representative value
-        loom_representative = max(set(loom_steady), key=loom_steady.count)
+    if jq_steady and "total_delay" in cvc_results:
+        # Use the most common (modal) Jacquard arrival as the representative value
+        jq_representative = max(set(jq_steady), key=jq_steady.count)
         cvc_total = cvc_results["total_delay"]
-        diff_ps = loom_representative - cvc_total
+        diff_ps = jq_representative - cvc_total
         diff_pct = (diff_ps / cvc_total * 100) if cvc_total > 0 else 0.0
 
         metric_comparisons.append(MetricComparison(
             name="Q arrival (full path)",
             cvc_ps=cvc_total,
-            loom_ps=loom_representative,
+            jacquard_ps=jq_representative,
             diff_ps=diff_ps,
             diff_pct=diff_pct,
             status=compute_status(diff_ps, diff_pct,
@@ -499,7 +499,7 @@ def main() -> int:
 
     # Report
     report = format_report(
-        cvc_results, metric_comparisons, cvc_arrivals, loom_arrivals,
+        cvc_results, metric_comparisons, cvc_arrivals, jq_arrivals,
         args.clock_signal, args.output_signal)
     print(report)
 
@@ -507,9 +507,9 @@ def main() -> int:
     if args.output_json:
         json_data = {
             "cvc_results": cvc_results,
-            "loom_vcd_arrivals": [
+            "jacquard_vcd_arrivals": [
                 {"cycle": c, "arrival_ps": a, "value": v}
-                for c, a, v in loom_arrivals
+                for c, a, v in jq_arrivals
             ],
             "cvc_vcd_arrivals": [
                 {"cycle": c, "arrival_ps": a, "value": v}
@@ -519,7 +519,7 @@ def main() -> int:
                 {
                     "name": mc.name,
                     "cvc_ps": mc.cvc_ps,
-                    "loom_ps": mc.loom_ps,
+                    "jacquard_ps": mc.jacquard_ps,
                     "diff_ps": mc.diff_ps,
                     "diff_pct": mc.diff_pct,
                     "status": mc.status,

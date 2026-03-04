@@ -75,7 +75,7 @@ def gen_sdf_header(design_name):
     return f"""(SDFVERSION "3.0")
 (DESIGN "{design_name}")
 (DATE "{design_name} pre-layout Liberty-only SDF")
-(VENDOR "Loom")
+(VENDOR "Jacquard")
 (PROGRAM "gen_liberty_sdf.py")
 (VERSION "1.0")
 (HIERARCHY "{design_name}")
