@@ -58,16 +58,16 @@ if grep -q "RESULT: total_delay=" "$OUTPUT_DIR/cvc_output.log"; then
     CVC_TOTAL=$(grep "RESULT: total_delay=" "$OUTPUT_DIR/cvc_output.log" | sed 's/.*=//')
     CVC_CLK_TO_Q=$(grep "RESULT: clk_to_q=" "$OUTPUT_DIR/cvc_output.log" | sed 's/.*=//')
     CVC_CHAIN=$(grep "RESULT: chain_delay=" "$OUTPUT_DIR/cvc_output.log" | sed 's/.*=//')
-    LOOM_TOTAL=1323
+    JACQUARD_TOTAL=1323
     echo "CVC:  clk_to_q=${CVC_CLK_TO_Q}ps  chain=${CVC_CHAIN}ps  total=${CVC_TOTAL}ps"
-    echo "Jacquard: clk_to_q=350ps  chain=973ps  total=${LOOM_TOTAL}ps"
+    echo "Jacquard: clk_to_q=350ps  chain=973ps  total=${JACQUARD_TOTAL}ps"
     echo ""
 
     # Jacquard uses max(rise, fall) per cell — a conservative approximation since
     # the GPU kernel processes 32 packed signals and can't track per-signal
     # transition direction. CVC tracks actual rise/fall transitions.
     # Expected overestimate: 8 inverters × 10ps IOPATH + 8 wires × 1ps = 88ps.
-    DIFF=$((LOOM_TOTAL - CVC_TOTAL))
+    DIFF=$((JACQUARD_TOTAL - CVC_TOTAL))
     echo "Difference: ${DIFF}ps (Jacquard conservative overestimate)"
     if [ "$DIFF" -ge 0 ] && [ "$DIFF" -le 200 ]; then
         echo "PASS: Jacquard within expected conservative bound"
