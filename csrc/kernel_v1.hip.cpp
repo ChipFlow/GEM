@@ -42,7 +42,7 @@ void simulate_v1_noninteractive_simple_scan_hip(
   usize num_cycles,
   usize state_size,
   u32 *states_noninteractive,
-  int arrival_state_offset
+  i32 arrival_state_offset
   )
 {
   validate_warp_size();
@@ -79,7 +79,7 @@ void simulate_v1_noninteractive_timed_hip(
   u32 *states_noninteractive,
   const u32 *timing_constraints,
   u8 *event_buffer,
-  int arrival_state_offset
+  i32 arrival_state_offset
   )
 {
   validate_warp_size();

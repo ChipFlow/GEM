@@ -25,7 +25,7 @@ void simulate_v1_noninteractive_simple_scan_cuda(
   usize num_cycles,
   usize state_size,
   u32 *states_noninteractive,
-  int arrival_state_offset
+  i32 arrival_state_offset
   )
 {
   const u32 *timing_constraints = nullptr;
@@ -59,7 +59,7 @@ void simulate_v1_noninteractive_timed_cuda(
   u32 *states_noninteractive,
   const u32 *timing_constraints,
   u8 *event_buffer,
-  int arrival_state_offset
+  i32 arrival_state_offset
   )
 {
   void *arg_ptrs[12] = {

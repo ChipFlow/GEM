@@ -52,7 +52,7 @@ __device__ void simulate_block_v1(
   u32 clock_period_ps,
   EventBuffer *__restrict__ event_buffer,
   u32 cycle_i,
-  int arrival_state_offset  // offset in output_state for arrival data (0 = disabled)
+  i32 arrival_state_offset  // offset in output_state for arrival data (0 = disabled)
   )
 {
   int script_pi = 0;
@@ -574,7 +574,7 @@ __global__ void simulate_v1_noninteractive_simple_scan(
   u32 *__restrict__ states_noninteractive,
   const u32 *__restrict__ timing_constraints,
   EventBuffer *__restrict__ event_buffer,
-  int arrival_state_offset
+  i32 arrival_state_offset
   )
 {
   assert(num_blocks == gridDim.x);
