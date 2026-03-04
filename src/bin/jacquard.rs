@@ -849,17 +849,6 @@ fn sim_cuda(
     device.synchronize();
     let timer_sim = clilog::stimer!("simulation");
 
-    if timing_constraints.is_some() {
-        // TODO: Wire timing constraints to CUDA timed kernel variant.
-        // The EventBuffer struct contains AtomicU32, which doesn't impl Copy,
-        // so UVec<EventBuffer> can't satisfy the UniversalCopy trait bound.
-        // For now, the simple_scan variant passes nullptr for both timing_constraints
-        // and event_buffer on the C side.
-        clilog::warn!(
-            "Timing constraints requested but CUDA timed kernel not yet wired; \
-             running without GPU-side timing checks"
-        );
-    }
     ucci::simulate_v1_noninteractive_simple_scan(
         script.num_blocks,
         script.num_major_stages,
@@ -870,6 +859,7 @@ fn sim_cuda(
         num_cycles,
         script.effective_state_size() as usize,
         &mut input_states_uvec,
+        script.arrival_state_offset as i32,
         device,
     );
 
@@ -1028,12 +1018,6 @@ fn sim_hip(
     device.synchronize();
     let timer_sim = clilog::stimer!("simulation");
 
-    if timing_constraints.is_some() {
-        clilog::warn!(
-            "Timing constraints requested but HIP timed kernel not yet wired; \
-             running without GPU-side timing checks"
-        );
-    }
     ucci_hip::simulate_v1_noninteractive_simple_scan(
         script.num_blocks,
         script.num_major_stages,
@@ -1044,6 +1028,7 @@ fn sim_hip(
         num_cycles,
         script.effective_state_size() as usize,
         &mut input_states_uvec,
+        script.arrival_state_offset as i32,
         device,
     );
 

@@ -41,20 +41,22 @@ void simulate_v1_noninteractive_simple_scan_hip(
   u32 *sram_xmask,
   usize num_cycles,
   usize state_size,
-  u32 *states_noninteractive
+  u32 *states_noninteractive,
+  int arrival_state_offset
   )
 {
   validate_warp_size();
 
   const u32 *timing_constraints = nullptr;
   EventBuffer *event_buffer = nullptr;
-  void *arg_ptrs[11] = {
+  void *arg_ptrs[12] = {
     (void *)&num_blocks, (void *)&num_major_stages,
     (void *)&blocks_start, (void *)&blocks_data,
     (void *)&sram_data, (void *)&sram_xmask,
     (void *)&num_cycles, (void *)&state_size,
     (void *)&states_noninteractive,
-    (void *)&timing_constraints, (void *)&event_buffer
+    (void *)&timing_constraints, (void *)&event_buffer,
+    (void *)&arrival_state_offset
   };
   checkHipErrors(hipLaunchCooperativeKernel(
     (void *)simulate_v1_noninteractive_simple_scan,
@@ -76,18 +78,20 @@ void simulate_v1_noninteractive_timed_hip(
   usize state_size,
   u32 *states_noninteractive,
   const u32 *timing_constraints,
-  u8 *event_buffer
+  u8 *event_buffer,
+  int arrival_state_offset
   )
 {
   validate_warp_size();
 
-  void *arg_ptrs[11] = {
+  void *arg_ptrs[12] = {
     (void *)&num_blocks, (void *)&num_major_stages,
     (void *)&blocks_start, (void *)&blocks_data,
     (void *)&sram_data, (void *)&sram_xmask,
     (void *)&num_cycles, (void *)&state_size,
     (void *)&states_noninteractive,
-    (void *)&timing_constraints, (void *)&event_buffer
+    (void *)&timing_constraints, (void *)&event_buffer,
+    (void *)&arrival_state_offset
   };
   checkHipErrors(hipLaunchCooperativeKernel(
     (void *)simulate_v1_noninteractive_simple_scan,

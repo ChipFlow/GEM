@@ -573,7 +573,8 @@ __global__ void simulate_v1_noninteractive_simple_scan(
   usize state_size,
   u32 *__restrict__ states_noninteractive,
   const u32 *__restrict__ timing_constraints,
-  EventBuffer *__restrict__ event_buffer
+  EventBuffer *__restrict__ event_buffer,
+  int arrival_state_offset
   )
 {
   assert(num_blocks == gridDim.x);
@@ -617,7 +618,7 @@ __global__ void simulate_v1_noninteractive_simple_scan(
         clock_period_ps,
         event_buffer,
         (u32)cycle_i,
-        0  // arrival_state_offset: CUDA timing VCD not yet supported
+        arrival_state_offset
         );
       cooperative_groups::this_grid().sync();
     }
