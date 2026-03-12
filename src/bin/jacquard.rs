@@ -521,6 +521,18 @@ fn cmd_sim(args: SimArgs) {
             .write_json(report_path)
             .expect("Failed to write timing report JSON");
         clilog::info!("Timing report written to {:?}", report_path);
+
+        // Word-spread analysis + static vs GPU comparison
+        let spread = timing_report::analyze_word_arrival_spread(
+            &design.script,
+            &design.aig,
+        );
+        spread
+            .write_text(&mut std::io::stdout())
+            .expect("Failed to write spread analysis");
+        spread
+            .compare_with_gpu(&design.script, &gpu_states, &mut std::io::stdout())
+            .expect("Failed to write GPU comparison");
     }
 
     // Write output VCD
@@ -1411,6 +1423,15 @@ fn cmd_dump_paths(args: DumpPathsArgs) {
     // Dump critical paths
     let output = aig.dump_critical_paths_detailed(args.limit);
     println!("{}", output);
+
+    // Per-word arrival spread analysis
+    {
+        use jacquard::sim::timing_report;
+        let spread = timing_report::analyze_word_arrival_spread(&design.script, aig);
+        spread
+            .write_text(&mut std::io::stdout())
+            .expect("Failed to write spread analysis");
+    }
 }
 
 fn main() {

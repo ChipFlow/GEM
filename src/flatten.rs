@@ -2696,8 +2696,8 @@ mod constraint_buffer_tests {
 
     /// Simulate the GPU kernel's setup violation check.
     /// Returns Some(slack) if violation, None otherwise.
-    fn check_setup_violation(arrival: u16, setup_ps: u16, clock_period: u32) -> Option<i32> {
-        if arrival > 0 && (arrival as u32 + setup_ps as u32) > clock_period {
+    fn check_setup_violation(arrival: u32, setup_ps: u16, clock_period: u32) -> Option<i32> {
+        if arrival > 0 && (arrival + setup_ps as u32) > clock_period {
             let slack = clock_period as i32 - arrival as i32 - setup_ps as i32;
             Some(slack)
         } else {
@@ -2707,8 +2707,8 @@ mod constraint_buffer_tests {
 
     /// Simulate the GPU kernel's hold violation check.
     /// Returns Some(slack) if violation, None otherwise.
-    fn check_hold_violation(arrival: u16, hold_ps: u16) -> Option<i32> {
-        if (arrival as u32) < (hold_ps as u32) {
+    fn check_hold_violation(arrival: u32, hold_ps: u16) -> Option<i32> {
+        if arrival < (hold_ps as u32) {
             let slack = arrival as i32 - hold_ps as i32;
             Some(slack)
         } else {
@@ -2735,7 +2735,7 @@ mod constraint_buffer_tests {
     #[test]
     fn test_setup_violation_with_realistic_inv_chain() {
         // Use real inv_chain accumulated delay: 1323ps rise, setup=85ps (dff_out)
-        let arrival: u16 = 1323;
+        let arrival: u32 = 1323;
         let setup: u16 = 85;
 
         // clock_period=1200ps → 1323+85=1408 > 1200 → violation, slack=-208
@@ -2785,8 +2785,8 @@ mod constraint_buffer_tests {
         assert_eq!(hold_ps, 0);
 
         // With zero constraints, no violation is possible:
-        // Setup: any arrival + 0 > clock_period only if arrival > clock_period (unlikely in u16)
-        // Hold: arrival < 0 is impossible for u16
+        // Setup: any arrival + 0 > clock_period only if arrival > clock_period
+        // Hold: arrival < 0 is impossible for u32
         let result = check_hold_violation(0, hold_ps);
         assert!(
             result.is_none(),
@@ -2867,10 +2867,8 @@ mod constraint_buffer_tests {
 
     #[test]
     fn test_setup_u16_max_arrival() {
-        // Test arrival near u16::MAX (65535ps) with setup that pushes sum past
-        // u16 range. The kernel uses u32 arithmetic:
-        //   (u32)arrival + (u32)setup_ps > clock_period_ps
-        // so it must not overflow at 16-bit boundary.
+        // Test arrival near old u16::MAX (65535ps) with setup that pushes sum past.
+        // Arrival is now u32 so no overflow concern; setup_ps stays u16.
 
         // arrival=65000, setup=1000 → (u32)66000 > 60000 → violation
         let result = check_setup_violation(65000, 1000, 60000);
@@ -2886,8 +2884,8 @@ mod constraint_buffer_tests {
         assert!(result.is_none(), "65000+1000=66000 <= 70000 → no violation");
 
         // Extreme: both at u16::MAX
-        // arrival=65535, setup=65535 → (u32)131070 > 131069 → violation
-        let result = check_setup_violation(u16::MAX, u16::MAX, 131069);
+        // arrival=65535, setup=65535 → 131070 > 131069 → violation
+        let result = check_setup_violation(u16::MAX as u32, u16::MAX, 131069);
         assert!(
             result.is_some(),
             "u16::MAX + u16::MAX = 131070 > 131069 → violation"
@@ -2899,7 +2897,7 @@ mod constraint_buffer_tests {
         );
 
         // Same extreme but clock_period accommodates it
-        let result = check_setup_violation(u16::MAX, u16::MAX, 131070);
+        let result = check_setup_violation(u16::MAX as u32, u16::MAX, 131070);
         assert!(
             result.is_none(),
             "u16::MAX + u16::MAX = 131070 <= 131070 → no violation"

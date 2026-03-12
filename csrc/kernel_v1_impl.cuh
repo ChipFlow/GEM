@@ -41,12 +41,11 @@ __device__ void simulate_block_v1(
   u32 *__restrict__ shared_state,
   u32 *__restrict__ shared_writeouts_x,  // X-mask sideband for writeouts
   u32 *__restrict__ shared_state_x,      // X-mask sideband for state
-  // Arrival times in raw picoseconds (u16), max representable 65,535ps.
-  // Gate delays are stored as u16 in the script padding slots.
-  // No quantization needed — 512 bytes of shared memory per block is negligible.
-  u16 *__restrict__ shared_arrival,
-  // Writeout arrival times captured during writeout hook
-  u16 *__restrict__ shared_writeout_arrival,
+  // Arrival times in raw picoseconds (u32).
+  // Gate delays are stored as u16 in the script padding slots; accumulation uses u32.
+  u32 *__restrict__ shared_arrival,
+  // Writeout arrival times captured at writeout (u32 to avoid saturation on long paths)
+  u32 *__restrict__ shared_writeout_arrival,
   // Timing constraint buffer: one u32 per state word, [setup_ps:16][hold_ps:16]
   const u32 *__restrict__ timing_constraints,
   u32 clock_period_ps,
@@ -157,6 +156,8 @@ __device__ void simulate_block_v1(
     for(int bs_i = 0; bs_i < num_stages; ++bs_i) {
       u32 hier_input = 0, hier_input_x = 0;
       u32 hier_flag_xora = 0, hier_flag_xorb = 0, hier_flag_orb = 0;
+      // Track max arrival from source words during shuffle (cross-stage propagation)
+      u32 max_src_arrival = 0;
 #define GEMV1_SHUF_INPUT_K(k_outer, k_inner, t_shuffle) {           \
         u32 k = k_outer * 4 + k_inner;                              \
         u32 t_shuffle_1_idx = t_shuffle & ((1 << 16) - 1);          \
@@ -172,6 +173,10 @@ __device__ void simulate_block_v1(
           hier_input_x |= (shared_state_x[t_shuffle_2_idx >> 5] >>  \
                            (t_shuffle_2_idx & 31) & 1) << (k * 2 + 1); \
         }                                                           \
+        max_src_arrival = max(max_src_arrival,                       \
+                             (u32)shared_arrival[t_shuffle_1_idx >> 5]); \
+        max_src_arrival = max(max_src_arrival,                       \
+                             (u32)shared_arrival[t_shuffle_2_idx >> 5]); \
       }
 #define GEMV1_SHUF_INPUT_K_4(k_outer, t_shuffle) {    \
         GEMV1_SHUF_INPUT_K(k_outer, 0, t_shuffle.c1); \
@@ -200,7 +205,8 @@ __device__ void simulate_block_v1(
       __syncthreads();
       shared_state[threadIdx.x] = hier_input;
       shared_state_x[threadIdx.x] = hier_input_x;
-      shared_arrival[threadIdx.x] = 0;  // Reset arrival for shuffle inputs
+      // Propagate max arrival from source words (cross-stage continuity)
+      shared_arrival[threadIdx.x] = max_src_arrival;
       __syncthreads();
 
       // hier[0]: threads 128-255 compute AND gates + track arrivals
@@ -222,18 +228,18 @@ __device__ void simulate_block_v1(
 
         // Arrival tracking: max(input_a, input_b) + gate_delay
         // Delay added even for pass-throughs (physical cells with accumulated delays)
-        u16 arr_a = (u16)shared_arrival[threadIdx.x - 128];
-        u16 arr_b = (u16)shared_arrival[threadIdx.x];
+        u32 arr_a = shared_arrival[threadIdx.x - 128];
+        u32 arr_b = shared_arrival[threadIdx.x];
         bool is_pass = (hier_flag_orb == 0xFFFFFFFF);
-        u16 base_arr = is_pass ? arr_a : (u16)max(arr_a, arr_b);
-        u16 new_arr = (u16)(base_arr + (u16)gate_delay);
+        u32 base_arr = is_pass ? arr_a : max(arr_a, arr_b);
+        u32 new_arr = base_arr + (u32)gate_delay;
         shared_arrival[threadIdx.x] = new_arr;
       }
       __syncthreads();
       // hier[1..3]: shared memory reduction + arrival tracking
       u32 tmp_cur_hi;
       u32 tmp_cur_hi_x = 0;
-      u16 tmp_cur_arr = 0;
+      u32 tmp_cur_arr = 0;
       for(int hi = 1; hi <= 3; ++hi) {
         int hier_width = 1 << (7 - hi);
         if(threadIdx.x >= hier_width && threadIdx.x < hier_width * 2) {
@@ -255,19 +261,19 @@ __device__ void simulate_block_v1(
           }
 
           // Arrival tracking (delay added even for pass-throughs)
-          u16 arr_a = (u16)shared_arrival[threadIdx.x + hier_width];
-          u16 arr_b = (u16)shared_arrival[threadIdx.x + hier_width * 2];
+          u32 arr_a = shared_arrival[threadIdx.x + hier_width];
+          u32 arr_b = shared_arrival[threadIdx.x + hier_width * 2];
           bool is_pass = (hier_flag_orb == 0xFFFFFFFF);
-          u16 base_arr = is_pass ? arr_a : (u16)max(arr_a, arr_b);
-          u16 new_arr = (u16)(base_arr + (u16)gate_delay);
+          u32 base_arr = is_pass ? arr_a : max(arr_a, arr_b);
+          u32 new_arr = base_arr + (u32)gate_delay;
           tmp_cur_arr = new_arr;
           shared_arrival[threadIdx.x] = tmp_cur_arr;
         }
         __syncthreads();
       }
       // hier[4..7], within the first warp.
-      // Pack arrival into u32 for warp shuffle
-      u32 tmp_cur_arr_u32 = (u32)tmp_cur_arr;
+      // Arrival already u32 — use directly for warp shuffle
+      u32 tmp_cur_arr_u32 = tmp_cur_arr;
       if(threadIdx.x < 32) {
         for(int hi = 4; hi <= 7; ++hi) {
           int hier_width = 1 << (7 - hi);
@@ -287,9 +293,8 @@ __device__ void simulate_block_v1(
             }
             // Arrival tracking (delay added even for pass-throughs)
             bool is_pass = (hier_flag_orb == 0xFFFFFFFF);
-            u16 base_arr = is_pass ? (u16)arr_a_u32 : (u16)max((u16)arr_a_u32, (u16)arr_b_u32);
-            u16 new_arr = (u16)(base_arr + (u16)gate_delay);
-            tmp_cur_arr_u32 = (u32)new_arr;
+            u32 base_arr = is_pass ? arr_a_u32 : max(arr_a_u32, arr_b_u32);
+            tmp_cur_arr_u32 = base_arr + (u32)gate_delay;
           }
         }
         u32 v1 = __shfl_down_sync(0xffffffff, tmp_cur_hi, 1);
@@ -348,7 +353,7 @@ __device__ void simulate_block_v1(
         }
         shared_state[threadIdx.x] = tmp_cur_hi;
         shared_state_x[threadIdx.x] = tmp_cur_hi_x;
-        shared_arrival[threadIdx.x] = (u16)tmp_cur_arr_u32;
+        shared_arrival[threadIdx.x] = tmp_cur_arr_u32;
       }
       __syncthreads();
 
@@ -518,8 +523,8 @@ __device__ void simulate_block_v1(
       u32 constraint = timing_constraints[io_offset + threadIdx.x];
       if(constraint != 0) {
         u16 setup_ps = (u16)(constraint >> 16);
-        u16 arrival = shared_writeout_arrival[threadIdx.x];
-        if(arrival > 0 && (u32)arrival + (u32)setup_ps > clock_period_ps) {
+        u32 arrival = shared_writeout_arrival[threadIdx.x];
+        if(arrival > 0 && arrival + (u32)setup_ps > clock_period_ps) {
           write_event(event_buffer, EVENT_TYPE_SETUP_VIOLATION,
                      io_offset + threadIdx.x, cycle_i,
                      io_offset + threadIdx.x,
@@ -560,9 +565,9 @@ __device__ void simulate_block_v1(
       if(constraint != 0) {
         u16 setup_ps = (u16)(constraint >> 16);
         u16 hold_ps = (u16)(constraint & 0xFFFF);
-        u16 arrival = shared_writeout_arrival[threadIdx.x];
+        u32 arrival = shared_writeout_arrival[threadIdx.x];
         // Setup: arrival + setup must fit within clock period
-        if(arrival > 0 && (u32)arrival + (u32)setup_ps > clock_period_ps) {
+        if(arrival > 0 && arrival + (u32)setup_ps > clock_period_ps) {
           int slack = (int)clock_period_ps - (int)arrival - (int)setup_ps;
           write_event(event_buffer, EVENT_TYPE_SETUP_VIOLATION,
                      io_offset + threadIdx.x, cycle_i,
@@ -605,8 +610,8 @@ __global__ void simulate_v1_noninteractive_simple_scan(
   __shared__ u32 shared_state[256];
   __shared__ u32 shared_writeouts_x[256];  // X-mask sideband for writeouts
   __shared__ u32 shared_state_x[256];      // X-mask sideband for state
-  __shared__ u16 shared_arrival[256];  // Per-thread-position arrival times (raw picoseconds)
-  __shared__ u16 shared_writeout_arrival[256];  // Arrival times captured at writeout
+  __shared__ u32 shared_arrival[256];  // Per-thread-position arrival times (raw picoseconds, u32)
+  __shared__ u32 shared_writeout_arrival[256];  // Arrival times captured at writeout (u32)
   shared_writeout_arrival[threadIdx.x] = 0;  // Must initialize — only writeout threads update this
   shared_writeouts_x[threadIdx.x] = 0;
   shared_state_x[threadIdx.x] = 0;

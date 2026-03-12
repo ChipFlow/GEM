@@ -3342,7 +3342,7 @@ pub fn run_cosim(
                     let arrival_section = &output_state[arrival_state_offset as usize..];
                     let word_idx = (output_pos >> 5) as usize;
                     if word_idx < rio {
-                        (arrival_section[word_idx] & 0xFFFF) as u64
+                        arrival_section[word_idx] as u64
                     } else {
                         0u64
                     }

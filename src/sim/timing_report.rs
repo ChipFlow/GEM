@@ -105,11 +105,11 @@ pub fn generate_timing_report(
             continue;
         }
 
-        // Read arrival time from GPU: stored as u16 in lower 16 bits of the
-        // state word at the D-input's bit position (word granularity).
+        // Read arrival time from GPU: stored as u32 at the D-input's
+        // bit position (word granularity).
         let word_idx = (data_state_pos / 32) as usize;
         let arrival: u64 = if word_idx < last_arrivals.len() {
-            (last_arrivals[word_idx] & 0xFFFF) as u64
+            last_arrivals[word_idx] as u64
         } else {
             0
         };
@@ -261,6 +261,248 @@ fn resolve_cell_origin(
         DriverType::InputClockFlag(..) => "clock_flag",
     };
     (type_name.to_string(), format!("aig_{}", aigpin), "Y".to_string())
+}
+
+// ── Word Arrival Spread Analysis ──────────────────────────────────────────────
+
+/// Per-word arrival spread statistics.
+/// Shows the min/max static arrival times across the DFF D-input bits
+/// sharing each 32-bit state word.
+pub struct WordSpreadAnalysis {
+    /// (word_index, num_bits, min_arrival_ps, max_arrival_ps)
+    pub words: Vec<(usize, usize, u64, u64)>,
+}
+
+/// Analyze per-word arrival time spread using static STA data.
+///
+/// Groups DFF D-input arrival times by their 32-bit state word index
+/// (from `script.output_map`) and computes min/max within each word.
+/// This measures how much information is lost by the GPU's per-word
+/// arrival approximation.
+///
+/// Requires `aig.arrival_times` to be populated (via `compute_timing()`).
+pub fn analyze_word_arrival_spread(
+    script: &FlattenedScriptV1,
+    aig: &AIG,
+) -> WordSpreadAnalysis {
+    use std::collections::BTreeMap;
+
+    assert!(
+        !aig.arrival_times.is_empty(),
+        "arrival_times not computed — call compute_timing() first"
+    );
+
+    // Group DFF D-input arrivals by state word index
+    let mut word_arrivals: BTreeMap<usize, Vec<u64>> = BTreeMap::new();
+
+    for (_cell_id, dff) in &aig.dffs {
+        let d_pin = dff.d_iv >> 1;
+        if d_pin == 0 || d_pin >= aig.arrival_times.len() {
+            continue;
+        }
+        if let Some(&pos) = script.output_map.get(&dff.d_iv) {
+            if pos == u32::MAX {
+                continue;
+            }
+            let word_idx = (pos / 32) as usize;
+            let (_, max_arrival) = aig.arrival_times[d_pin];
+            word_arrivals.entry(word_idx).or_default().push(max_arrival);
+        }
+    }
+
+    let words: Vec<_> = word_arrivals
+        .into_iter()
+        .map(|(word_idx, arrivals)| {
+            let min = *arrivals.iter().min().unwrap();
+            let max = *arrivals.iter().max().unwrap();
+            (word_idx, arrivals.len(), min, max)
+        })
+        .collect();
+
+    WordSpreadAnalysis { words }
+}
+
+impl WordSpreadAnalysis {
+    /// Compare static per-word max arrivals against GPU dynamic arrivals.
+    ///
+    /// For each word, the static max is the largest arrival from `compute_timing()`
+    /// across all DFF D-inputs in that word. The GPU arrival is the u32 from
+    /// `split_arrival_states()`. Differences reveal the effect of the boomerang's
+    /// delay approximation (max-per-thread-position packing).
+    pub fn compare_with_gpu(
+        &self,
+        script: &FlattenedScriptV1,
+        gpu_states: &[u32],
+        w: &mut impl Write,
+    ) -> std::io::Result<()> {
+        let arrivals = vcd_io::split_arrival_states(gpu_states, script);
+        let rio = script.reg_io_state_size as usize;
+        let num_snapshots = arrivals.len() / rio;
+        if num_snapshots == 0 {
+            writeln!(w, "No GPU snapshots available for comparison.")?;
+            return Ok(());
+        }
+        let last_arrivals = &arrivals[(num_snapshots - 1) * rio..];
+
+        writeln!(w, "\n=== Static vs GPU Arrival Comparison ===")?;
+        writeln!(w, "Static: per-pin max from compute_timing(), grouped by word")?;
+        writeln!(w, "GPU:    per-word u32 from boomerang arrival tracking\n")?;
+
+        let mut diffs: Vec<(usize, u64, u64, i64)> = Vec::new();
+        for &(word_idx, _bits, _min, static_max) in &self.words {
+            let gpu_arrival = if word_idx < last_arrivals.len() {
+                last_arrivals[word_idx] as u64
+            } else {
+                0
+            };
+            let diff = gpu_arrival as i64 - static_max as i64;
+            diffs.push((word_idx, static_max, gpu_arrival, diff));
+        }
+
+        // Summary statistics
+        let positive_diffs: Vec<i64> = diffs.iter().map(|d| d.3).filter(|&d| d > 0).collect();
+        let negative_diffs: Vec<i64> = diffs.iter().map(|d| d.3).filter(|&d| d < 0).collect();
+        let exact_matches = diffs.iter().filter(|d| d.3 == 0).count();
+        let mean_abs_diff = diffs.iter().map(|d| d.3.unsigned_abs()).sum::<u64>() as f64
+            / diffs.len().max(1) as f64;
+
+        writeln!(w, "Words compared:   {}", diffs.len())?;
+        writeln!(w, "Exact matches:    {} ({:.1}%)",
+            exact_matches, 100.0 * exact_matches as f64 / diffs.len() as f64)?;
+        writeln!(w, "GPU > static:     {} (boomerang over-estimates)",
+            positive_diffs.len())?;
+        writeln!(w, "GPU < static:     {} (GPU under-reports — data-dependent)",
+            negative_diffs.len())?;
+        writeln!(w, "Mean |diff|:      {:.0}ps", mean_abs_diff)?;
+        if let Some(&max_over) = positive_diffs.iter().max() {
+            writeln!(w, "Max over-est:     {}ps", max_over)?;
+        }
+        if let Some(&max_under) = negative_diffs.iter().min() {
+            writeln!(w, "Max under-report: {}ps", max_under)?;
+        }
+
+        // Show worst 10 by absolute difference
+        let mut sorted = diffs.clone();
+        sorted.sort_by(|a, b| b.3.unsigned_abs().cmp(&a.3.unsigned_abs()));
+        sorted.truncate(10);
+
+        if !sorted.is_empty() {
+            writeln!(w, "\nTop 10 words by |static - GPU| difference:")?;
+            writeln!(w, "{:>6}  {:>10}  {:>10}  {:>10}",
+                "Word", "Static(ps)", "GPU(ps)", "Diff(ps)")?;
+            writeln!(w, "{}", "-".repeat(42))?;
+            for (word_idx, static_max, gpu_arr, diff) in &sorted {
+                writeln!(w, "{:>6}  {:>10}  {:>10}  {:>+10}",
+                    word_idx, static_max, gpu_arr, diff)?;
+            }
+        }
+
+        writeln!(w)?;
+        Ok(())
+    }
+
+    /// Print human-readable summary with histogram of spreads.
+    pub fn write_text(&self, w: &mut impl Write) -> std::io::Result<()> {
+        writeln!(w, "\n=== Per-Word Arrival Spread Analysis ===")?;
+        writeln!(
+            w,
+            "Measures how much arrival time varies within each 32-bit state word."
+        )?;
+        writeln!(
+            w,
+            "The GPU tracks one arrival per word, so large spreads indicate lost precision.\n"
+        )?;
+
+        let total_words = self.words.len();
+        if total_words == 0 {
+            writeln!(w, "No DFF words found.")?;
+            return Ok(());
+        }
+
+        // Compute spread for each word
+        let spreads: Vec<u64> = self.words.iter().map(|&(_, _, min, max)| max - min).collect();
+
+        // Summary statistics
+        let max_spread = *spreads.iter().max().unwrap();
+        let mean_spread = spreads.iter().sum::<u64>() as f64 / spreads.len() as f64;
+        let zero_spread = spreads.iter().filter(|&&s| s == 0).count();
+
+        // Histogram buckets (ps)
+        let buckets = [0, 10, 50, 100, 200, 500, 1000, 2000, 5000, u64::MAX];
+        let bucket_labels = [
+            "     0ps",
+            "  1-10ps",
+            " 11-50ps",
+            "51-100ps",
+            "101-200ps",
+            "201-500ps",
+            "0.5-1ns",
+            "  1-2ns",
+            "  2-5ns",
+            "   >5ns",
+        ];
+        let mut bucket_counts = vec![0usize; buckets.len()];
+        for &s in &spreads {
+            for i in 0..buckets.len() {
+                if i == buckets.len() - 1 || s < buckets[i + 1] {
+                    // Special case: bucket[0] is exactly 0
+                    if i == 0 && s == 0 {
+                        bucket_counts[0] += 1;
+                    } else if i == 0 && s > 0 && s <= buckets[1] {
+                        bucket_counts[1] += 1;
+                    } else if i > 0 {
+                        bucket_counts[i] += 1;
+                    }
+                    break;
+                }
+            }
+        }
+
+        writeln!(w, "Words with DFF bits: {}", total_words)?;
+        writeln!(w, "Zero spread (exact):  {} ({:.1}%)",
+            zero_spread, 100.0 * zero_spread as f64 / total_words as f64)?;
+        writeln!(w, "Mean spread:          {:.0}ps", mean_spread)?;
+        writeln!(w, "Max spread:           {}ps\n", max_spread)?;
+
+        writeln!(w, "Spread distribution:")?;
+        let bar_max = 50;
+        let count_max = *bucket_counts.iter().max().unwrap_or(&1).max(&1);
+        for i in 0..bucket_labels.len() {
+            let count = bucket_counts[i];
+            let bar_len = (count * bar_max) / count_max;
+            let pct = 100.0 * count as f64 / total_words as f64;
+            writeln!(
+                w,
+                "  {} | {:<width$} {:>4} ({:>5.1}%)",
+                bucket_labels[i],
+                "#".repeat(bar_len),
+                count,
+                pct,
+                width = bar_max
+            )?;
+        }
+
+        // Show worst 10 words
+        let mut worst: Vec<_> = self.words.iter()
+            .map(|&(idx, bits, min, max)| (max - min, idx, bits, min, max))
+            .collect();
+        worst.sort_by(|a, b| b.0.cmp(&a.0));
+        worst.truncate(10);
+
+        if !worst.is_empty() && worst[0].0 > 0 {
+            writeln!(w, "\nTop 10 words by spread:")?;
+            writeln!(w, "{:>6}  {:>5}  {:>8}  {:>8}  {:>8}",
+                "Word", "Bits", "Min(ps)", "Max(ps)", "Spread")?;
+            writeln!(w, "{}", "-".repeat(43))?;
+            for (spread, idx, bits, min, max) in &worst {
+                writeln!(w, "{:>6}  {:>5}  {:>8}  {:>8}  {:>8}",
+                    idx, bits, min, max, spread)?;
+            }
+        }
+
+        writeln!(w)?;
+        Ok(())
+    }
 }
 
 // ── Output Formatting ────────────────────────────────────────────────────────

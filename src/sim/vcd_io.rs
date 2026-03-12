@@ -530,8 +530,8 @@ pub fn expand_states_for_arrivals(
 /// Extract arrival times from GPU output buffer with timing arrivals enabled.
 ///
 /// Returns a vector of u32 arrival times with the same snapshot/offset
-/// structure as the value states. Each u32 contains a u16 arrival time
-/// in picoseconds (stored in the low 16 bits).
+/// structure as the value states. Each u32 contains the arrival time
+/// in picoseconds.
 pub fn split_arrival_states(
     gpu_states: &[u32],
     script: &FlattenedScriptV1,
@@ -773,7 +773,7 @@ fn write_output_vcd_impl(
 /// kernel's arrival sideband.
 ///
 /// `arrival_states` has the same snapshot/offset layout as `states`.
-/// Each u32 word contains a u16 arrival time in picoseconds (low 16 bits).
+/// Each u32 word contains the arrival time in picoseconds.
 /// `timescale` is the VCD timescale (ratio, unit) for converting ps to VCD time.
 pub fn write_output_vcd_timed<W: std::io::Write>(
     writer: &mut vcd_ng::Writer<W>,
@@ -836,12 +836,11 @@ pub fn write_output_vcd_timed<W: std::io::Write>(
             }
 
             // Get arrival time for this output position.
-            // Arrivals are stored one u32 per word position (same indexing as values).
-            // Each u32 word in the arrival section holds a u16 arrival in the low bits,
+            // Arrivals are stored one u32 per word position (same indexing as values),
             // shared by all 32 output bits packed in the corresponding value word.
             let arrival_ps = if output_pos != u32::MAX {
                 let word_idx = (output_pos >> 5) as usize;
-                (arrival_states[offset + word_idx] & 0xFFFF) as u64
+                arrival_states[offset + word_idx] as u64
             } else {
                 0u64
             };
