@@ -6,6 +6,16 @@ Use the sidebar to navigate between topics, or start with the [Getting Started](
 
 ## Documents
 
+### Project Scope & Planning
+
+Start here if you're considering a feature contribution or want to understand Jacquard's overall direction.
+
+- **[Project Scope & Guarantees](project-scope.md)**: Top-level contract — what Jacquard is for, what it isn't, licensing and architecture constraints, stability tiers.
+- **[Timing Correctness](timing-correctness.md)**: Scoped requirements for timing accuracy, validation, and the forthcoming timing IR.
+- **[Architecture Decision Records](adr/)**: Design decisions and their rationale (numbered, per-decision).
+- **[Implementation Plans](plans/)**: Phased implementation plans with entry and exit criteria.
+- **[Spikes](spikes/)**: Time-boxed experiments and their outcomes.
+
 ### Core Documentation
 
 - **[Simulation Architecture](simulation-architecture.md)**: Detailed explanation of Jacquard's internal architecture

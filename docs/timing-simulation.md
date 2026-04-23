@@ -1,5 +1,7 @@
 # Timing Simulation in GEM
 
+> **See also:** [`timing-correctness.md`](timing-correctness.md) — forward-looking validation contract and timing IR requirements (in progress). The document below describes current behaviour.
+
 This document explains GEM's boomerang evaluation architecture and how timing simulation with per-gate delays can be implemented efficiently on GPU.
 
 ## Background: The Simulation Challenge

@@ -1,5 +1,7 @@
 # Timing Violation Detection
 
+> **See also:** [`timing-correctness.md`](timing-correctness.md) — forward-looking validation contract and timing IR requirements (in progress). The document below describes current behaviour.
+
 Guide to enabling, reading, and debugging setup/hold timing violations in GEM.
 
 ## Overview

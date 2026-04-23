@@ -1,5 +1,7 @@
 # Timing Validation Methodology
 
+> **Note:** The ±5% tolerance convention described here will be superseded by [`timing-correctness.md`](timing-correctness.md) once phase 0 ships (OpenSTA oracle + timing IR + diff harness). Content below remains accurate for current behaviour.
+
 This document describes how GEM validates timing simulation accuracy against reference simulators (CVC, Icarus Verilog). It covers test cases, comparison metrics, known simulator differences, and acceptance criteria.
 
 ## Overview
