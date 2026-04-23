@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["build_timing_constraints","load_design","load_sdf"],"struct":["DesignArgs","LoadedDesign"]};

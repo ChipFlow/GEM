@@ -160,6 +160,15 @@
 <p>Welcome to the documentation for Jacquard, a GPU-accelerated RTL logic simulator.</p>
 <p>Use the sidebar to navigate between topics, or start with the <a href="usage.html">Getting Started</a> guide.</p>
 <h2 id="documents"><a class="header" href="#documents">Documents</a></h2>
+<h3 id="project-scope--planning"><a class="header" href="#project-scope--planning">Project Scope &amp; Planning</a></h3>
+<p>Start here if you're considering a feature contribution or want to understand Jacquard's overall direction.</p>
+<ul>
+<li><strong><a href="project-scope.html">Project Scope &amp; Guarantees</a></strong>: Top-level contract — what Jacquard is for, what it isn't, licensing and architecture constraints, stability tiers.</li>
+<li><strong><a href="timing-correctness.html">Timing Correctness</a></strong>: Scoped requirements for timing accuracy, validation, and the forthcoming timing IR.</li>
+<li><strong><a href="adr/">Architecture Decision Records</a></strong>: Design decisions and their rationale (numbered, per-decision).</li>
+<li><strong><a href="plans/">Implementation Plans</a></strong>: Phased implementation plans with entry and exit criteria.</li>
+<li><strong><a href="spikes/">Spikes</a></strong>: Time-boxed experiments and their outcomes.</li>
+</ul>
 <h3 id="core-documentation"><a class="header" href="#core-documentation">Core Documentation</a></h3>
 <ul>
 <li>
@@ -720,6 +729,9 @@ Display: cell=24, enable_pos=5154 (word=161, bit=2), format='...', args=[...]
 <strong>Last Updated</strong>: 2025-01-08
 <strong>Authors</strong>: NVIDIA GEM Team + Claude Code Investigation</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="timing-simulation-in-gem"><a class="header" href="#timing-simulation-in-gem">Timing Simulation in GEM</a></h1>
+<blockquote>
+<p><strong>See also:</strong> <a href="timing-correctness.html"><code>timing-correctness.md</code></a> — forward-looking validation contract and timing IR requirements (in progress). The document below describes current behaviour.</p>
+</blockquote>
 <p>This document explains GEM's boomerang evaluation architecture and how timing simulation with per-gate delays can be implemented efficiently on GPU.</p>
 <h2 id="background-the-simulation-challenge"><a class="header" href="#background-the-simulation-challenge">Background: The Simulation Challenge</a></h2>
 <p>GEM simulates And-Inverter Graphs (AIGs) where every node is either:</p>
@@ -1195,6 +1207,9 @@ Band 3: 30+ps    → Threads 192-255
 <li><code>src/liberty_parser.rs</code> - Timing library parsing</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="timing-violation-detection-1"><a class="header" href="#timing-violation-detection-1">Timing Violation Detection</a></h1>
+<blockquote>
+<p><strong>See also:</strong> <a href="timing-correctness.html"><code>timing-correctness.md</code></a> — forward-looking validation contract and timing IR requirements (in progress). The document below describes current behaviour.</p>
+</blockquote>
 <p>Guide to enabling, reading, and debugging setup/hold timing violations in GEM.</p>
 <h2 id="overview-1"><a class="header" href="#overview-1">Overview</a></h2>
 <p>Setup and hold violations occur when data arrives too late (setup) or too early (hold) relative to the clock edge at a flip-flop. GEM checks for these violations during GPU simulation by tracking <strong>arrival times</strong> — the accumulated gate delay from primary inputs or DFF outputs through combinational logic to the next DFF data input.</p>

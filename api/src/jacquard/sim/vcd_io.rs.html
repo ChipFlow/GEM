@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/sim/vcd_io.rs`."><title>vcd_io.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="jacquard" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.1 (01f6ddf75 2026-02-11)" data-channel="1.93.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">jacquard/sim/</div>vcd_io.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/sim/vcd_io.rs`."><title>vcd_io.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="jacquard" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">jacquard/sim/</div>vcd_io.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.
 <a href=#2 id=2 data-nosnippet>2</a>// SPDX-License-Identifier: Apache-2.0
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! VCD input/output utilities for simulation.
 <a href=#4 id=4 data-nosnippet>4</a>//!
@@ -362,11 +362,11 @@
 <a href=#362 id=362 data-nosnippet>362</a>                    input_states.extend(state.iter().copied());
 <a href=#363 id=363 data-nosnippet>363</a>                    offsets_timestamps.push((input_states.len(), vcd_time_last_active));
 <a href=#364 id=364 data-nosnippet>364</a>                    <span class="kw">for </span>(<span class="kw">_</span>, <span class="kw-2">&amp;</span>(pe, ne)) <span class="kw">in </span><span class="kw-2">&amp;</span>aig.clock_pin2aigpins {
-<a href=#365 id=365 data-nosnippet>365</a>                        <span class="kw">if </span><span class="macro">pe !</span>= usize::MAX {
+<a href=#365 id=365 data-nosnippet>365</a>                        <span class="kw">if </span>pe != usize::MAX {
 <a href=#366 id=366 data-nosnippet>366</a>                            <span class="kw">let </span>p = <span class="kw-2">*</span>script.input_map.get(<span class="kw-2">&amp;</span>pe).unwrap();
 <a href=#367 id=367 data-nosnippet>367</a>                            state[p <span class="kw">as </span>usize &gt;&gt; <span class="number">5</span>] &amp;= !(<span class="number">1 </span>&lt;&lt; (p &amp; <span class="number">31</span>));
 <a href=#368 id=368 data-nosnippet>368</a>                        }
-<a href=#369 id=369 data-nosnippet>369</a>                        <span class="kw">if </span><span class="macro">ne !</span>= usize::MAX {
+<a href=#369 id=369 data-nosnippet>369</a>                        <span class="kw">if </span>ne != usize::MAX {
 <a href=#370 id=370 data-nosnippet>370</a>                            <span class="kw">let </span>p = <span class="kw-2">*</span>script.input_map.get(<span class="kw-2">&amp;</span>ne).unwrap();
 <a href=#371 id=371 data-nosnippet>371</a>                            state[p <span class="kw">as </span>usize &gt;&gt; <span class="number">5</span>] &amp;= !(<span class="number">1 </span>&lt;&lt; (p &amp; <span class="number">31</span>));
 <a href=#372 id=372 data-nosnippet>372</a>                        }
@@ -415,12 +415,12 @@
 <a href=#415 id=415 data-nosnippet>415</a>                            <span class="kw">continue</span>;
 <a href=#416 id=416 data-nosnippet>416</a>                        }
 <a href=#417 id=417 data-nosnippet>417</a>                        <span class="kw">if let </span><span class="prelude-val">Some</span>((pe, ne)) = aig.clock_pin2aigpins.get(<span class="kw-2">&amp;</span>pin).copied() {
-<a href=#418 id=418 data-nosnippet>418</a>                            <span class="kw">if </span><span class="macro">pe !</span>= usize::MAX &amp;&amp; old_value == <span class="number">0 </span>{
+<a href=#418 id=418 data-nosnippet>418</a>                            <span class="kw">if </span>pe != usize::MAX &amp;&amp; old_value == <span class="number">0 </span>{
 <a href=#419 id=419 data-nosnippet>419</a>                                last_vcd_time_active = <span class="bool-val">true</span>;
 <a href=#420 id=420 data-nosnippet>420</a>                                <span class="kw">let </span>p = <span class="kw-2">*</span>script.input_map.get(<span class="kw-2">&amp;</span>pe).unwrap();
 <a href=#421 id=421 data-nosnippet>421</a>                                state[p <span class="kw">as </span>usize &gt;&gt; <span class="number">5</span>] |= <span class="number">1 </span>&lt;&lt; (p &amp; <span class="number">31</span>);
 <a href=#422 id=422 data-nosnippet>422</a>                            }
-<a href=#423 id=423 data-nosnippet>423</a>                            <span class="kw">if </span><span class="macro">ne !</span>= usize::MAX &amp;&amp; old_value == <span class="number">1 </span>{
+<a href=#423 id=423 data-nosnippet>423</a>                            <span class="kw">if </span>ne != usize::MAX &amp;&amp; old_value == <span class="number">1 </span>{
 <a href=#424 id=424 data-nosnippet>424</a>                                last_vcd_time_active = <span class="bool-val">true</span>;
 <a href=#425 id=425 data-nosnippet>425</a>                                <span class="kw">let </span>p = <span class="kw-2">*</span>script.input_map.get(<span class="kw-2">&amp;</span>ne).unwrap();
 <a href=#426 id=426 data-nosnippet>426</a>                                state[p <span class="kw">as </span>usize &gt;&gt; <span class="number">5</span>] |= <span class="number">1 </span>&lt;&lt; (p &amp; <span class="number">31</span>);
@@ -839,7 +839,7 @@
 <a href=#839 id=839 data-nosnippet>839</a>            // Arrivals are stored one u32 per word position (same indexing as values).
 <a href=#840 id=840 data-nosnippet>840</a>            // Each u32 word in the arrival section holds a u16 arrival in the low bits,
 <a href=#841 id=841 data-nosnippet>841</a>            // shared by all 32 output bits packed in the corresponding value word.
-<a href=#842 id=842 data-nosnippet>842</a>            </span><span class="kw">let </span>arrival_ps = <span class="kw">if </span><span class="macro">output_pos !</span>= u32::MAX {
+<a href=#842 id=842 data-nosnippet>842</a>            </span><span class="kw">let </span>arrival_ps = <span class="kw">if </span>output_pos != u32::MAX {
 <a href=#843 id=843 data-nosnippet>843</a>                <span class="kw">let </span>word_idx = (output_pos &gt;&gt; <span class="number">5</span>) <span class="kw">as </span>usize;
 <a href=#844 id=844 data-nosnippet>844</a>                (arrival_states[offset + word_idx] &amp; <span class="number">0xFFFF</span>) <span class="kw">as </span>u64
 <a href=#845 id=845 data-nosnippet>845</a>            } <span class="kw">else </span>{
@@ -864,7 +864,7 @@
 <a href=#864 id=864 data-nosnippet>864</a>    <span class="comment">// Write sorted transitions
 <a href=#865 id=865 data-nosnippet>865</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>current_timestamp = u64::MAX;
 <a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">for </span><span class="kw-2">&amp;</span>(ts, i, value_new, is_x) <span class="kw">in </span><span class="kw-2">&amp;</span>timed_transitions {
-<a href=#867 id=867 data-nosnippet>867</a>        <span class="kw">if </span><span class="macro">ts !</span>= current_timestamp {
+<a href=#867 id=867 data-nosnippet>867</a>        <span class="kw">if </span>ts != current_timestamp {
 <a href=#868 id=868 data-nosnippet>868</a>            writer.timestamp(ts).unwrap();
 <a href=#869 id=869 data-nosnippet>869</a>            current_timestamp = ts;
 <a href=#870 id=870 data-nosnippet>870</a>        }
@@ -970,7 +970,7 @@
 <a href=#970 id=970 data-nosnippet>970</a>
 <a href=#971 id=971 data-nosnippet>971</a><span class="attr">#[cfg(test)]
 <a href=#972 id=972 data-nosnippet>972</a></span><span class="kw">mod </span>xprop_tests {
-<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">use </span>indexmap::IndexMap;
 <a href=#975 id=975 data-nosnippet>975</a>
 <a href=#976 id=976 data-nosnippet>976</a>    <span class="doccomment">/// Build a minimal FlattenedScriptV1 for xprop buffer tests.
@@ -1141,7 +1141,7 @@
 <a href=#1141 id=1141 data-nosnippet>1141</a>
 <a href=#1142 id=1142 data-nosnippet>1142</a><span class="attr">#[cfg(test)]
 <a href=#1143 id=1143 data-nosnippet>1143</a></span><span class="kw">mod </span>timing_arrival_tests {
-<a href=#1144 id=1144 data-nosnippet>1144</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1144 id=1144 data-nosnippet>1144</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
 <a href=#1145 id=1145 data-nosnippet>1145</a>    <span class="kw">use </span><span class="kw">crate</span>::flatten::FlattenedScriptV1;
 <a href=#1146 id=1146 data-nosnippet>1146</a>    <span class="kw">use </span>indexmap::IndexMap;
 <a href=#1147 id=1147 data-nosnippet>1147</a>

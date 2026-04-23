@@ -1,2 +1,2 @@
-window.ALL_CRATES = ["gem","jacquard"];
-//{"start":21,"fragment_lengths":[5,11]}
+window.ALL_CRATES = ["jacquard"];
+//{"start":21,"fragment_lengths":[10]}

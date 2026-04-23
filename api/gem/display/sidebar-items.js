@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["extract_display_info_from_json","format_display_message","parse_format_string"],"struct":["DisplayCellInfo","FormatSpec"]};

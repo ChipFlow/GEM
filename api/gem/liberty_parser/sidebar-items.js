@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["CellTiming","DFFTiming","PinTiming","SRAMTiming","TimingArc","TimingLibrary"]};

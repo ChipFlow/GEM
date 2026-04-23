@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["CellLibrary"],"fn":["detect_library","detect_library_from_file","extract_cell_type","is_aigpdk_cell","is_sky130_cell"],"struct":["SKY130LeafPins"]};

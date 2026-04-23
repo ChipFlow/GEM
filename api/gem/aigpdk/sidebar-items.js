@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["AIGPDK_SRAM_ADDR_WIDTH","AIGPDK_SRAM_SIZE"],"struct":["AIGPDKLeafPins"]};
