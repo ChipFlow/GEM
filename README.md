@@ -33,9 +33,20 @@ Next steps:
 1. Timing-aware bit packing for improved GPU utilization
 2. Multi-clock domain support
 
-## Quick Start
+## Dependencies
 
-Requires the [Rust toolchain](https://rustup.rs/).
+**Required for building**: the [Rust toolchain](https://rustup.rs/) (2021 edition). A GPU SDK is required only for the backend you build against.
+
+**Optional tooling** used by specific workflows:
+
+| Tool | Used for | macOS (Homebrew) | Linux (Debian/Ubuntu) |
+|---|---|---|---|
+| `flatc` | regenerating timing-IR bindings when editing `crates/timing-ir/schemas/timing_ir.fbs` | `brew install flatbuffers` | `apt install flatbuffers-compiler` |
+| `mdbook` | building docs locally | `brew install mdbook` | `cargo install mdbook` |
+
+Contributors editing only Rust / C++ / kernel sources do not need `flatc`; the generated bindings are checked in.
+
+## Quick Start
 
 ```sh
 git clone https://github.com/ChipFlow/Jacquard.git

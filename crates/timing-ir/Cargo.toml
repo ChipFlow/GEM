@@ -1,0 +1,14 @@
+[package]
+name = "timing-ir"
+version = "0.1.0"
+edition = "2021"
+description = "Jacquard timing intermediate representation (IR) for SDF-equivalent annotations. See docs/adr/0002-timing-ir.md."
+license = "Apache-2.0"
+repository = "https://github.com/chipflow/Jacquard"
+publish = false
+
+[dependencies]
+# Pin matches the flatc major used for code generation (see README dependencies).
+flatbuffers = "25"
+
+[dev-dependencies]

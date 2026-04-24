@@ -1,0 +1,183 @@
+// Jacquard Timing IR — SDF-equivalent timing annotations.
+//
+// Design rationale: docs/adr/0002-timing-ir.md.
+// Scope boundary: this schema represents timing annotation data ONLY.
+// It is not a netlist representation, not a timing graph, and not cell
+// characterisation. Extensions toward those adjacent formats are rejected
+// by design; if needed they become separate IRs.
+//
+// Wire format is standard FlatBuffers binary. JSON representation is
+// obtained via `flatc --json` round-trip for diffs and debugging.
+//
+// Units: delays and transitions are stored as double-precision picoseconds.
+// Consumers that want u16 raw-ps (as in Jacquard's internal arrival state)
+// convert at consumption time.
+
+namespace jacquard.timing_ir;
+
+// -----------------------------------------------------------------------------
+// Schema versioning
+// -----------------------------------------------------------------------------
+
+// Schema version. Bump `major` for breaking changes that are not readable by
+// older consumers. `minor` for compatible additions. `patch` for editorial
+// fixes that do not change the wire format.
+struct SchemaVersion {
+    major: uint16;
+    minor: uint16;
+    patch: uint16;
+}
+
+// -----------------------------------------------------------------------------
+// Provenance — where a given value came from
+// -----------------------------------------------------------------------------
+
+// Origin category for a timing value. Downstream consumers can use this
+// to decide how much to trust a given arc (e.g., SDF-asserted is
+// authoritative for back-annotated flows; Computed is OK for STA;
+// Defaulted surfaces the fact that no real data was available).
+enum Origin : byte {
+    Asserted = 0,    // Explicitly from SDF input or equivalent back-annotation.
+    Computed = 1,    // Derived by an STA tool from Liberty + parasitics.
+    Defaulted = 2,   // Fallback; no better value was available.
+}
+
+// Provenance record attached to every timing value. Records which tool
+// produced the value, from which input file, and what origin category
+// it belongs to.
+table Provenance {
+    source_tool: string;   // e.g. "opensta", "opentimer", "jacquard"
+    source_file: string;   // Input-file path or identifier (may be relative)
+    origin: Origin;
+}
+
+// -----------------------------------------------------------------------------
+// Process/Voltage/Temperature corners
+// -----------------------------------------------------------------------------
+
+// A PVT corner. Commercial flows routinely need multiple corners
+// (typically 3–9). Open-source flows usually use one. Either way, the IR
+// represents corners natively so single-corner shortcuts are never
+// implicit.
+table Corner {
+    name: string;          // e.g. "ss_125C_1v08", "tt_25C_1v80"
+    process: string;       // e.g. "ss", "tt", "ff"
+    voltage: float;        // volts
+    temperature: float;    // celsius
+}
+
+// A timing value at a specific corner. Holds min/typ/max because SDF
+// carries all three and downstream consumers may pick different views.
+struct TimingValue {
+    corner_index: uint32;  // Index into TimingIR.corners
+    min: double;           // picoseconds
+    typ: double;           // picoseconds (may equal min or max if unavailable)
+    max: double;           // picoseconds
+}
+
+// -----------------------------------------------------------------------------
+// Timing annotations — the core payload
+// -----------------------------------------------------------------------------
+
+// A timing arc through a cell (e.g., input pin -> output pin through a
+// combinational cell, or clock pin -> output pin through a flip-flop).
+//
+// Rise/fall are stored separately so pessimism from max(rise, fall) can
+// be avoided by consumers that care (per timing-correctness.md R4).
+//
+// The `condition` field carries boolean expressions for conditional arcs
+// (SDF `COND`) or remains empty for unconditional arcs.
+table TimingArc {
+    cell_instance: string;     // Hierarchical instance path
+    driver_pin: string;        // Pin on the driver side
+    load_pin: string;          // Pin on the load (output) side
+    rise_delay: [TimingValue]; // Per-corner rise delay
+    fall_delay: [TimingValue]; // Per-corner fall delay
+    condition: string;         // Conditional expression, or "" for unconditional
+    provenance: Provenance;
+}
+
+// Interconnect delay for a net segment. Used when SDF provides
+// back-annotated wire delays or when an STA tool emits computed RC
+// delays.
+table InterconnectDelay {
+    net: string;
+    from_pin: string;
+    to_pin: string;
+    delay: [TimingValue];      // Per-corner delay
+    provenance: Provenance;
+}
+
+// Edge type for setup/hold checks.
+enum CheckEdge : byte {
+    Posedge = 0,
+    Negedge = 1,
+}
+
+// Setup and/or hold check at a sequential element. A record may represent
+// either a setup check, a hold check, or both (both arrays populated).
+// Empty arrays indicate "this record does not specify that check".
+table SetupHoldCheck {
+    cell_instance: string;     // The sequential cell's instance path
+    d_pin: string;             // Data pin name (local to cell)
+    clk_pin: string;           // Clock pin name (local to cell)
+    edge: CheckEdge;
+    setup: [TimingValue];      // Per-corner setup; empty if hold-only
+    hold: [TimingValue];       // Per-corner hold; empty if setup-only
+    condition: string;         // Conditional expression, or ""
+    provenance: Provenance;
+}
+
+// -----------------------------------------------------------------------------
+// Vendor extensions — typed passthrough for dialect-specific data
+// -----------------------------------------------------------------------------
+
+// Known vendor sources for extension annotations. `Other` covers anything
+// not explicitly enumerated; consumers can still inspect `source_tool`
+// for identification. Additions here are minor version bumps.
+enum VendorSource : byte {
+    Cadence = 0,
+    Synopsys = 1,
+    Mentor = 2,
+    Other = 3,
+}
+
+// A vendor-specific annotation, preserved rather than silently dropped.
+// Per ADR 0002 principle: vendor extensions are lossless passthrough.
+// Consumers opt in to understanding a given extension kind; unknowns
+// travel through as opaque bytes.
+table VendorExtension {
+    source: VendorSource;
+    source_tool: string;       // Specific tool identifier
+    kind: string;              // Vendor-specific identifier for this extension
+    raw_bytes: [ubyte];        // Opaque payload; interpretation is consumer-specific
+}
+
+// -----------------------------------------------------------------------------
+// Root — a complete timing-IR document
+// -----------------------------------------------------------------------------
+
+table TimingIR {
+    schema_version: SchemaVersion;
+
+    // Corner set. At least one corner must be defined; single-corner
+    // designs use a one-element list.
+    corners: [Corner];
+
+    // Timing annotations.
+    timing_arcs: [TimingArc];
+    interconnect_delays: [InterconnectDelay];
+    setup_hold_checks: [SetupHoldCheck];
+
+    // Vendor-specific annotations preserved as passthrough.
+    vendor_extensions: [VendorExtension];
+
+    // Metadata about the IR document itself.
+    generator_tool: string;    // e.g. "opensta-to-ir 0.1.0"
+    generator_version: string; // Version of this schema used to produce the IR
+    input_files: [string];     // What was parsed to produce this IR (for audit)
+}
+
+root_type TimingIR;
+file_identifier "JTIR";        // "Jacquard Timing IR" magic
+file_extension "jtir";

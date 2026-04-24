@@ -1,4 +1,6 @@
 /target
+crates/*/target/
+crates/*/Cargo.lock
 /book
 /Cargo.lock
 /compile_commands.json
