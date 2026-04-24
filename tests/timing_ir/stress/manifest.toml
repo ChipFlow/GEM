@@ -1,0 +1,13 @@
+# Stress / robustness corpus manifest.
+#
+# See ./README.md for format details and docs/adr/0005-opensta-vendoring-and-corpus.md
+# for the primary-vs-stress corpus split rationale.
+#
+# Paths are relative to the Jacquard repository root and should point into
+# vendor/opensta/<subdir>/. The stress runner will iterate each entry and
+# feed matching files to opensta-to-ir, looking for crashes / malformed
+# IR / hangs rather than numerical agreement.
+#
+# Intentionally empty until the stress runner lands (Phase 1).
+
+entries = []

@@ -23,6 +23,10 @@ mod schema;
 // `timing_ir::schema::jacquard::timing_ir::TimingArc`.
 pub use schema::jacquard::timing_ir::*;
 
+/// Structured diff between two IR documents. Used by the `timing-ir-diff`
+/// binary and by integration tests.
+pub mod diff;
+
 /// Schema version encoded in this crate.
 ///
 /// - `MAJOR` — incremented for breaking wire-format changes.

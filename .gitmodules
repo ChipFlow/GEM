@@ -10,3 +10,6 @@
 [submodule "chipflow-examples"]
 	path = vendor/chipflow-examples
 	url = https://github.com/ChipFlow/chipflow-examples.git
+[submodule "vendor/opensta"]
+	path = vendor/opensta
+	url = https://github.com/parallaxsw/OpenSTA.git
