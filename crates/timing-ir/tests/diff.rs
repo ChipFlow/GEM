@@ -5,6 +5,7 @@
 use std::path::Path;
 
 use flatbuffers::FlatBufferBuilder;
+use tempfile::TempDir;
 use timing_ir::diff::{diff_irs, DiffOptions};
 use timing_ir::*;
 
@@ -212,11 +213,12 @@ fn json_serialisation_roundtrips_through_serde() {
 // Binary integration — run `timing-ir-diff` end-to-end
 // -----------------------------------------------------------------------------
 
-/// Writes a buffer to a temp file under the cargo target dir and returns the path.
-fn write_temp_ir(name: &str, buf: &[u8]) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join("jacquard-timing-ir-diff-tests");
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
+/// Writes a buffer into the supplied `TempDir` and returns the file path.
+///
+/// The caller owns a per-test `TempDir` so parallel test execution does
+/// not collide on shared paths.
+fn write_temp_ir(dir: &TempDir, name: &str, buf: &[u8]) -> std::path::PathBuf {
+    let path = dir.path().join(name);
     std::fs::write(&path, buf).unwrap();
     path
 }
@@ -227,9 +229,10 @@ fn bin_path() -> &'static Path {
 
 #[test]
 fn cli_exit_0_on_clean_diff() {
+    let dir = TempDir::new().unwrap();
     let buf = build_ir_with_arcs(&[("A", "Y", 100.0, 100.0)]);
-    let p = write_temp_ir("clean_a.jtir", &buf);
-    let q = write_temp_ir("clean_b.jtir", &buf);
+    let p = write_temp_ir(&dir, "a.jtir", &buf);
+    let q = write_temp_ir(&dir, "b.jtir", &buf);
     let out = std::process::Command::new(bin_path())
         .arg(&p)
         .arg(&q)
@@ -247,10 +250,11 @@ fn cli_exit_0_on_clean_diff() {
 
 #[test]
 fn cli_exit_1_on_diff() {
+    let dir = TempDir::new().unwrap();
     let a_buf = build_ir_with_arcs(&[("A", "Y", 100.0, 100.0)]);
     let b_buf = build_ir_with_arcs(&[("A", "Y", 200.0, 100.0)]);
-    let p = write_temp_ir("diff_a.jtir", &a_buf);
-    let q = write_temp_ir("diff_b.jtir", &b_buf);
+    let p = write_temp_ir(&dir, "a.jtir", &a_buf);
+    let q = write_temp_ir(&dir, "b.jtir", &b_buf);
     let out = std::process::Command::new(bin_path())
         .arg(&p)
         .arg(&q)
@@ -283,10 +287,11 @@ fn cli_exit_2_on_error() {
 
 #[test]
 fn cli_json_format_parses() {
+    let dir = TempDir::new().unwrap();
     let a_buf = build_ir_with_arcs(&[("A", "Y", 100.0, 100.0)]);
     let b_buf = build_ir_with_arcs(&[("A", "Y", 200.0, 100.0)]);
-    let p = write_temp_ir("json_a.jtir", &a_buf);
-    let q = write_temp_ir("json_b.jtir", &b_buf);
+    let p = write_temp_ir(&dir, "a.jtir", &a_buf);
+    let q = write_temp_ir(&dir, "b.jtir", &b_buf);
     let out = std::process::Command::new(bin_path())
         .arg(&p)
         .arg(&q)
@@ -297,7 +302,6 @@ fn cli_json_format_parses() {
     assert_eq!(out.status.code(), Some(1));
     let stdout = std::str::from_utf8(&out.stdout).expect("utf8");
     let parsed: serde_json::Value = serde_json::from_str(stdout).expect("valid JSON");
-    // Basic shape check.
     assert!(parsed.get("timing_arcs").is_some());
     assert!(parsed.get("options").is_some());
 }

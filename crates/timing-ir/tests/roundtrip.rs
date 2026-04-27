@@ -10,7 +10,6 @@ use timing_ir::*;
 fn roundtrip_minimal_ir() {
     let mut builder = FlatBufferBuilder::with_capacity(1024);
 
-    // ---- Corner ----
     let corner_name = builder.create_string("tt_25C_1v80");
     let corner_process = builder.create_string("tt");
     let corner = Corner::create(
@@ -24,7 +23,6 @@ fn roundtrip_minimal_ir() {
     );
     let corners_vec = builder.create_vector(&[corner]);
 
-    // ---- Provenance (for timing arc) ----
     let prov_tool = builder.create_string("timing-ir-test");
     let prov_file = builder.create_string("synthetic://roundtrip");
     let provenance = Provenance::create(
@@ -36,13 +34,11 @@ fn roundtrip_minimal_ir() {
         },
     );
 
-    // ---- TimingArc with rise/fall per single corner ----
     let cell_instance = builder.create_string("u1");
     let driver_pin = builder.create_string("A");
     let load_pin = builder.create_string("Y");
     let condition = builder.create_string("");
 
-    // TimingValue is a struct; we build a [TimingValue] vector directly.
     let rise_values = [TimingValue::new(0, 100.0, 120.0, 140.0)];
     let fall_values = [TimingValue::new(0, 110.0, 130.0, 150.0)];
     let rise_delay = builder.create_vector(&rise_values);
@@ -62,16 +58,13 @@ fn roundtrip_minimal_ir() {
     );
     let arcs_vec = builder.create_vector(&[arc]);
 
-    // ---- Metadata strings ----
     let generator_tool = builder.create_string("timing-ir-roundtrip");
     let generator_version = builder.create_string("0.1.0");
     let input_file = builder.create_string("synthetic://roundtrip.sdf");
     let input_files_vec = builder.create_vector(&[input_file]);
 
-    // ---- Schema version (a struct, not a table) ----
     let schema_version = SchemaVersion::new(SCHEMA_MAJOR, SCHEMA_MINOR, SCHEMA_PATCH);
 
-    // ---- Root ----
     let ir = TimingIR::create(
         &mut builder,
         &TimingIRArgs {
@@ -90,23 +83,19 @@ fn roundtrip_minimal_ir() {
 
     let buf = builder.finished_data();
 
-    // ---- Read back ----
     let ir_back = root_as_timing_ir(buf).expect("buffer must be a valid TimingIR");
 
-    // Schema version
     let v = ir_back.schema_version().expect("schema_version present");
     assert_eq!(v.major(), SCHEMA_MAJOR);
     assert_eq!(v.minor(), SCHEMA_MINOR);
     assert_eq!(v.patch(), SCHEMA_PATCH);
 
-    // Metadata
     assert_eq!(ir_back.generator_tool(), Some("timing-ir-roundtrip"));
     assert_eq!(ir_back.generator_version(), Some("0.1.0"));
     let input_files = ir_back.input_files().expect("input_files present");
     assert_eq!(input_files.len(), 1);
     assert_eq!(input_files.get(0), "synthetic://roundtrip.sdf");
 
-    // Corners
     let corners = ir_back.corners().expect("corners present");
     assert_eq!(corners.len(), 1);
     let c0 = corners.get(0);
@@ -115,7 +104,6 @@ fn roundtrip_minimal_ir() {
     assert!((c0.voltage() - 1.80).abs() < 1e-6);
     assert!((c0.temperature() - 25.0).abs() < 1e-6);
 
-    // Timing arc
     let arcs = ir_back.timing_arcs().expect("arcs present");
     assert_eq!(arcs.len(), 1);
     let arc0 = arcs.get(0);

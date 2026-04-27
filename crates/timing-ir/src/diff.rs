@@ -15,10 +15,6 @@ use serde::Serialize;
 
 use crate::schema::jacquard::timing_ir as ir;
 
-// -----------------------------------------------------------------------------
-// Options
-// -----------------------------------------------------------------------------
-
 /// Tolerances for comparing timing values. A delay pair is considered
 /// equal if it satisfies EITHER the absolute or relative tolerance.
 #[derive(Clone, Copy, Debug)]
@@ -46,16 +42,41 @@ impl DiffOptions {
             return true;
         }
         let max = a.abs().max(b.abs());
-        if max > 0.0 && diff / max <= self.relative {
-            return true;
-        }
-        false
+        max > 0.0 && diff / max <= self.relative
     }
 }
 
-// -----------------------------------------------------------------------------
-// Keys — identify the "same" annotation in both IRs
-// -----------------------------------------------------------------------------
+/// Setup/hold edge variant.
+///
+/// Locally redefined (instead of using the FlatBuffers-generated
+/// `ir::CheckEdge`) so the diff report can serialise via serde and the
+/// keys can be ordered for stable output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub enum Edge {
+    Posedge,
+    Negedge,
+}
+
+impl From<ir::CheckEdge> for Edge {
+    fn from(e: ir::CheckEdge) -> Self {
+        match e {
+            ir::CheckEdge::Posedge => Edge::Posedge,
+            ir::CheckEdge::Negedge => Edge::Negedge,
+            // Unrecognised CheckEdge values indicate a future-schema input
+            // we do not understand. Fail loud rather than silently coerce.
+            other => panic!("unknown CheckEdge variant {}", other.0),
+        }
+    }
+}
+
+impl std::fmt::Display for Edge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Edge::Posedge => f.write_str("Posedge"),
+            Edge::Negedge => f.write_str("Negedge"),
+        }
+    }
+}
 
 /// Key for matching timing arcs across IRs.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -104,8 +125,7 @@ pub struct SetupHoldKey {
     pub cell_instance: String,
     pub d_pin: String,
     pub clk_pin: String,
-    /// String form of the edge (Posedge/Negedge) so the serialised key is stable.
-    pub edge: String,
+    pub edge: Edge,
     pub condition: String,
 }
 
@@ -122,10 +142,6 @@ impl std::fmt::Display for SetupHoldKey {
         Ok(())
     }
 }
-
-// -----------------------------------------------------------------------------
-// Report types
-// -----------------------------------------------------------------------------
 
 /// A single value mismatch past tolerance, with a human-readable reason.
 #[derive(Clone, Debug, Serialize)]
@@ -156,13 +172,14 @@ impl<K: Serialize> Default for CategoryDiff<K> {
 }
 
 impl<K: Serialize> CategoryDiff<K> {
+    /// `true` if this category contains no extras and no value mismatches.
     pub fn is_clean(&self) -> bool {
         self.only_in_a.is_empty() && self.only_in_b.is_empty() && self.value_mismatches.is_empty()
     }
 }
 
 /// Schema-version comparison result. If inputs disagree on the schema
-/// version, consumers should treat further diffing as approximate.
+/// major, consumers should treat further diffing as approximate.
 #[derive(Clone, Debug, Serialize)]
 pub struct SchemaVersionMatch {
     pub a: (u16, u16, u16),
@@ -170,7 +187,7 @@ pub struct SchemaVersionMatch {
     pub major_matches: bool,
 }
 
-/// Per-corner comparison. We compare corner sets structurally — same names
+/// Per-corner comparison. Corner sets compare structurally — same names
 /// in the same order means full match.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct CornerDiff {
@@ -180,8 +197,26 @@ pub struct CornerDiff {
 }
 
 impl CornerDiff {
+    /// `true` if the corner sets agree.
     pub fn is_clean(&self) -> bool {
         self.mismatches.is_empty()
+    }
+}
+
+/// Diff options as recorded in the report (echoed back so the consumer
+/// can see what tolerance produced this diff).
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct DiffOptionsReport {
+    pub absolute_ps: f64,
+    pub relative: f64,
+}
+
+impl From<DiffOptions> for DiffOptionsReport {
+    fn from(o: DiffOptions) -> Self {
+        Self {
+            absolute_ps: o.absolute_ps,
+            relative: o.relative,
+        }
     }
 }
 
@@ -212,25 +247,6 @@ impl DiffReport {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
-pub struct DiffOptionsReport {
-    pub absolute_ps: f64,
-    pub relative: f64,
-}
-
-impl From<DiffOptions> for DiffOptionsReport {
-    fn from(o: DiffOptions) -> Self {
-        Self {
-            absolute_ps: o.absolute_ps,
-            relative: o.relative,
-        }
-    }
-}
-
-// -----------------------------------------------------------------------------
-// Extraction — convert FlatBuffer views into owned key/value pairs
-// -----------------------------------------------------------------------------
-
 fn arc_key(arc: &ir::TimingArc) -> ArcKey {
     ArcKey {
         cell_instance: arc.cell_instance().unwrap_or("").to_string(),
@@ -249,17 +265,11 @@ fn interconnect_key(d: &ir::InterconnectDelay) -> InterconnectKey {
 }
 
 fn setup_hold_key(c: &ir::SetupHoldCheck) -> SetupHoldKey {
-    let edge = match c.edge() {
-        ir::CheckEdge::Posedge => "Posedge",
-        ir::CheckEdge::Negedge => "Negedge",
-        _ => "Unknown",
-    }
-    .to_string();
     SetupHoldKey {
         cell_instance: c.cell_instance().unwrap_or("").to_string(),
         d_pin: c.d_pin().unwrap_or("").to_string(),
         clk_pin: c.clk_pin().unwrap_or("").to_string(),
-        edge,
+        edge: c.edge().into(),
         condition: c.condition().unwrap_or("").to_string(),
     }
 }
@@ -277,10 +287,6 @@ fn collect_timing_values(
         None => Vec::new(),
     }
 }
-
-// -----------------------------------------------------------------------------
-// Value comparisons
-// -----------------------------------------------------------------------------
 
 /// Compare two [TimingValue]-sequences. Returns a list of textual reasons
 /// for any mismatches past tolerance.
@@ -327,13 +333,44 @@ fn compare_value_lists(
     reasons
 }
 
-// -----------------------------------------------------------------------------
-// Top-level diff
-// -----------------------------------------------------------------------------
+/// Diff one annotation category given pre-built key→value maps.
+///
+/// Encapsulates the only-in-A / only-in-B / value-mismatch classification
+/// shared by arcs, interconnect delays, and setup/hold checks. The
+/// `compare` closure produces one textual reason per mismatch found
+/// between two values that share a key.
+fn finalize_diff<K, T>(
+    a_map: &BTreeMap<K, T>,
+    b_map: &BTreeMap<K, T>,
+    mut compare: impl FnMut(&T, &T) -> Vec<String>,
+) -> CategoryDiff<K>
+where
+    K: Ord + Clone + Serialize,
+{
+    let mut diff = CategoryDiff::<K>::default();
+    for (key, a_t) in a_map {
+        match b_map.get(key) {
+            None => diff.only_in_a.push(key.clone()),
+            Some(b_t) => {
+                for reason in compare(a_t, b_t) {
+                    diff.value_mismatches.push(ValueMismatch {
+                        key: key.clone(),
+                        reason,
+                    });
+                }
+            }
+        }
+    }
+    for key in b_map.keys() {
+        if !a_map.contains_key(key) {
+            diff.only_in_b.push(key.clone());
+        }
+    }
+    diff
+}
 
 /// Compute a structured diff between two IRs.
 pub fn diff_irs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> DiffReport {
-    // Schema version
     let av = a.schema_version();
     let bv = b.schema_version();
     let schema_version = SchemaVersionMatch {
@@ -346,7 +383,6 @@ pub fn diff_irs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> DiffR
         major_matches: av.map(|v| v.major()) == bv.map(|v| v.major()),
     };
 
-    // Corners: name-ordered comparison
     let mut corners = CornerDiff::default();
     if let Some(v) = a.corners() {
         for i in 0..v.len() {
@@ -369,16 +405,10 @@ pub fn diff_irs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> DiffR
         ));
     }
 
-    // Timing arcs
     let timing_arcs = diff_arcs(a, b, opts);
-
-    // Interconnect delays
     let interconnect_delays = diff_interconnects(a, b, opts);
-
-    // Setup/hold checks
     let setup_hold_checks = diff_setup_hold(a, b, opts);
 
-    // Vendor extension counts (full diffing is an information-only signal)
     let a_ext_count = a.vendor_extensions().map(|v| v.len()).unwrap_or(0);
     let b_ext_count = b.vendor_extensions().map(|v| v.len()).unwrap_or(0);
 
@@ -394,51 +424,17 @@ pub fn diff_irs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> DiffR
 }
 
 fn diff_arcs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> CategoryDiff<ArcKey> {
-    let mut a_map: BTreeMap<ArcKey, _> = BTreeMap::new();
-    if let Some(arcs) = a.timing_arcs() {
-        for i in 0..arcs.len() {
-            let arc = arcs.get(i);
-            a_map.insert(arc_key(&arc), arc);
-        }
-    }
-    let mut b_map: BTreeMap<ArcKey, _> = BTreeMap::new();
-    if let Some(arcs) = b.timing_arcs() {
-        for i in 0..arcs.len() {
-            let arc = arcs.get(i);
-            b_map.insert(arc_key(&arc), arc);
-        }
-    }
-
-    let mut diff = CategoryDiff::<ArcKey>::default();
-    for key in a_map.keys() {
-        if !b_map.contains_key(key) {
-            diff.only_in_a.push(key.clone());
-        }
-    }
-    for key in b_map.keys() {
-        if !a_map.contains_key(key) {
-            diff.only_in_b.push(key.clone());
-        }
-    }
-
-    for (key, a_arc) in &a_map {
-        if let Some(b_arc) = b_map.get(key) {
-            let a_rise = collect_timing_values(a_arc.rise_delay());
-            let b_rise = collect_timing_values(b_arc.rise_delay());
-            let a_fall = collect_timing_values(a_arc.fall_delay());
-            let b_fall = collect_timing_values(b_arc.fall_delay());
-            let mut reasons = Vec::new();
-            reasons.extend(compare_value_lists("rise_delay", &a_rise, &b_rise, opts));
-            reasons.extend(compare_value_lists("fall_delay", &a_fall, &b_fall, opts));
-            for reason in reasons {
-                diff.value_mismatches.push(ValueMismatch {
-                    key: key.clone(),
-                    reason,
-                });
-            }
-        }
-    }
-    diff
+    let a_map = build_arc_map(a);
+    let b_map = build_arc_map(b);
+    finalize_diff(&a_map, &b_map, |a_arc, b_arc| {
+        let a_rise = collect_timing_values(a_arc.rise_delay());
+        let b_rise = collect_timing_values(b_arc.rise_delay());
+        let a_fall = collect_timing_values(a_arc.fall_delay());
+        let b_fall = collect_timing_values(b_arc.fall_delay());
+        let mut reasons = compare_value_lists("rise_delay", &a_rise, &b_rise, opts);
+        reasons.extend(compare_value_lists("fall_delay", &a_fall, &b_fall, opts));
+        reasons
+    })
 }
 
 fn diff_interconnects(
@@ -446,45 +442,13 @@ fn diff_interconnects(
     b: &ir::TimingIR,
     opts: &DiffOptions,
 ) -> CategoryDiff<InterconnectKey> {
-    let mut a_map: BTreeMap<InterconnectKey, _> = BTreeMap::new();
-    if let Some(v) = a.interconnect_delays() {
-        for i in 0..v.len() {
-            let d = v.get(i);
-            a_map.insert(interconnect_key(&d), d);
-        }
-    }
-    let mut b_map: BTreeMap<InterconnectKey, _> = BTreeMap::new();
-    if let Some(v) = b.interconnect_delays() {
-        for i in 0..v.len() {
-            let d = v.get(i);
-            b_map.insert(interconnect_key(&d), d);
-        }
-    }
-
-    let mut diff = CategoryDiff::<InterconnectKey>::default();
-    for key in a_map.keys() {
-        if !b_map.contains_key(key) {
-            diff.only_in_a.push(key.clone());
-        }
-    }
-    for key in b_map.keys() {
-        if !a_map.contains_key(key) {
-            diff.only_in_b.push(key.clone());
-        }
-    }
-    for (key, a_d) in &a_map {
-        if let Some(b_d) = b_map.get(key) {
-            let a_v = collect_timing_values(a_d.delay());
-            let b_v = collect_timing_values(b_d.delay());
-            for reason in compare_value_lists("delay", &a_v, &b_v, opts) {
-                diff.value_mismatches.push(ValueMismatch {
-                    key: key.clone(),
-                    reason,
-                });
-            }
-        }
-    }
-    diff
+    let a_map = build_interconnect_map(a);
+    let b_map = build_interconnect_map(b);
+    finalize_diff(&a_map, &b_map, |a_d, b_d| {
+        let a_v = collect_timing_values(a_d.delay());
+        let b_v = collect_timing_values(b_d.delay());
+        compare_value_lists("delay", &a_v, &b_v, opts)
+    })
 }
 
 fn diff_setup_hold(
@@ -492,55 +456,55 @@ fn diff_setup_hold(
     b: &ir::TimingIR,
     opts: &DiffOptions,
 ) -> CategoryDiff<SetupHoldKey> {
-    let mut a_map: BTreeMap<SetupHoldKey, _> = BTreeMap::new();
-    if let Some(v) = a.setup_hold_checks() {
-        for i in 0..v.len() {
-            let c = v.get(i);
-            a_map.insert(setup_hold_key(&c), c);
-        }
-    }
-    let mut b_map: BTreeMap<SetupHoldKey, _> = BTreeMap::new();
-    if let Some(v) = b.setup_hold_checks() {
-        for i in 0..v.len() {
-            let c = v.get(i);
-            b_map.insert(setup_hold_key(&c), c);
-        }
-    }
-
-    let mut diff = CategoryDiff::<SetupHoldKey>::default();
-    for key in a_map.keys() {
-        if !b_map.contains_key(key) {
-            diff.only_in_a.push(key.clone());
-        }
-    }
-    for key in b_map.keys() {
-        if !a_map.contains_key(key) {
-            diff.only_in_b.push(key.clone());
-        }
-    }
-    for (key, a_c) in &a_map {
-        if let Some(b_c) = b_map.get(key) {
-            let a_s = collect_timing_values(a_c.setup());
-            let b_s = collect_timing_values(b_c.setup());
-            let a_h = collect_timing_values(a_c.hold());
-            let b_h = collect_timing_values(b_c.hold());
-            let mut reasons = Vec::new();
-            reasons.extend(compare_value_lists("setup", &a_s, &b_s, opts));
-            reasons.extend(compare_value_lists("hold", &a_h, &b_h, opts));
-            for reason in reasons {
-                diff.value_mismatches.push(ValueMismatch {
-                    key: key.clone(),
-                    reason,
-                });
-            }
-        }
-    }
-    diff
+    let a_map = build_setup_hold_map(a);
+    let b_map = build_setup_hold_map(b);
+    finalize_diff(&a_map, &b_map, |a_c, b_c| {
+        let a_s = collect_timing_values(a_c.setup());
+        let b_s = collect_timing_values(b_c.setup());
+        let a_h = collect_timing_values(a_c.hold());
+        let b_h = collect_timing_values(b_c.hold());
+        let mut reasons = compare_value_lists("setup", &a_s, &b_s, opts);
+        reasons.extend(compare_value_lists("hold", &a_h, &b_h, opts));
+        reasons
+    })
 }
 
-// -----------------------------------------------------------------------------
-// Text rendering
-// -----------------------------------------------------------------------------
+fn build_arc_map<'a>(ir: &'a ir::TimingIR) -> BTreeMap<ArcKey, ir::TimingArc<'a>> {
+    let mut map = BTreeMap::new();
+    if let Some(arcs) = ir.timing_arcs() {
+        for i in 0..arcs.len() {
+            let arc = arcs.get(i);
+            map.insert(arc_key(&arc), arc);
+        }
+    }
+    map
+}
+
+fn build_interconnect_map<'a>(
+    ir: &'a ir::TimingIR,
+) -> BTreeMap<InterconnectKey, ir::InterconnectDelay<'a>> {
+    let mut map = BTreeMap::new();
+    if let Some(v) = ir.interconnect_delays() {
+        for i in 0..v.len() {
+            let d = v.get(i);
+            map.insert(interconnect_key(&d), d);
+        }
+    }
+    map
+}
+
+fn build_setup_hold_map<'a>(
+    ir: &'a ir::TimingIR,
+) -> BTreeMap<SetupHoldKey, ir::SetupHoldCheck<'a>> {
+    let mut map = BTreeMap::new();
+    if let Some(v) = ir.setup_hold_checks() {
+        for i in 0..v.len() {
+            let c = v.get(i);
+            map.insert(setup_hold_key(&c), c);
+        }
+    }
+    map
+}
 
 impl std::fmt::Display for DiffReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
