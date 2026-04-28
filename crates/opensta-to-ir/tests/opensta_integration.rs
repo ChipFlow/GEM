@@ -4,11 +4,6 @@
 //! Gated on `opensta_to_ir::opensta::find_opensta` returning `Some`. When
 //! the OpenSTA binary is unbuilt, the test reports skip and exits clean
 //! rather than failing. Build OpenSTA with `scripts/build-opensta.sh`.
-//!
-//! Phase 0 WS2 (Phase 2.1-followup-A) Tcl driver emits a stub dump (one
-//! default corner, no arcs). This test only verifies that the subprocess
-//! pipe is plumbed correctly. Real timing extraction is the next slice
-//! and will replace this test's assertions.
 
 use std::path::Path;
 use std::process::Command;
@@ -39,7 +34,7 @@ fn aigpdk_lib() -> std::path::PathBuf {
 }
 
 #[test]
-fn invokes_real_opensta_with_stub_tcl() {
+fn aigpdk_and2_emits_two_arcs() {
     let Some(_sta) = find_opensta(None) else {
         eprintln!("skipping: OpenSTA not built; run scripts/build-opensta.sh");
         return;
@@ -62,8 +57,6 @@ fn invokes_real_opensta_with_stub_tcl() {
         .arg("tiny")
         .arg("--output")
         .arg(&out_path)
-        // Stub Tcl emits 0 arcs; relax the success-assertion floor.
-        .arg("--allow-empty-parse")
         .output()
         .expect("run opensta-to-ir");
 
@@ -79,15 +72,28 @@ fn invokes_real_opensta_with_stub_tcl() {
     let ir = root_as_timing_ir(&buf).expect("readable IR");
 
     let corners = ir.corners().expect("corners present");
-    assert_eq!(
-        corners.len(),
-        1,
-        "Phase 2.1-followup-A emits one default corner"
-    );
+    assert_eq!(corners.len(), 1);
     assert_eq!(corners.get(0).name(), Some("default"));
 
-    // Phase 2.1-followup-B will populate timing arcs; this test is
-    // intentionally permissive about that for now.
+    // AND2_00_0 has two combinational paths: A→Y and B→Y. AIGPDK Liberty
+    // assigns 1 ps to each, so we expect two arcs both at 1 ps rise/fall.
     let arcs = ir.timing_arcs().expect("arcs vector present");
-    assert_eq!(arcs.len(), 0);
+    assert_eq!(arcs.len(), 2, "expected A→Y and B→Y arcs from AND2_00_0");
+
+    let mut driver_pins: Vec<String> = (0..arcs.len())
+        .map(|i| arcs.get(i).driver_pin().unwrap_or("").to_string())
+        .collect();
+    driver_pins.sort();
+    assert_eq!(driver_pins, vec!["A".to_string(), "B".to_string()]);
+
+    for i in 0..arcs.len() {
+        let arc = arcs.get(i);
+        assert_eq!(arc.cell_instance(), Some("u1"));
+        assert_eq!(arc.load_pin(), Some("Y"));
+        let rise = arc.rise_delay().unwrap();
+        let r = rise.get(0);
+        // AIGPDK 1ps with float scaling — accept anything up to 5 ps.
+        assert!(r.max() < 5.0, "arc {} rise_max {} too large", i, r.max());
+        assert!(r.max() > 0.0, "arc {} rise_max should be non-zero", i);
+    }
 }
