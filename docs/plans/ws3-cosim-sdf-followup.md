@@ -25,27 +25,54 @@ only accepts pre-converted IR via `--timing-ir`.
 ## User-facing migration (current state)
 
 The `tests/mcu_soc/` cosim flow that used to load SDF via the testbench
-config now needs an explicit pre-conversion step:
+config now needs an explicit pre-conversion step.
+
+### Important: feed `top_synth.v` to OpenSTA, not `6_final.v`
+
+OpenSTA's Verilog parser only accepts gate-level structural Verilog.
+`tests/mcu_soc/data/6_final.v` is the `openframe_project_wrapper` —
+a thin wrapper around the synthesized `top` module — and contains
+RTL-style `assign` statements (`~`, concatenations, bit-selects) that
+OpenSTA rejects with a syntax error around line 135 (`assign
+gpio_oeb[0] = ~( \io$soc_flash_clk$oe );`).
+
+The actual gate-level netlist that the SDF was generated against is
+`tests/mcu_soc/data/top_synth.v`, with module name `top`. The SDF's
+`(DESIGN "top")` header confirms this. Use `top_synth.v` + `--top top`
+for the OpenSTA invocation:
 
 ```sh
-# 1. Convert SDF → IR once.
+# 1. Convert SDF → IR once. Use top_synth.v (clean gate-level), NOT
+#    6_final.v (the wrapper has RTL assigns that crash OpenSTA).
 opensta-to-ir \
-    --liberty <path/to/liberty.lib> \
-    --verilog tests/mcu_soc/data/6_final.v \
+    --liberty /path/to/sky130_fd_sc_hd__tt_025C_1v80.lib \
+    --verilog tests/mcu_soc/data/top_synth.v \
     --sdf tests/mcu_soc/data/6_final.sdf \
-    --top <top_module> \
-    -o tests/mcu_soc/data/6_final.jtir
+    --top top \
+    --output tests/mcu_soc/data/6_final.jtir
 
-# 2. Run cosim with the pre-converted IR.
+# 2. Run cosim with the pre-converted IR. Cosim still loads 6_final.v
+#    (the wrapper) because that's what carries GPIO ports. The IR
+#    consumer's hierarchy-prefix detection automatically strips the
+#    'top_inst/' prefix from the wrapper's cell paths so they match the
+#    IR's instance names.
 cargo run -r --features metal --bin jacquard -- cosim \
     tests/mcu_soc/data/6_final.v \
     --config tests/mcu_soc/sim_config_sky130.json \
+    --top-module openframe_project_wrapper \
     --timing-ir tests/mcu_soc/data/6_final.jtir
 ```
 
+Verified working on sky130 mcu_soc (2026-04-29):
+`Loaded IR timing: 28162 matched, 2090 unmatched (251 Liberty
+fallback), 0 wire delays, 3756 DFF constraints` →
+`SIMULATION: PASSED`. The "0 wire delays" is the documented WS2.2
+gap — `opensta-to-ir` doesn't yet emit `interconnect_delays`, so wire
+contributions are missing from timing. Returns when WS2.2 lands.
+
 `tests/mcu_soc/sim_config_sky130.json` no longer carries `sdf_file` /
-`sdf_corner` (the fields would be silently ignored if added back; cosim
-does not consume them).
+`sdf_corner` (the fields would be silently ignored if added back;
+cosim does not consume them).
 
 ## Option A — restore cosim `--sdf` ergonomics
 
