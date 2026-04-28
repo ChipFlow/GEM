@@ -4138,16 +4138,39 @@ pub fn run_cosim(
 
     let mut events_passed = true;
     if let Some(ref ref_path) = config.events_reference {
-        #[derive(serde::Deserialize)]
-        struct EventsFile {
-            events: Vec<UartEvent>,
-        }
+        // Parse tolerantly: the reference file may contain non-UART
+        // events (e.g. SPI deselect entries from cxxrtl-generated
+        // references) whose `payload` field is a string rather than a
+        // u8. Skip events that don't match `UartEvent`'s schema so the
+        // UART comparison can still proceed.
         let ref_file = std::fs::read_to_string(ref_path)
             .unwrap_or_else(|e| panic!("Failed to read events reference {}: {}", ref_path, e));
-        let reference: EventsFile = serde_json::from_str(&ref_file)
+        let raw: serde_json::Value = serde_json::from_str(&ref_file)
             .unwrap_or_else(|e| panic!("Failed to parse events reference {}: {}", ref_path, e));
-
-        let ref_events = &reference.events;
+        let raw_events = raw
+            .get("events")
+            .and_then(|v| v.as_array())
+            .unwrap_or_else(|| {
+                panic!(
+                    "Events reference {} has no top-level 'events' array",
+                    ref_path
+                )
+            });
+        let total_in_ref = raw_events.len();
+        let ref_events: Vec<UartEvent> = raw_events
+            .iter()
+            .filter_map(|e| serde_json::from_value::<UartEvent>(e.clone()).ok())
+            .collect();
+        let skipped = total_in_ref - ref_events.len();
+        if skipped > 0 {
+            clilog::info!(
+                "Events reference {}: skipped {} non-UART events (e.g. SPI deselect), kept {} UART events",
+                ref_path,
+                skipped,
+                ref_events.len()
+            );
+        }
+        let ref_events = &ref_events;
         let ref_payloads: Vec<u8> = ref_events.iter().map(|e| e.payload).collect();
         let actual_payloads: Vec<u8> = uart_events.iter().map(|e| e.payload).collect();
 

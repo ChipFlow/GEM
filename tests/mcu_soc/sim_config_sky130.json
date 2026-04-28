@@ -6,6 +6,7 @@
     "num_cycles": 500000,
     "clock_period_ps": 40000,
     "netlist_path": "tests/mcu_soc/data/6_final.v",
+    "events_reference": "tests/mcu_soc/events_reference.json",
     "flash": {
         "clk_gpio": 0,
         "csn_gpio": 1,
