@@ -177,20 +177,12 @@ struct CosimArgs {
     #[clap(long)]
     gpu_profile: bool,
 
-    /// Path to SDF file for per-instance back-annotated delays.
-    #[clap(long, conflicts_with = "timing_ir")]
-    sdf: Option<PathBuf>,
-
-    /// SDF corner selection: min, typ, or max.
-    #[clap(long, default_value = "typ")]
-    sdf_corner: String,
-
-    /// Enable SDF debug output.
-    #[clap(long)]
-    sdf_debug: bool,
-
     /// Path to a Jacquard timing-IR (.jtir) file. Generate with the
-    /// `opensta-to-ir` preprocessing tool. Mutually exclusive with `--sdf`.
+    /// `opensta-to-ir` preprocessing tool.
+    ///
+    /// Cosim does not currently accept raw SDF — pre-convert with
+    /// `opensta-to-ir` and pass the IR. (See WS3 phase 3.4 followup
+    /// for the planned interim wrapper.)
     #[clap(long)]
     timing_ir: Option<PathBuf>,
 
@@ -201,9 +193,9 @@ struct CosimArgs {
 
     /// Enable timing-accurate VCD output with per-signal arrival times.
     ///
-    /// Requires SDF timing data (via --sdf or config.timing.sdf_file).
-    /// Signal transitions in the output VCD are offset from clock edges
-    /// by their computed arrival times. Forces single-tick mode.
+    /// Requires `--timing-ir`. Signal transitions in the output VCD are
+    /// offset from clock edges by their computed arrival times. Forces
+    /// single-tick mode.
     #[clap(long)]
     timing_vcd: Option<PathBuf>,
 
@@ -1379,27 +1371,11 @@ fn cmd_cosim(args: CosimArgs) {
             serde_json::from_reader(reader).expect("Failed to parse config JSON");
         clilog::info!("Loaded testbench config: {:?}", config);
 
-        // Determine clock period for SDF loading
+        // Determine clock period (CLI > config root > config.timing).
         let clock_period_ps = args
             .clock_period
             .or(config.clock_period_ps)
             .or(config.timing.as_ref().map(|t| t.clock_period_ps));
-
-        // Determine SDF path: CLI --sdf takes priority, then config.timing.sdf_file
-        let sdf = args.sdf.clone().or_else(|| {
-            config
-                .timing
-                .as_ref()
-                .map(|t| std::path::PathBuf::from(&t.sdf_file))
-        });
-        let sdf_corner = if args.sdf.is_some() {
-            args.sdf_corner.clone()
-        } else if let Some(ref t) = config.timing {
-            t.sdf_corner.clone()
-        } else {
-            "typ".to_string()
-        };
-        let sdf_debug = args.sdf_debug;
 
         let design_args = DesignArgs {
             netlist_verilog: args.netlist_verilog.clone(),
@@ -1407,9 +1383,9 @@ fn cmd_cosim(args: CosimArgs) {
             level_split: args.level_split.clone(),
             num_blocks: args.num_blocks,
             json_path: None,
-            sdf,
-            sdf_corner,
-            sdf_debug,
+            sdf: None,
+            sdf_corner: "typ".to_string(),
+            sdf_debug: false,
             clock_period_ps,
             xprop: false, // cosim doesn't support xprop yet
             liberty: None,
@@ -1421,7 +1397,7 @@ fn cmd_cosim(args: CosimArgs) {
         // Enable timing arrival readback if --timing-vcd is set
         if args.timing_vcd.is_some() {
             if !design.script.timing_enabled {
-                eprintln!("Error: --timing-vcd requires SDF timing data (via --sdf or config.timing.sdf_file)");
+                eprintln!("Error: --timing-vcd requires --timing-ir");
                 std::process::exit(1);
             }
             design.script.enable_timing_arrivals();

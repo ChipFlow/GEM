@@ -14,7 +14,6 @@ use crate::aig::{DriverType, EndpointGroup, AIG};
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
 use crate::liberty_parser::TimingLibrary;
 use crate::pe::{Partition, BOOMERANG_NUM_STAGES};
-use crate::sdf_parser::SdfFile;
 use crate::staging::StagedAIG;
 use indexmap::IndexMap;
 use netlistdb::NetlistDB;
@@ -216,7 +215,7 @@ pub struct FlattenedScriptV1 {
     /// Delay injection info for GPU kernel.
     /// Each entry: (offset in blocks_data where the padding u32 lives,
     ///              list of AIG pin indices contributing to this thread position).
-    /// Used by load_timing() / load_timing_from_sdf() to patch the script
+    /// Used by load_timing() / load_timing_from_ir() to patch the script
     /// with per-thread-position max gate delays.
     pub delay_patch_map: Vec<(usize, Vec<usize>)>,
 
@@ -1681,7 +1680,7 @@ impl FlattenedScriptV1 {
     }
 
     /// Inject timing delay data into the GPU script's padding slots.
-    /// Must be called after load_timing() or load_timing_from_sdf().
+    /// Must be called after load_timing() or load_timing_from_ir().
     /// Each padding u32 gets the raw max gate delay (in picoseconds, clamped
     /// to u16 range 0-65535) across all AIG pins mapped to that thread position.
     pub fn inject_timing_to_script(&mut self) {
@@ -1761,277 +1760,12 @@ impl FlattenedScriptV1 {
         (clock_ps, constraints)
     }
 
-    /// Load timing from an SDF file with per-instance back-annotated delays.
-    ///
-    /// This replaces the uniform Liberty-based delays with per-instance IOPATH
-    /// delays from post-layout SDF. Uses `aigpin_cell_origins` to map SDF instances
-    /// to AIG pins. For pins with multiple origins (e.g., an inverter chain sharing
-    /// an AIG pin via invert-bit reuse), delays are summed since they form a serial chain.
-    ///
-    /// For decomposed cells (e.g., SKY130 nand2 → 1 AND gate), the full IOPATH
-    /// delay is applied to the output AIG pin. Internal AND gates get zero delay.
-    ///
-    /// Optionally falls back to Liberty for cells not found in SDF.
-    pub fn load_timing_from_sdf(
-        &mut self,
-        aig: &AIG,
-        netlistdb: &NetlistDB,
-        sdf: &SdfFile,
-        clock_period_ps: u64,
-        liberty_fallback: Option<&TimingLibrary>,
-        debug: bool,
-    ) {
-        // Build cell_id → SDF hierarchical instance path mapping.
-        // SDF uses dot-separated paths: "u_cpu.alu.and_gate"
-        // NetlistDB HierName iterates leaf-first, so we reverse and join with dots.
-        let mut cellid_to_sdf_path: HashMap<usize, String> = HashMap::new();
-        for cellid in 1..netlistdb.num_cells {
-            let parts: Vec<&str> = netlistdb.cellnames[cellid]
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>();
-            // parts is leaf-first, reverse to get root-first, then join with '.'
-            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
-            cellid_to_sdf_path.insert(cellid, sdf_path);
-        }
-
-        // Detect hierarchy prefix mismatch: if the netlist has a wrapper hierarchy
-        // (e.g., openframe_project_wrapper → top top_inst → cells), the NetlistDB
-        // paths will be "top_inst._58619_" but the SDF (generated against the flat
-        // `top` module) will have just "_58619_".
-        // Fix: find a common prefix in NetlistDB paths that doesn't exist in SDF,
-        // and strip it.
-        {
-            // Sample a few paths and check if they match SDF cells
-            let mut sample_hits = 0usize;
-            let mut sample_misses = 0usize;
-            let mut common_prefix: Option<String> = None;
-            for (_, path) in cellid_to_sdf_path.iter().take(100) {
-                if sdf.get_cell(path).is_some() {
-                    sample_hits += 1;
-                } else {
-                    sample_misses += 1;
-                    // Check if stripping the first dot-separated component helps
-                    if let Some(dot_pos) = path.find('.') {
-                        let stripped = &path[dot_pos + 1..];
-                        if sdf.get_cell(stripped).is_some() {
-                            let prefix = &path[..dot_pos];
-                            if common_prefix.is_none() {
-                                common_prefix = Some(prefix.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            // If most lookups fail but stripping a prefix works, apply globally
-            if let Some(prefix) = common_prefix.filter(|_| sample_misses > sample_hits) {
-                let prefix_dot = format!("{}.", prefix);
-                clilog::info!(
-                    "SDF hierarchy prefix mismatch detected: stripping '{}' from {} cell paths",
-                    prefix_dot,
-                    cellid_to_sdf_path.len()
-                );
-                for path in cellid_to_sdf_path.values_mut() {
-                    if let Some(stripped) = path.strip_prefix(&prefix_dot) {
-                        *path = stripped.to_string();
-                    }
-                }
-            }
-        }
-
-        // Build reverse map: SDF path → cellid for efficient lookup
-        let mut sdf_path_to_cellid: HashMap<&str, usize> = HashMap::new();
-        for (&cellid, path) in &cellid_to_sdf_path {
-            sdf_path_to_cellid.insert(path.as_str(), cellid);
-        }
-
-        // Phase 2: Build wire delay map from INTERCONNECT entries.
-        // For each dest instance, collect max wire delay across all input pins.
-        // Key: (dest_cellid) → max SdfDelay across all input wires.
-        let mut wire_delays_per_cell: HashMap<usize, crate::sdf_parser::SdfDelay> = HashMap::new();
-        for cell in &sdf.cells {
-            for ic in &cell.interconnects {
-                // INTERCONNECT dest format: "instance.pin" or "instance.subinst.pin"
-                // Extract the dest instance (everything before the last '.')
-                if let Some(dot_pos) = ic.dest.rfind('.') {
-                    let dest_inst = &ic.dest[..dot_pos];
-                    if let Some(&dest_cellid) = sdf_path_to_cellid.get(dest_inst) {
-                        let entry = wire_delays_per_cell.entry(dest_cellid).or_insert(
-                            crate::sdf_parser::SdfDelay {
-                                rise_ps: 0,
-                                fall_ps: 0,
-                            },
-                        );
-                        entry.rise_ps = entry.rise_ps.max(ic.delay.rise_ps);
-                        entry.fall_ps = entry.fall_ps.max(ic.delay.fall_ps);
-                    }
-                }
-            }
-        }
-        let num_wire_delays = wire_delays_per_cell.len();
-
-        // Initialize gate delays
-        self.gate_delays = vec![PackedDelay::default(); aig.num_aigpins + 1];
-
-        let mut matched = 0usize;
-        let mut unmatched = 0usize;
-        let mut fallback_count = 0usize;
-        let mut unmatched_instances: Vec<String> = Vec::new();
-
-        // Get Liberty fallback delays
-        let lib_and_delay = liberty_fallback
-            .and_then(|lib| lib.and_gate_delay("AND2_00_0"))
-            .unwrap_or((0, 0));
-        let lib_dff_timing = liberty_fallback.and_then(|lib| lib.dff_timing());
-        let lib_sram_timing = liberty_fallback.and_then(|lib| lib.sram_timing());
-
-        for aigpin in 1..=aig.num_aigpins {
-            let origin = &aig.aigpin_cell_origins[aigpin];
-            let delay = if !origin.is_empty() {
-                // This AIG pin has cell origin(s) — sum delays across all origins.
-                // When multiple cells share an AIG pin (e.g., inverter chain collapsed
-                // to a single wire), their delays form a serial chain and must be summed.
-                let mut total_rise: u64 = 0;
-                let mut total_fall: u64 = 0;
-                let mut any_matched = false;
-                let mut any_unmatched = false;
-
-                for (cellid, _cell_type, output_pin_name) in origin {
-                    if let Some(sdf_path) = cellid_to_sdf_path.get(cellid) {
-                        if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                            let iopath = sdf_cell
-                                .iopaths
-                                .iter()
-                                .find(|p| p.output_pin == *output_pin_name)
-                                .or_else(|| sdf_cell.iopaths.first());
-                            if let Some(iopath) = iopath {
-                                any_matched = true;
-                                let wire = wire_delays_per_cell.get(cellid);
-                                total_rise += iopath.delay.rise_ps + wire.map_or(0, |w| w.rise_ps);
-                                total_fall += iopath.delay.fall_ps + wire.map_or(0, |w| w.fall_ps);
-                            } else {
-                                any_unmatched = true;
-                                if debug && unmatched_instances.len() < 20 {
-                                    unmatched_instances.push(format!("{} (no IOPATH)", sdf_path));
-                                }
-                            }
-                        } else {
-                            any_unmatched = true;
-                            if debug && unmatched_instances.len() < 20 {
-                                unmatched_instances.push(sdf_path.clone());
-                            }
-                        }
-                    }
-                }
-
-                if any_matched {
-                    matched += 1;
-                    if any_unmatched {
-                        unmatched += 1;
-                    }
-                    PackedDelay::from_u64(total_rise, total_fall)
-                } else {
-                    unmatched += 1;
-                    self.get_liberty_fallback_delay(
-                        &aig.drivers[aigpin],
-                        lib_and_delay,
-                        &lib_dff_timing,
-                        &lib_sram_timing,
-                        &mut fallback_count,
-                    )
-                }
-            } else {
-                // No cell origins — internal decomposition gate or input/tie
-                match &aig.drivers[aigpin] {
-                    DriverType::AndGate(_, _) => {
-                        // Internal AND gate from cell decomposition — zero delay.
-                        PackedDelay::default()
-                    }
-                    DriverType::InputPort(_)
-                    | DriverType::InputClockFlag(_, _)
-                    | DriverType::Tie0 => PackedDelay::default(),
-                    DriverType::DFF(_) => self.get_liberty_fallback_delay(
-                        &aig.drivers[aigpin],
-                        lib_and_delay,
-                        &lib_dff_timing,
-                        &lib_sram_timing,
-                        &mut fallback_count,
-                    ),
-                    DriverType::SRAM(_) => self.get_liberty_fallback_delay(
-                        &aig.drivers[aigpin],
-                        lib_and_delay,
-                        &lib_dff_timing,
-                        &lib_sram_timing,
-                        &mut fallback_count,
-                    ),
-                }
-            };
-            self.gate_delays[aigpin] = delay;
-        }
-
-        // Build DFF constraints from SDF timing checks
-        self.dff_constraints = Vec::with_capacity(aig.dffs.len());
-        let lib_setup = lib_dff_timing.as_ref().map(|t| t.max_setup()).unwrap_or(0) as u16;
-        let lib_hold = lib_dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0) as u16;
-
-        for (&cell_id, dff) in &aig.dffs {
-            let data_state_pos = self.output_map.get(&dff.d_iv).copied().unwrap_or(u32::MAX);
-
-            // Try to get setup/hold from SDF timing checks
-            let (setup_ps, hold_ps) = if let Some(sdf_path) = cellid_to_sdf_path.get(&cell_id) {
-                if let Some(sdf_cell) = sdf.get_cell(sdf_path) {
-                    let setup = sdf_cell
-                        .timing_checks
-                        .iter()
-                        .find(|c| c.check_type == crate::sdf_parser::TimingCheckType::Setup)
-                        .map(|c| c.value_ps.max(0) as u16)
-                        .unwrap_or(lib_setup);
-                    let hold = sdf_cell
-                        .timing_checks
-                        .iter()
-                        .find(|c| c.check_type == crate::sdf_parser::TimingCheckType::Hold)
-                        .map(|c| c.value_ps.max(0) as u16)
-                        .unwrap_or(lib_hold);
-                    (setup, hold)
-                } else {
-                    (lib_setup, lib_hold)
-                }
-            } else {
-                (lib_setup, lib_hold)
-            };
-
-            self.dff_constraints.push(DFFConstraint {
-                setup_ps,
-                hold_ps,
-                data_state_pos,
-                cell_id: cell_id as u32,
-            });
-        }
-
-        self.clock_period_ps = clock_period_ps;
-        self.timing_enabled = true;
-
-        clilog::info!(
-            "Loaded SDF timing: {} matched, {} unmatched ({} Liberty fallback), {} wire delays, {} DFF constraints, clock={}ps",
-            matched, unmatched, fallback_count, num_wire_delays, self.dff_constraints.len(), clock_period_ps
-        );
-
-        if debug && !unmatched_instances.is_empty() {
-            clilog::warn!(
-                "SDF unmatched instances (first {}):",
-                unmatched_instances.len()
-            );
-            for inst in &unmatched_instances {
-                clilog::warn!("  {}", inst);
-            }
-        }
-    }
 
     /// Load timing from a Jacquard timing-IR document.
     ///
-    /// Mirrors `load_timing_from_sdf` but consumes the IR directly, with
-    /// `/` as the hierarchy separator (OpenSTA's default divider) instead
-    /// of `.` (SDF's). See `docs/plans/ws3-delete-sdf-parser.md`.
+    /// Consumes the IR directly with `/` as the hierarchy separator
+    /// (OpenSTA's default divider). See
+    /// `docs/plans/ws3-delete-sdf-parser.md`.
     pub fn load_timing_from_ir(
         &mut self,
         aig: &AIG,
@@ -2329,13 +2063,13 @@ fn ir_corner0_max(values: Option<timing_ir::Vector<'_, timing_ir::TimingValue>>)
 }
 
 #[cfg(test)]
-mod sdf_delay_tests {
+mod ir_delay_tests {
     use super::*;
     use crate::aig::AIG;
-    use crate::sdf_parser::{SdfCorner, SdfFile};
     use crate::sky130::SKY130LeafPins;
+    use timing_ir::*;
 
-    /// Helper: build a minimal FlattenedScriptV1 suitable for load_timing_from_sdf.
+    /// Helper: build a minimal FlattenedScriptV1 suitable for load_timing_from_ir.
     fn make_minimal_script(_aig: &AIG) -> FlattenedScriptV1 {
         FlattenedScriptV1 {
             num_blocks: 0,
@@ -2373,30 +2107,259 @@ mod sdf_delay_tests {
         (netlistdb, aig)
     }
 
-    /// Helper: build cellid → SDF path map (same logic as load_timing_from_sdf).
-    fn build_cellid_to_sdf_path(netlistdb: &netlistdb::NetlistDB) -> HashMap<usize, String> {
+    /// Helper: build cellid → IR cell_instance path map.
+    /// Mirrors the construction in `load_timing_from_ir`.
+    fn build_cellid_to_ir_path(netlistdb: &netlistdb::NetlistDB) -> HashMap<usize, String> {
         let mut map = HashMap::new();
         for cellid in 1..netlistdb.num_cells {
             let parts: Vec<&str> = netlistdb.cellnames[cellid]
                 .iter()
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>();
-            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
-            map.insert(cellid, sdf_path);
+            let ir_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join("/");
+            map.insert(cellid, ir_path);
         }
         map
     }
 
-    // === Test 3: SDF delay application ===
+    /// Build an IR mirroring the contents of
+    /// `tests/timing_test/inv_chain_pnr/inv_chain_test.sdf`.
+    ///
+    /// IR semantics differ from SDF in two places that matter here:
+    /// - `InterconnectDelay.delay` is a single TimingValue, not separate
+    ///   rise/fall — we emit the SDF rise typ value as the canonical wire
+    ///   delay (so the consumer applies the same delay to both edges).
+    /// - `ir_corner0_max` reads the `max` slot of the corner-0 timing
+    ///   value, so we put delay magnitudes there.
+    fn build_inv_chain_ir() -> Vec<u8> {
+        // SDF typ values per inverter, picosecond IOPATH (rise, fall):
+        // index → (rise_typ_ps, fall_typ_ps)
+        let inv_iopath: [(f64, f64); 16] = [
+            (50.0, 40.0),
+            (52.0, 42.0),
+            (51.0, 41.0),
+            (53.0, 43.0),
+            (50.0, 40.0),
+            (54.0, 44.0),
+            (51.0, 41.0),
+            (52.0, 42.0),
+            (50.0, 40.0),
+            (53.0, 43.0),
+            (51.0, 41.0),
+            (54.0, 44.0),
+            (52.0, 42.0),
+            (51.0, 41.0),
+            (50.0, 40.0),
+            (53.0, 43.0),
+        ];
 
+        // SDF wire delays (rise typ used as the single IR value).
+        // (from_pin, to_pin, delay_ps)
+        let wires: [(&'static str, &'static str, f64); 17] = [
+            ("dff_in/Q", "i0/A", 15.0),
+            ("i0/Y", "i1/A", 8.0),
+            ("i1/Y", "i2/A", 9.0),
+            ("i2/Y", "i3/A", 8.0),
+            ("i3/Y", "i4/A", 10.0),
+            ("i4/Y", "i5/A", 8.0),
+            ("i5/Y", "i6/A", 9.0),
+            ("i6/Y", "i7/A", 8.0),
+            ("i7/Y", "i8/A", 11.0),
+            ("i8/Y", "i9/A", 8.0),
+            ("i9/Y", "i10/A", 9.0),
+            ("i10/Y", "i11/A", 8.0),
+            ("i11/Y", "i12/A", 10.0),
+            ("i12/Y", "i13/A", 8.0),
+            ("i13/Y", "i14/A", 9.0),
+            ("i14/Y", "i15/A", 8.0),
+            ("i15/Y", "dff_out/D", 15.0),
+        ];
+
+        let mut b = flatbuffers::FlatBufferBuilder::with_capacity(4096);
+
+        // Single corner.
+        let cn = b.create_string("default");
+        let cp = b.create_string("typ");
+        let corner = Corner::create(
+            &mut b,
+            &CornerArgs {
+                name: Some(cn),
+                process: Some(cp),
+                voltage: 1.8,
+                temperature: 25.0,
+            },
+        );
+        let corners_vec = b.create_vector(&[corner]);
+
+        let prov_t = b.create_string("test");
+        let prov_f = b.create_string("inv_chain_synthetic");
+        let prov = Provenance::create(
+            &mut b,
+            &ProvenanceArgs {
+                source_tool: Some(prov_t),
+                source_file: Some(prov_f),
+                origin: Origin::Asserted,
+            },
+        );
+        let cond_empty = b.create_string("");
+
+        // Helper: build a per-arc TimingValue vector with a given max ps.
+        macro_rules! tv_vec {
+            ($b:expr, $ps:expr) => {{
+                let arr = [TimingValue::new(0, $ps, $ps, $ps)];
+                $b.create_vector(&arr)
+            }};
+        }
+
+        // Build timing arcs.
+        let mut arcs_offsets = Vec::new();
+        for (idx, (rise_ps, fall_ps)) in inv_iopath.iter().enumerate() {
+            let ci = b.create_string(&format!("i{}", idx));
+            let dp = b.create_string("A");
+            let lp = b.create_string("Y");
+            let rv = tv_vec!(b, *rise_ps);
+            let fv = tv_vec!(b, *fall_ps);
+            arcs_offsets.push(TimingArc::create(
+                &mut b,
+                &TimingArcArgs {
+                    cell_instance: Some(ci),
+                    driver_pin: Some(dp),
+                    load_pin: Some(lp),
+                    rise_delay: Some(rv),
+                    fall_delay: Some(fv),
+                    condition: Some(cond_empty),
+                    provenance: Some(prov),
+                },
+            ));
+        }
+        // dff_in CLK→Q (350, 330)
+        {
+            let ci = b.create_string("dff_in");
+            let dp = b.create_string("CLK");
+            let lp = b.create_string("Q");
+            let rv = tv_vec!(b, 350.0);
+            let fv = tv_vec!(b, 330.0);
+            arcs_offsets.push(TimingArc::create(
+                &mut b,
+                &TimingArcArgs {
+                    cell_instance: Some(ci),
+                    driver_pin: Some(dp),
+                    load_pin: Some(lp),
+                    rise_delay: Some(rv),
+                    fall_delay: Some(fv),
+                    condition: Some(cond_empty),
+                    provenance: Some(prov),
+                },
+            ));
+        }
+        // dff_out CLK→Q (360, 340)
+        {
+            let ci = b.create_string("dff_out");
+            let dp = b.create_string("CLK");
+            let lp = b.create_string("Q");
+            let rv = tv_vec!(b, 360.0);
+            let fv = tv_vec!(b, 340.0);
+            arcs_offsets.push(TimingArc::create(
+                &mut b,
+                &TimingArcArgs {
+                    cell_instance: Some(ci),
+                    driver_pin: Some(dp),
+                    load_pin: Some(lp),
+                    rise_delay: Some(rv),
+                    fall_delay: Some(fv),
+                    condition: Some(cond_empty),
+                    provenance: Some(prov),
+                },
+            ));
+        }
+        let arcs_vec = b.create_vector(&arcs_offsets);
+
+        // Build interconnects.
+        let mut ic_offsets = Vec::new();
+        for (from, to, delay_ps) in wires.iter() {
+            let net = b.create_string("");
+            let fp = b.create_string(from);
+            let tp = b.create_string(to);
+            let dv = tv_vec!(b, *delay_ps);
+            ic_offsets.push(InterconnectDelay::create(
+                &mut b,
+                &InterconnectDelayArgs {
+                    net: Some(net),
+                    from_pin: Some(fp),
+                    to_pin: Some(tp),
+                    delay: Some(dv),
+                    provenance: Some(prov),
+                },
+            ));
+        }
+        let ic_vec = b.create_vector(&ic_offsets);
+
+        // Build setup/hold checks (dff_in: setup=80, hold=-30; dff_out:
+        // setup=85, hold=-28). The negative SDF holds become 0 after the
+        // consumer's clamp.
+        let mut sh_offsets = Vec::new();
+        for (cell, setup_ps, hold_ps) in
+            [("dff_in", 80.0_f64, -30.0_f64), ("dff_out", 85.0_f64, -28.0_f64)]
+        {
+            let ci = b.create_string(cell);
+            let dp = b.create_string("D");
+            let cp = b.create_string("CLK");
+            let cond = b.create_string("");
+            let sv = tv_vec!(b, setup_ps);
+            let hv = tv_vec!(b, hold_ps);
+            sh_offsets.push(SetupHoldCheck::create(
+                &mut b,
+                &SetupHoldCheckArgs {
+                    cell_instance: Some(ci),
+                    d_pin: Some(dp),
+                    clk_pin: Some(cp),
+                    edge: CheckEdge::Posedge,
+                    setup: Some(sv),
+                    hold: Some(hv),
+                    condition: Some(cond),
+                    provenance: Some(prov),
+                },
+            ));
+        }
+        let sh_vec = b.create_vector(&sh_offsets);
+
+        let ve_vec = b.create_vector::<flatbuffers::WIPOffset<VendorExtension>>(&[]);
+
+        let gt = b.create_string("inv_chain test fixture");
+        let gv = b.create_string(env!("CARGO_PKG_VERSION"));
+        let if_vec = b.create_vector::<flatbuffers::WIPOffset<&str>>(&[]);
+        let sv_root = SchemaVersion::new(SCHEMA_MAJOR, SCHEMA_MINOR, SCHEMA_PATCH);
+
+        let ir = TimingIR::create(
+            &mut b,
+            &TimingIRArgs {
+                schema_version: Some(&sv_root),
+                corners: Some(corners_vec),
+                timing_arcs: Some(arcs_vec),
+                interconnect_delays: Some(ic_vec),
+                setup_hold_checks: Some(sh_vec),
+                vendor_extensions: Some(ve_vec),
+                generator_tool: Some(gt),
+                generator_version: Some(gv),
+                input_files: Some(if_vec),
+            },
+        );
+        finish_timing_ir_buffer(&mut b, ir);
+        b.finished_data().to_vec()
+    }
+
+    // === IR delay application (former test_sdf_delay_application) ===
+    //
+    // Single-stage check on dff_out: IOPATH 360/340 + wire 15 (single
+    // value applied to both edges in the IR consumer).
     #[test]
-    fn test_sdf_delay_application() {
+    fn test_ir_delay_application() {
         let (netlistdb, aig) = load_inv_chain();
-        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
+        let ir_buf = build_inv_chain_ir();
+        let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, true);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, true);
 
         assert_eq!(
             script.gate_delays.len(),
@@ -2404,19 +2367,13 @@ mod sdf_delay_tests {
             "gate_delays length should match num_aigpins + 1"
         );
 
-        // With accumulated origins, delays from all cells sharing an AIG pin are summed.
-        // For inv_chain.v:
-        //   - Shared chain pin (dff_in.Q): 1 DFF + 16 inverters → summed delays
-        //   - dff_out.Q: standalone DFF with its own AIG pin
-
-        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
-        let sdf_path_to_cellid: HashMap<&str, usize> = cellid_to_sdf_path
+        let cellid_to_ir_path = build_cellid_to_ir_path(&netlistdb);
+        let path_to_cellid: HashMap<&str, usize> = cellid_to_ir_path
             .iter()
-            .map(|(&cid, path)| (path.as_str(), cid))
+            .map(|(&cid, p)| (p.as_str(), cid))
             .collect();
 
-        // Find the AIG pin that has the dff_out origin
-        let dff_out_cellid = *sdf_path_to_cellid.get("dff_out").unwrap();
+        let dff_out_cellid = *path_to_cellid.get("dff_out").unwrap();
         let dff_out_aigpin = (1..=aig.num_aigpins)
             .find(|&ap| {
                 aig.aigpin_cell_origins[ap]
@@ -2426,26 +2383,22 @@ mod sdf_delay_tests {
             .expect("dff_out should have a cell origin entry");
 
         let dff_out_delay = &script.gate_delays[dff_out_aigpin];
-        // dff_out: IOPATH CLK Q rise=360ps, fall=340ps + wire (i15.Y→dff_out.D) rise=15ps, fall=12ps
+        // dff_out: IOPATH CLK→Q rise=360 + wire(i15.Y→dff_out.D)=15 → 375
+        //          IOPATH CLK→Q fall=340 + wire 15 (same single value) → 355
         assert_eq!(
             dff_out_delay.rise_ps, 375,
             "dff_out rise: expected 375ps (360+15), got {}ps",
             dff_out_delay.rise_ps
         );
         assert_eq!(
-            dff_out_delay.fall_ps, 352,
-            "dff_out fall: expected 352ps (340+12), got {}ps",
+            dff_out_delay.fall_ps, 355,
+            "dff_out fall: expected 355ps (340+15), got {}ps",
             dff_out_delay.fall_ps
         );
 
-        // With Option<(...)> cell origins, each pin has at most one origin.
-        // Multi-origin chain accumulation doesn't apply — each inverter in a chain
-        // has its own AIG pin with its own single origin.
-
-        // Verify timing is enabled after loading
         assert!(
             script.timing_enabled,
-            "timing_enabled should be true after load_timing_from_sdf"
+            "timing_enabled should be true after load_timing_from_ir"
         );
         assert_eq!(script.clock_period_ps, 10000);
     }
@@ -2453,11 +2406,11 @@ mod sdf_delay_tests {
     #[test]
     fn test_internal_and_gates_zero_delay() {
         let (netlistdb, aig) = load_inv_chain();
-        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
+        let ir_buf = build_inv_chain_ir();
+        let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, false);
 
         for aigpin in 1..=aig.num_aigpins {
             if aig.aigpin_cell_origins[aigpin].is_empty() {
@@ -2476,111 +2429,75 @@ mod sdf_delay_tests {
         }
     }
 
-    // === Test 3b: Analytical validation of accumulated delay ===
-    // NOTE: This test assumes multi-origin Vec<Vec<(...)>> cell origins.
-    // With Option<(...)>, each AIG pin has at most one origin, so chain
-    // accumulation doesn't apply. Disabled until the type is reconciled.
-
     #[test]
-    fn test_accumulated_delay_analytical() {
-        // Verify accumulated delay matches hand-computed SDF sum.
-        // SDF typ corner values (middle of min:typ:max triples):
-        //
-        // Chain pin (dff_in.Q shared with inverters via invert-bit reuse):
-        //   dff_in CLK→Q:  IOPATH (350, 330) + wire (0, 0)     = (350, 330)
-        //   i0  A→Y:       IOPATH (50, 40)   + wire (15, 12)   = (65, 52)
-        //   i1  A→Y:       IOPATH (52, 42)   + wire (8, 7)     = (60, 49)
-        //   i2  A→Y:       IOPATH (51, 41)   + wire (9, 8)     = (60, 49)
-        //   i3  A→Y:       IOPATH (53, 43)   + wire (8, 7)     = (61, 50)
-        //   i4  A→Y:       IOPATH (50, 40)   + wire (10, 9)    = (60, 49)
-        //   i5  A→Y:       IOPATH (54, 44)   + wire (8, 7)     = (62, 51)
-        //   i6  A→Y:       IOPATH (51, 41)   + wire (9, 8)     = (60, 49)
-        //   i7  A→Y:       IOPATH (52, 42)   + wire (8, 7)     = (60, 49)
-        //   i8  A→Y:       IOPATH (50, 40)   + wire (11, 10)   = (61, 50)
-        //   i9  A→Y:       IOPATH (53, 43)   + wire (8, 7)     = (61, 50)
-        //   i10 A→Y:       IOPATH (51, 41)   + wire (9, 8)     = (60, 49)
-        //   i11 A→Y:       IOPATH (54, 44)   + wire (8, 7)     = (62, 51)
-        //   i12 A→Y:       IOPATH (52, 42)   + wire (10, 9)    = (62, 51)
-        //   i13 A→Y:       IOPATH (51, 41)   + wire (8, 7)     = (59, 48)
-        //   i14 A→Y:       IOPATH (50, 40)   + wire (9, 8)     = (59, 48)
-        //   i15 A→Y:       IOPATH (53, 43)   + wire (8, 7)     = (61, 50)
-        //   ─────────────────────────────────────────────────────────────
-        //   Sum:                                                  (1323, 1125)
-        //
-        // dff_out (separate AIG pin):
-        //   dff_out CLK→Q: IOPATH (360, 340) + wire (15, 12)   = (375, 352)
-        //
-        // This test validates that the SDF-to-delay pipeline produces exactly
-        // these values, confirming the accumulation fix works correctly.
-
+    fn test_dff_constraints_loaded() {
         let (netlistdb, aig) = load_inv_chain();
-        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
+        let ir_buf = build_inv_chain_ir();
+        let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, false);
 
-        // Find the chain pin (has 17 origins: 1 DFF + 16 inverters)
-        let chain_aigpin = (1..=aig.num_aigpins)
-            .find(|&ap| aig.aigpin_cell_origins[ap].len() == 17)
-            .expect("Should have a pin with 17 origins (1 DFF + 16 inverters)");
-
-        let chain_delay = &script.gate_delays[chain_aigpin];
         assert_eq!(
-            chain_delay.rise_ps, 1323,
-            "Analytical chain rise: 350 + sum(16 inverter+wire) = 1323ps, got {}ps",
-            chain_delay.rise_ps
-        );
-        assert_eq!(
-            chain_delay.fall_ps, 1125,
-            "Analytical chain fall: 330 + sum(16 inverter+wire) = 1125ps, got {}ps",
-            chain_delay.fall_ps
+            script.dff_constraints.len(),
+            2,
+            "Expected 2 DFF constraints, got {}",
+            script.dff_constraints.len()
         );
 
-        // Verify each inverter's individual contribution by checking origins
-        let origins = &aig.aigpin_cell_origins[chain_aigpin];
-        assert_eq!(origins.len(), 17);
-
-        // First origin should be the DFF
-        let (_, ref ct, _) = origins[0];
-        assert_eq!(ct, "dfxtp", "First origin should be the DFF");
-
-        // Remaining 16 should be inverters
-        for i in 1..=16 {
-            let (_, ref ct, ref pin) = origins[i];
-            assert_eq!(ct, "inv", "Origin {} should be an inverter", i);
-            assert_eq!(pin, "Y", "Inverter output pin should be Y");
-        }
-
-        // dff_out verification
-        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
-        let dff_out_cellid = cellid_to_sdf_path
+        let cellid_to_ir_path = build_cellid_to_ir_path(&netlistdb);
+        let constraint_by_name: Vec<(&str, &DFFConstraint)> = script
+            .dff_constraints
             .iter()
-            .find(|(_, path)| path.as_str() == "dff_out")
-            .map(|(&cid, _)| cid)
-            .expect("dff_out should exist");
-        let dff_out_aigpin = (1..=aig.num_aigpins)
-            .find(|&ap| {
-                aig.aigpin_cell_origins[ap]
-                    .iter()
-                    .any(|(cid, _, _)| *cid == dff_out_cellid)
+            .map(|c| {
+                let name = cellid_to_ir_path
+                    .get(&(c.cell_id as usize))
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
+                (name, c)
             })
-            .expect("dff_out should have a cell origin");
+            .collect();
 
-        let dff_out_delay = &script.gate_delays[dff_out_aigpin];
+        // dff_in: setup=80, hold=-30 (negative → ir_corner0_max returns 0)
+        let dff_in = constraint_by_name
+            .iter()
+            .find(|(name, _)| *name == "dff_in")
+            .expect("dff_in constraint not found");
         assert_eq!(
-            dff_out_delay.rise_ps, 375,
-            "Analytical dff_out rise: 360 + 15 = 375ps, got {}ps",
-            dff_out_delay.rise_ps
+            dff_in.1.setup_ps, 80,
+            "dff_in setup: expected 80ps, got {}ps",
+            dff_in.1.setup_ps
         );
         assert_eq!(
-            dff_out_delay.fall_ps, 352,
-            "Analytical dff_out fall: 340 + 12 = 352ps, got {}ps",
-            dff_out_delay.fall_ps
+            dff_in.1.hold_ps, 0,
+            "dff_in hold: expected 0ps (negative clamped), got {}ps",
+            dff_in.1.hold_ps
         );
+
+        let dff_out = constraint_by_name
+            .iter()
+            .find(|(name, _)| *name == "dff_out")
+            .expect("dff_out constraint not found");
+        assert_eq!(
+            dff_out.1.setup_ps, 85,
+            "dff_out setup: expected 85ps, got {}ps",
+            dff_out.1.setup_ps
+        );
+        assert_eq!(
+            dff_out.1.hold_ps, 0,
+            "dff_out hold: expected 0ps (negative clamped), got {}ps",
+            dff_out.1.hold_ps
+        );
+
+        // data_state_pos is u32::MAX because make_minimal_script has empty output_map.
+        assert_eq!(dff_in.1.data_state_pos, u32::MAX);
+        assert_eq!(dff_out.1.data_state_pos, u32::MAX);
     }
 
     // === Test 4: GPU delay injection quantization ===
+    //
+    // These tests exercise `inject_timing_to_script` only — no SDF/IR
+    // fixture needed.
 
     /// Helper: build a FlattenedScriptV1 for delay injection testing.
     /// `delays` are per-AIG-pin (index 0 is always default/Tie0).
@@ -2678,166 +2595,6 @@ mod sdf_delay_tests {
         assert_eq!(d1, 5, "5ps stored as raw picoseconds");
         assert_eq!(d2, 15, "15ps stored as raw picoseconds");
         assert!(d1 < d2, "Ordering must be preserved: {} < {}", d1, d2);
-    }
-
-    // === Test 5: IOPATH pin name fallback ===
-
-    #[test]
-    fn test_iopath_exact_match() {
-        // Cell with IOPATH output "Y" matching cell_origin "Y" → exact match
-        use crate::sdf_parser::*;
-
-        let sdf_content = r#"(DELAYFILE
-  (SDFVERSION "3.0")
-  (DESIGN "test")
-  (TIMESCALE 1ns)
-  (CELL
-    (CELLTYPE "inv")
-    (INSTANCE u_inv)
-    (DELAY
-      (ABSOLUTE
-        (IOPATH A Y (0.050:0.050:0.050) (0.040:0.040:0.040))
-      )
-    )
-  )
-)"#;
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("parse SDF");
-        let cell = sdf.get_cell("u_inv").expect("u_inv not found");
-        let iopath = cell.iopaths.iter().find(|p| p.output_pin == "Y");
-        assert!(iopath.is_some(), "Should find exact IOPATH match for Y");
-        assert_eq!(iopath.unwrap().delay.rise_ps, 50);
-        assert_eq!(iopath.unwrap().delay.fall_ps, 40);
-    }
-
-    #[test]
-    fn test_iopath_fallback_first() {
-        // Cell with IOPATH output "QN" but cell_origin says "Q" → no match → fallback to first
-        use crate::sdf_parser::*;
-
-        let sdf_content = r#"(DELAYFILE
-  (SDFVERSION "3.0")
-  (DESIGN "test")
-  (TIMESCALE 1ns)
-  (CELL
-    (CELLTYPE "dff")
-    (INSTANCE u_dff)
-    (DELAY
-      (ABSOLUTE
-        (IOPATH CLK QN (0.200:0.200:0.200) (0.180:0.180:0.180))
-      )
-    )
-  )
-)"#;
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("parse SDF");
-        let cell = sdf.get_cell("u_dff").expect("u_dff not found");
-
-        // Try to match "Q" — won't find it
-        let exact_match = cell.iopaths.iter().find(|p| p.output_pin == "Q");
-        assert!(exact_match.is_none(), "Should NOT find exact match for Q");
-
-        // Fallback: use first IOPATH
-        assert!(!cell.iopaths.is_empty(), "Should have at least one IOPATH");
-        let fallback = &cell.iopaths[0];
-        assert_eq!(fallback.output_pin, "QN");
-        assert_eq!(fallback.delay.rise_ps, 200);
-        assert_eq!(fallback.delay.fall_ps, 180);
-    }
-
-    #[test]
-    fn test_sdf_dff_constraints_loaded() {
-        let (netlistdb, aig) = load_inv_chain();
-        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
-
-        let mut script = make_minimal_script(&aig);
-        script.load_timing_from_sdf(&aig, &netlistdb, &sdf, 10000, None, false);
-
-        // inv_chain has 2 DFFs: dff_in and dff_out
-        assert_eq!(
-            script.dff_constraints.len(),
-            2,
-            "Expected 2 DFF constraints, got {}",
-            script.dff_constraints.len()
-        );
-
-        // Build a map from cell_id to constraint for easier lookup
-        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
-        let constraint_by_name: Vec<(&str, &DFFConstraint)> = script
-            .dff_constraints
-            .iter()
-            .map(|c| {
-                let name = cellid_to_sdf_path
-                    .get(&(c.cell_id as usize))
-                    .map(|s| s.as_str())
-                    .unwrap_or("unknown");
-                (name, c)
-            })
-            .collect();
-
-        // dff_in: SETUP 0.080ns=80ps, HOLD -0.030ns → clamped to 0
-        let dff_in = constraint_by_name
-            .iter()
-            .find(|(name, _)| *name == "dff_in")
-            .expect("dff_in constraint not found");
-        assert_eq!(
-            dff_in.1.setup_ps, 80,
-            "dff_in setup: expected 80ps, got {}ps",
-            dff_in.1.setup_ps
-        );
-        assert_eq!(
-            dff_in.1.hold_ps, 0,
-            "dff_in hold: expected 0ps (negative clamped), got {}ps",
-            dff_in.1.hold_ps
-        );
-
-        // dff_out: SETUP 0.085ns=85ps, HOLD -0.028ns → clamped to 0
-        let dff_out = constraint_by_name
-            .iter()
-            .find(|(name, _)| *name == "dff_out")
-            .expect("dff_out constraint not found");
-        assert_eq!(
-            dff_out.1.setup_ps, 85,
-            "dff_out setup: expected 85ps, got {}ps",
-            dff_out.1.setup_ps
-        );
-        assert_eq!(
-            dff_out.1.hold_ps, 0,
-            "dff_out hold: expected 0ps (negative clamped), got {}ps",
-            dff_out.1.hold_ps
-        );
-
-        // data_state_pos should be u32::MAX because make_minimal_script has empty output_map
-        assert_eq!(
-            dff_in.1.data_state_pos,
-            u32::MAX,
-            "dff_in data_state_pos should be u32::MAX with empty output_map"
-        );
-        assert_eq!(
-            dff_out.1.data_state_pos,
-            u32::MAX,
-            "dff_out data_state_pos should be u32::MAX with empty output_map"
-        );
-    }
-
-    #[test]
-    fn test_iopath_no_paths_zero_delay() {
-        // Cell with no IOPATHs → zero delay (with liberty fallback = None → default)
-        use crate::sdf_parser::*;
-
-        let sdf_content = r#"(DELAYFILE
-  (SDFVERSION "3.0")
-  (DESIGN "test")
-  (TIMESCALE 1ns)
-  (CELL
-    (CELLTYPE "buf")
-    (INSTANCE u_buf)
-  )
-)"#;
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("parse SDF");
-        let cell = sdf.get_cell("u_buf").expect("u_buf not found");
-        assert!(cell.iopaths.is_empty(), "Should have no IOPATHs");
-        // In load_timing_from_sdf, this case falls through to liberty fallback
-        // With no liberty fallback, it returns PackedDelay::default() = (0, 0)
     }
 }
 

@@ -30,7 +30,6 @@
 //! - [`pe`] — Partition executor: maps partitions to GPU block resources (Boomerang stages)
 //! - [`flatten`] — Generates the final packed GPU execution script ([`flatten::FlattenedScriptV1`])
 //! - [`event_buffer`] — Timing event buffer for arrival-time propagation
-//! - [`sdf_parser`] — SDF (Standard Delay Format) file parser for back-annotation
 //! - [`testbench`] — Testbench configuration and VCD-driven simulation setup
 //! - [`display`] — Display/assertion support infrastructure
 
@@ -61,7 +60,5 @@ pub mod event_buffer;
 pub mod display;
 
 pub mod testbench;
-
-pub mod sdf_parser;
 
 pub mod sim;

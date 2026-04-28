@@ -244,22 +244,19 @@ impl TestbenchConfig {
     }
 }
 
-/// Configuration for post-layout timing simulation with SDF back-annotation.
+/// Configuration for post-layout timing simulation.
+///
+/// Timing data must be supplied via the `--timing-ir` CLI flag (a `.jtir`
+/// file produced by `opensta-to-ir`). Cosim no longer accepts raw SDF
+/// directly; the previous `sdf_file` / `sdf_corner` fields were removed in
+/// WS3 phase 3.4. To migrate, run `opensta-to-ir` to convert the SDF into
+/// IR and pass that to `jacquard cosim --timing-ir`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TimingSimConfig {
-    /// Path to SDF file from OpenLane2 (e.g. 6_final.sdf).
-    pub sdf_file: String,
-    /// SDF corner selection: "min", "typ", or "max".
-    #[serde(default = "default_sdf_corner")]
-    pub sdf_corner: String,
     /// Clock period in picoseconds for timing checks.
     pub clock_period_ps: u64,
     /// Maximum number of timing violations before stopping simulation.
     pub max_violations_before_stop: Option<usize>,
-}
-
-fn default_sdf_corner() -> String {
-    "typ".to_string()
 }
 
 /// Maps GPIO indices to netlist port names for designs with non-standard naming.

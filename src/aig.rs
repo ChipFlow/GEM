@@ -2732,9 +2732,8 @@ mod xprop_tests {
 }
 
 #[cfg(test)]
-mod sdf_integration_tests {
+mod path_mapping_tests {
     use super::*;
-    use crate::sdf_parser::{SdfCorner, SdfFile};
     use crate::sky130::SKY130LeafPins;
     use std::collections::HashMap;
 
@@ -2750,16 +2749,18 @@ mod sdf_integration_tests {
         (netlistdb, aig)
     }
 
-    /// Helper: build cellid → SDF path map (same logic as load_timing_from_sdf).
-    fn build_cellid_to_sdf_path(netlistdb: &NetlistDB) -> HashMap<usize, String> {
+    /// Helper: build cellid → IR path map.
+    /// Mirrors the construction in `load_timing_from_ir` (uses `/` as the
+    /// hierarchy separator, matching OpenSTA's default divider).
+    fn build_cellid_to_path(netlistdb: &NetlistDB) -> HashMap<usize, String> {
         let mut map = HashMap::new();
         for cellid in 1..netlistdb.num_cells {
             let parts: Vec<&str> = netlistdb.cellnames[cellid]
                 .iter()
                 .map(|s| s.as_str())
                 .collect::<Vec<_>>();
-            let sdf_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join(".");
-            map.insert(cellid, sdf_path);
+            let path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join("/");
+            map.insert(cellid, path);
         }
         map
     }
@@ -2908,57 +2909,64 @@ mod sdf_integration_tests {
         );
     }
 
-    // === Test 2: HierName → SDF path matching ===
+    // === Test 2: HierName → IR cell-instance path matching ===
 
     #[test]
-    fn test_sdf_path_matching_all_cells() {
+    fn test_path_matching_all_cells() {
+        // Every cell in the netlist should produce a path matching one of
+        // the expected leaf-instance names. This is the same property the
+        // IR consumer (`load_timing_from_ir`) relies on when looking up
+        // arcs/checks by `cell_instance` string.
         let (netlistdb, _aig) = load_inv_chain_aig();
-        let sdf_content = include_str!("../tests/timing_test/inv_chain_pnr/inv_chain_test.sdf");
-        let sdf = SdfFile::parse_str(sdf_content, SdfCorner::Typ).expect("Failed to parse SDF");
+        let cellid_to_path = build_cellid_to_path(&netlistdb);
 
-        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+        // 18 real cells: 2 DFFs (dff_in, dff_out) + 16 inverters (i0..i15).
+        let expected: std::collections::HashSet<&str> = [
+            "dff_in", "i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9", "i10", "i11",
+            "i12", "i13", "i14", "i15", "dff_out",
+        ]
+        .into_iter()
+        .collect();
 
         let mut matched = 0;
         let mut unmatched = Vec::new();
-
         for cellid in 1..netlistdb.num_cells {
-            let sdf_path = &cellid_to_sdf_path[&cellid];
-            if sdf.get_cell(sdf_path).is_some() {
+            let path = &cellid_to_path[&cellid];
+            if expected.contains(path.as_str()) {
                 matched += 1;
             } else {
                 unmatched.push(format!(
                     "cellid={} type={} path={}",
-                    cellid, netlistdb.celltypes[cellid], sdf_path
+                    cellid, netlistdb.celltypes[cellid], path
                 ));
             }
         }
 
         assert!(
             unmatched.is_empty(),
-            "All cells should match SDF instances. Unmatched:\n{}",
+            "All cells should produce expected instance paths. Unmatched:\n{}",
             unmatched.join("\n")
         );
-        // 18 real cells (2 DFFs + 16 inverters)
         assert_eq!(matched, 18, "Expected 18 matched cells");
     }
 
     #[test]
-    fn test_sdf_path_format_flat() {
+    fn test_path_format_flat() {
         // For a flat design, cellnames should produce single-component paths
+        // (no `/` separators).
         let (netlistdb, _aig) = load_inv_chain_aig();
-        let cellid_to_sdf_path = build_cellid_to_sdf_path(&netlistdb);
+        let cellid_to_path = build_cellid_to_path(&netlistdb);
 
-        // Verify expected instance names exist
         let expected_names = [
             "dff_in", "i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9", "i10", "i11",
             "i12", "i13", "i14", "i15", "dff_out",
         ];
 
-        let paths: Vec<&str> = cellid_to_sdf_path.values().map(|s| s.as_str()).collect();
+        let paths: Vec<&str> = cellid_to_path.values().map(|s| s.as_str()).collect();
         for name in &expected_names {
             assert!(
                 paths.contains(name),
-                "Expected SDF path '{}' not found. Paths: {:?}",
+                "Expected path '{}' not found. Paths: {:?}",
                 name,
                 paths
             );

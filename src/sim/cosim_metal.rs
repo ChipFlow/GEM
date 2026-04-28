@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::aig::{DriverType, AIG};
 use crate::flatten::FlattenedScriptV1;
-use crate::sim::setup::{self, LoadedDesign};
+use crate::sim::setup::LoadedDesign;
 use crate::testbench::{CppSpiFlash, PortMapping, TestbenchConfig, UartEvent};
 use metal::{
     CommandQueue, ComputePipelineState, Device as MTLDevice, MTLResourceOptions, MTLSize,
@@ -2304,44 +2304,17 @@ fn simulate_block_v1_inner(
 
 /// Run a GPU co-simulation with testbench config.
 ///
-/// `design` should already have basic SDF loaded if `--sdf` was passed on CLI.
-/// This function also checks `config.timing` for additional SDF configuration.
+/// Timing data must be loaded before this is called (via the
+/// `--timing-ir` CLI flag during `setup::load_design`). The previous
+/// `config.timing.sdf_file` fallback was removed in WS3 phase 3.4 — the
+/// hand-rolled SDF parser is gone and the cosim subcommand does not yet
+/// re-route SDF input through `opensta-to-ir` (deferred follow-up).
 pub fn run_cosim(
     design: &mut LoadedDesign,
     config: &TestbenchConfig,
     opts: &CosimOpts,
     timing_constraints: &Option<Vec<u32>>,
 ) -> CosimResult {
-    // Load SDF from testbench config if not already loaded via CLI --sdf
-    if !design.script.timing_enabled {
-        let sdf_path_from_config = config
-            .timing
-            .as_ref()
-            .map(|t| std::path::PathBuf::from(&t.sdf_file));
-        if let Some(ref sdf_path) = sdf_path_from_config {
-            let sdf_corner_str = config
-                .timing
-                .as_ref()
-                .map(|t| t.sdf_corner.as_str())
-                .unwrap_or("typ");
-            let clock_ps = config
-                .timing
-                .as_ref()
-                .map(|t| t.clock_period_ps)
-                .or(config.clock_period_ps)
-                .unwrap_or(25000);
-            setup::load_sdf(
-                &mut design.script,
-                &design.aig,
-                &design.netlistdb,
-                sdf_path,
-                sdf_corner_str,
-                false,
-                Some(clock_ps),
-            );
-        }
-    }
-
     let max_ticks = opts.max_cycles.unwrap_or(config.num_cycles);
     let script = &design.script;
     let aig = &design.aig;

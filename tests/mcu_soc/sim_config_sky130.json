@@ -29,8 +29,6 @@
         "resetb_l": 1
     },
     "timing": {
-        "sdf_file": "tests/mcu_soc/data/6_final.sdf",
-        "sdf_corner": "typ",
         "clock_period_ps": 40000
     }
 }

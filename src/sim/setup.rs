@@ -222,40 +222,6 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
     }
 }
 
-/// Load SDF timing data into a script.
-///
-/// `clock_period_ps` overrides the default 25000ps clock period used for timing.
-pub fn load_sdf(
-    script: &mut FlattenedScriptV1,
-    aig: &AIG,
-    netlistdb: &NetlistDB,
-    sdf_path: &Path,
-    sdf_corner: &str,
-    sdf_debug: bool,
-    clock_period_ps: Option<u64>,
-) {
-    let clock_ps = clock_period_ps.unwrap_or(25000);
-    let corner = match sdf_corner {
-        "min" => crate::sdf_parser::SdfCorner::Min,
-        "max" => crate::sdf_parser::SdfCorner::Max,
-        _ => crate::sdf_parser::SdfCorner::Typ,
-    };
-    clilog::info!(
-        "Loading SDF: {:?} (corner: {}, clock_period={}ps)",
-        sdf_path,
-        sdf_corner,
-        clock_ps
-    );
-    match crate::sdf_parser::SdfFile::parse_file(sdf_path, corner) {
-        Ok(sdf) => {
-            clilog::info!("SDF loaded: {}", sdf.summary());
-            script.load_timing_from_sdf(aig, netlistdb, &sdf, clock_ps, None, sdf_debug);
-            script.inject_timing_to_script();
-        }
-        Err(e) => clilog::warn!("Failed to load SDF: {}", e),
-    }
-}
-
 /// Convert SDF → IR via `opensta-to-ir` (subprocesses OpenSTA), then
 /// consume the IR through `load_timing_from_ir`.
 ///
