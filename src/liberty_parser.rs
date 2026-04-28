@@ -283,7 +283,37 @@ impl TimingLibrary {
     }
 
     /// Parse Liberty content from a string.
+    ///
+    /// Errors if the parser succeeded structurally but extracted zero
+    /// cells — this is the silent-failure mode that issue #2 of the
+    /// timing-correctness review called out, and the WS5 deliverable in
+    /// `docs/plans/phase-0-ir-and-oracle.md`. The structural parser
+    /// already rejects input without a `library` block, so this check
+    /// only fires when the input was real-shaped Liberty that yielded no
+    /// usable cells.
+    ///
+    /// Test fixtures that intentionally provide skeletal Liberty content
+    /// can use [`Self::parse_unchecked`] to bypass the check.
     pub fn parse(content: &str) -> Result<Self, String> {
+        let lib = Self::parse_unchecked(content)?;
+        if lib.cells.is_empty() {
+            return Err(format!(
+                "Liberty input ({} bytes) parsed structurally but yielded no cells. \
+                 This indicates a parser issue or unrecognised dialect. Investigate \
+                 the input, or call TimingLibrary::parse_unchecked if zero-cell parses \
+                 are intentional here.",
+                content.len()
+            ));
+        }
+        Ok(lib)
+    }
+
+    /// Parse Liberty content without the non-empty-cells sanity check.
+    ///
+    /// For test fixtures that intentionally provide minimal Liberty input,
+    /// or for callers that have already validated the input by other means.
+    /// Production paths should prefer [`Self::parse`].
+    pub fn parse_unchecked(content: &str) -> Result<Self, String> {
         let mut lib = TimingLibrary::default();
         let mut parser = LibertyParser::new(content);
         parser.parse_library(&mut lib)?;
@@ -1120,5 +1150,34 @@ library ("sky130_fd_sc_hd__tt_025C_1v80") {
         let (rise_q, fall_q) = clk_q.unwrap();
         assert_eq!(rise_q, 150);
         assert_eq!(fall_q, 140);
+    }
+
+    /// Liberty input that looks real but contains no cells. `parse` should
+    /// fail loudly rather than silently succeed with an empty library.
+    #[test]
+    fn parse_rejects_library_input_with_zero_cells() {
+        let no_cells = r#"library(test) {
+            technology(cmos);
+            time_unit : "1ps";
+        }"#;
+        let err = TimingLibrary::parse(no_cells)
+            .expect_err("expected parse() to reject zero-cell Liberty input");
+        assert!(
+            err.contains("yielded no cells"),
+            "unexpected error message: {err}"
+        );
+    }
+
+    /// `parse_unchecked` is the explicit opt-out for fixtures that
+    /// intentionally provide skeletal Liberty content.
+    #[test]
+    fn parse_unchecked_accepts_zero_cell_library() {
+        let no_cells = r#"library(test) {
+            technology(cmos);
+            time_unit : "1ps";
+        }"#;
+        let lib = TimingLibrary::parse_unchecked(no_cells)
+            .expect("parse_unchecked should accept zero-cell Liberty");
+        assert!(lib.cells.is_empty());
     }
 }
