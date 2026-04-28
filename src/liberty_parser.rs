@@ -953,7 +953,7 @@ impl<'a> LibertyParser<'a> {
                             let first_val = rest
                                 .trim_start()
                                 .trim_start_matches('"')
-                                .split(|c: char| c == ',' || c == '"' || c == ')')
+                                .split([',', '"', ')'])
                                 .next()
                                 .unwrap_or("")
                                 .trim();

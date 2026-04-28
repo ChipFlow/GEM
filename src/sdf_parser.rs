@@ -7,6 +7,8 @@
 //! This parser extracts IOPATH (cell) delays, INTERCONNECT (wire) delays,
 //! and TIMINGCHECK (setup/hold) constraints.
 
+#![allow(clippy::doc_lazy_continuation)]
+
 use std::collections::HashMap;
 use std::path::Path;
 

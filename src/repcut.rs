@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
-/// RepCut implementation
+//! RepCut implementation
+
+#![allow(clippy::needless_range_loop)]
+
 use crate::aig::{DriverType, TopoTraverser, AIG};
 use crate::staging::StagedAIG;
 use cachedhash::CachedHash;
@@ -54,8 +57,9 @@ impl EndpointSet {
 impl RCHyperGraph {
     pub fn from_staged_aig(aig: &AIG, staged: &StagedAIG) -> RCHyperGraph {
         let timer_repcut_endpoint_process = clilog::stimer!("repcut endpoint process");
-        let num_blocks = (staged.num_endpoint_groups() + REPCUT_BITSET_BLOCK_SIZE - 1)
-            / REPCUT_BITSET_BLOCK_SIZE;
+        let num_blocks = staged
+            .num_endpoint_groups()
+            .div_ceil(REPCUT_BITSET_BLOCK_SIZE);
         let mut segments_blockid_nodeid =
             vec![Vec::<Option<Arc<CachedHash<EndpointSetSegment>>>>::new(); num_blocks];
         segments_blockid_nodeid

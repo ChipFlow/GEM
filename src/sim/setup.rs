@@ -471,7 +471,7 @@ fn generate_partitions(
 
             while !unrealized_endpoints.is_empty() {
                 division = (division / 2).max(1);
-                let num_parts = (unrealized_endpoints.len() + division - 1) / division;
+                let num_parts = unrealized_endpoints.len().div_ceil(division);
                 clilog::info!(
                     "current: {} endpoints, try {} parts",
                     unrealized_endpoints.len(),

@@ -16,6 +16,7 @@ use sverilogparse::SVerilogRange;
 pub struct SKY130LeafPins;
 
 impl LeafPinProvider for SKY130LeafPins {
+    #[allow(clippy::redundant_guards)]
     fn direction_of(
         &self,
         macro_name: &CompactString,
@@ -455,7 +456,11 @@ impl LeafPinProvider for SKY130LeafPins {
             },
 
             // Filler/tap/decap/diode cells - no functional pins
-            t if t.starts_with("fill") || t.starts_with("tap") || t.starts_with("decap") || t.starts_with("diode") => {
+            t if t.starts_with("fill")
+                || t.starts_with("tap")
+                || t.starts_with("decap")
+                || t.starts_with("diode") =>
+            {
                 // These cells have no functional pins, but may have power pins
                 // which we treat as inputs (though they're typically not connected in logic)
                 Direction::I

@@ -156,19 +156,45 @@ pub struct DecompResult {
 /// are combinational delay buffers that happen to start with "dl".
 const SKY130_SEQUENTIAL_CELLS: &[&str] = &[
     // D flip-flops
-    "dfbbn", "dfbbp", "dfrbp", "dfrtn", "dfrtp", "dfsbp", "dfstp", "dfxbp", "dfxtp",
+    "dfbbn",
+    "dfbbp",
+    "dfrbp",
+    "dfrtn",
+    "dfrtp",
+    "dfsbp",
+    "dfstp",
+    "dfxbp",
+    "dfxtp",
     // Latches and clock-gating latches
-    "dlclkp", "dlrbn", "dlrbp", "dlrtn", "dlrtp", "dlxbn", "dlxbp", "dlxtn", "dlxtp",
+    "dlclkp",
+    "dlrbn",
+    "dlrbp",
+    "dlrtn",
+    "dlrtp",
+    "dlxbn",
+    "dlxbp",
+    "dlxtn",
+    "dlxtp",
     // Enable D flip-flops
-    "edfxbp", "edfxtp",
+    "edfxbp",
+    "edfxtp",
     // Low-power isolation latch
     "lpflow_inputisolatch",
     // Scan D flip-flops
-    "sdfbbn", "sdfbbp", "sdfrbp", "sdfrtn", "sdfrtp", "sdfsbp", "sdfstp", "sdfxbp", "sdfxtp",
+    "sdfbbn",
+    "sdfbbp",
+    "sdfrbp",
+    "sdfrtn",
+    "sdfrtp",
+    "sdfsbp",
+    "sdfstp",
+    "sdfxbp",
+    "sdfxtp",
     // Scan clock-gating latch
     "sdlclkp",
     // Scan enable D flip-flops
-    "sedfxbp", "sedfxtp",
+    "sedfxbp",
+    "sedfxtp",
 ];
 
 pub fn is_sequential_cell(cell_type: &str) -> bool {

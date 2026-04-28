@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Partition executor
 
+#![allow(
+    clippy::too_many_arguments,
+    clippy::ptr_arg,
+    clippy::needless_range_loop,
+    clippy::only_used_in_recursion
+)]
+
 use crate::aig::{
     bitset_or_inplace, bitset_union_popcount, DriverType, EndpointGroup, TopoTraverser, AIG,
 };
@@ -77,7 +84,7 @@ fn build_one_boomerang_stage(
 
     // first discover the (remaining) subgraph to implement.
     let endpoints_vec: Vec<usize> = unrealized_comb_outputs.iter().copied().collect();
-    let order = traverser.topo_traverse(aig, Some(&endpoints_vec), Some(&realized_inputs));
+    let order = traverser.topo_traverse(aig, Some(&endpoints_vec), Some(realized_inputs));
     // Dense id2order: aigpin -> topo order index. usize::MAX = not present.
     let mut id2order = vec![usize::MAX; aig.num_aigpins + 1];
     for (order_i, &i) in order.iter().enumerate() {
@@ -707,7 +714,7 @@ impl Partition {
             .iter()
             .map(|(_, ckens)| ckens.len() - 1)
             .sum();
-        let num_reserved_writeouts = num_srams + (num_output_dups + 31) / 32;
+        let num_reserved_writeouts = num_srams + num_output_dups.div_ceil(32);
         num_reserved_writeouts >= BOOMERANG_MAX_WRITEOUTS
             || num_srams * 4 + num_output_dups > BOOMERANG_MAX_WRITEOUTS
     }
@@ -783,7 +790,7 @@ impl Partition {
             .iter()
             .map(|(_, ckens)| ckens.len() - 1)
             .sum::<usize>();
-        let num_reserved_writeouts = num_srams + (num_output_dups + 31) / 32;
+        let num_reserved_writeouts = num_srams + num_output_dups.div_ceil(32);
         if num_reserved_writeouts >= BOOMERANG_MAX_WRITEOUTS
             || num_srams * 4 + num_output_dups > BOOMERANG_MAX_WRITEOUTS
         {
@@ -1074,7 +1081,7 @@ pub fn process_partitions_from_hgr_parts_file(
     use std::io::{BufRead, BufReader};
 
     let mut parts = Vec::<Vec<usize>>::new();
-    let f_parts = File::open(&hgr_parts_file).unwrap();
+    let f_parts = File::open(hgr_parts_file).unwrap();
     let f_parts = BufReader::new(f_parts);
     for (i, line) in f_parts.lines().enumerate() {
         let line = line.unwrap();

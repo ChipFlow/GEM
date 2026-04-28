@@ -82,7 +82,7 @@ impl VCDHier {
 
     #[inline]
     pub fn iter(&self) -> VCDHierRevIter<'_> {
-        (&self).into_iter()
+        self.into_iter()
     }
 }
 
@@ -451,10 +451,7 @@ pub fn parse_input_vcd(
 /// The output has `(num_cycles + 1)` snapshots of `2 * reg_io_state_size` words:
 /// `[values | xmask]` where X-mask is 0xFFFFFFFF for DFF output positions (unknown)
 /// and 0 for primary input positions (known from VCD).
-pub fn expand_states_for_xprop(
-    value_states: &[u32],
-    script: &FlattenedScriptV1,
-) -> Vec<u32> {
+pub fn expand_states_for_xprop(value_states: &[u32], script: &FlattenedScriptV1) -> Vec<u32> {
     let rio = script.reg_io_state_size as usize;
     let num_snapshots = value_states.len() / rio;
     assert_eq!(value_states.len(), num_snapshots * rio);
@@ -480,10 +477,7 @@ pub fn expand_states_for_xprop(
 /// Input has `(num_cycles + 1)` snapshots of `2 * reg_io_state_size` words.
 /// Returns separate value and X-mask arrays, each with the same layout as the
 /// original value-only state buffer (indexed by `offsets_timestamps` offsets).
-pub fn split_xprop_states(
-    gpu_states: &[u32],
-    reg_io_state_size: usize,
-) -> (Vec<u32>, Vec<u32>) {
+pub fn split_xprop_states(gpu_states: &[u32], reg_io_state_size: usize) -> (Vec<u32>, Vec<u32>) {
     let eff = reg_io_state_size * 2;
     let num_snapshots = gpu_states.len() / eff;
     assert_eq!(gpu_states.len(), num_snapshots * eff);
@@ -503,10 +497,7 @@ pub fn split_xprop_states(
 /// Appends `reg_io_state_size` words of zeros after each cycle's existing
 /// state data (values + optional xmask). This reserves space for the GPU
 /// kernel to write per-output arrival times.
-pub fn expand_states_for_arrivals(
-    states: &[u32],
-    script: &FlattenedScriptV1,
-) -> Vec<u32> {
+pub fn expand_states_for_arrivals(states: &[u32], script: &FlattenedScriptV1) -> Vec<u32> {
     let old_eff = if script.xprop_enabled {
         script.reg_io_state_size as usize * 2
     } else {
@@ -522,7 +513,7 @@ pub fn expand_states_for_arrivals(
         // Copy existing data (values + optional xmask)
         expanded.extend_from_slice(&states[snap_i * old_eff..(snap_i + 1) * old_eff]);
         // Append zeroed arrival section
-        expanded.extend(std::iter::repeat(0u32).take(rio));
+        expanded.extend(std::iter::repeat_n(0u32, rio));
     }
     expanded
 }
@@ -532,10 +523,7 @@ pub fn expand_states_for_arrivals(
 /// Returns a vector of u32 arrival times with the same snapshot/offset
 /// structure as the value states. Each u32 contains a u16 arrival time
 /// in picoseconds (stored in the low 16 bits).
-pub fn split_arrival_states(
-    gpu_states: &[u32],
-    script: &FlattenedScriptV1,
-) -> Vec<u32> {
+pub fn split_arrival_states(gpu_states: &[u32], script: &FlattenedScriptV1) -> Vec<u32> {
     let eff = script.effective_state_size() as usize;
     let rio = script.reg_io_state_size as usize;
     let arrival_offset = script.arrival_state_offset as usize;
@@ -596,7 +584,7 @@ pub fn setup_output_vcd(
                         aigpin,
                         u32::MAX,
                         writer
-                            .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
+                            .add_wire(1, &netlistdb.pinnames[i].dbg_fmt_pin().to_string())
                             .unwrap(),
                     ));
                 }
@@ -604,7 +592,7 @@ pub fn setup_output_vcd(
                     aigpin,
                     *script.output_map.get(&aigpin).unwrap(),
                     writer
-                        .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
+                        .add_wire(1, &netlistdb.pinnames[i].dbg_fmt_pin().to_string())
                         .unwrap(),
                 ))
             } else {
@@ -651,7 +639,7 @@ pub fn setup_cosim_output_vcd<W: std::io::Write>(
                         aigpin,
                         u32::MAX,
                         writer
-                            .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
+                            .add_wire(1, &netlistdb.pinnames[i].dbg_fmt_pin().to_string())
                             .unwrap(),
                     ));
                 }
@@ -659,7 +647,7 @@ pub fn setup_cosim_output_vcd<W: std::io::Write>(
                     aigpin,
                     *script.output_map.get(&aigpin).unwrap(),
                     writer
-                        .add_wire(1, &format!("{}", netlistdb.pinnames[i].dbg_fmt_pin()))
+                        .add_wire(1, &netlistdb.pinnames[i].dbg_fmt_pin().to_string())
                         .unwrap(),
                 ))
             } else {
@@ -701,7 +689,13 @@ pub fn write_output_vcd_xprop(
     states: &[u32],
     xmask_states: &[u32],
 ) {
-    write_output_vcd_impl(writer, output_mapping, offsets_timestamps, states, Some(xmask_states))
+    write_output_vcd_impl(
+        writer,
+        output_mapping,
+        offsets_timestamps,
+        states,
+        Some(xmask_states),
+    )
 }
 
 fn write_output_vcd_impl(
@@ -731,7 +725,9 @@ fn write_output_vcd_impl(
                 output_pos => {
                     let v = states[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1;
                     let x = xmask_states
-                        .map(|xm| xm[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1 != 0)
+                        .map(|xm| {
+                            xm[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1 != 0
+                        })
                         .unwrap_or(false);
                     (v, x)
                 }
@@ -820,7 +816,9 @@ pub fn write_output_vcd_timed<W: std::io::Write>(
                 output_pos => {
                     let v = states[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1;
                     let x = xmask_states
-                        .map(|xm| xm[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1 != 0)
+                        .map(|xm| {
+                            xm[offset + (output_pos >> 5) as usize] >> (output_pos & 31) & 1 != 0
+                        })
                         .unwrap_or(false);
                     (v, x)
                 }
@@ -881,10 +879,7 @@ pub fn write_output_vcd_timed<W: std::io::Write>(
             .unwrap();
     }
 
-    clilog::info!(
-        "Timed VCD: {} transitions written",
-        timed_transitions.len()
-    );
+    clilog::info!("Timed VCD: {} transitions written", timed_transitions.len());
     if x_output_count > 0 {
         clilog::warn!(
             "VCD output contains {} X-value transitions across all signals",
@@ -970,6 +965,7 @@ pub fn setup_stimulus_vcd(
 
 #[cfg(test)]
 mod xprop_tests {
+    #![allow(clippy::identity_op)]
     use super::*;
     use indexmap::IndexMap;
 
@@ -1026,9 +1022,12 @@ mod xprop_tests {
 
         // 3 snapshots (2 cycles + trailing), value states only
         let value_states: Vec<u32> = vec![
-            0x0000_0001, 0x0000_0000, // snap 0: input bit 0 = 1
-            0x0000_0001, 0x0000_0001, // snap 1: input bit 0 = 1, dff bit 0 = 1
-            0x0000_0000, 0x0000_0001, // snap 2: input bit 0 = 0, dff bit 0 = 1
+            0x0000_0001,
+            0x0000_0000, // snap 0: input bit 0 = 1
+            0x0000_0001,
+            0x0000_0001, // snap 1: input bit 0 = 1, dff bit 0 = 1
+            0x0000_0000,
+            0x0000_0001, // snap 2: input bit 0 = 0, dff bit 0 = 1
         ];
 
         let expanded = expand_states_for_xprop(&value_states, &script);
@@ -1194,7 +1193,7 @@ mod timing_arrival_tests {
         // Snap 0: [10, 20, 30, 0, 0, 0]
         assert_eq!(&expanded[0..3], &[10, 20, 30]);
         assert_eq!(&expanded[3..6], &[0, 0, 0]); // arrival section zeroed
-        // Snap 1: [40, 50, 60, 0, 0, 0]
+                                                 // Snap 1: [40, 50, 60, 0, 0, 0]
         assert_eq!(&expanded[6..9], &[40, 50, 60]);
         assert_eq!(&expanded[9..12], &[0, 0, 0]);
     }
@@ -1239,7 +1238,7 @@ mod timing_arrival_tests {
         let script = make_timing_script(2, true, true);
         assert_eq!(script.effective_state_size(), 6); // 3*rio
         assert_eq!(script.arrival_state_offset, 4); // 2*rio
-        // 1 snapshot: [values, xmask, arrivals]
+                                                    // 1 snapshot: [values, xmask, arrivals]
         let gpu_states: Vec<u32> = vec![
             10, 20, // values
             0xFF, 0xFF, // xmask
@@ -1259,7 +1258,10 @@ mod timing_arrival_tests {
         let expanded = expand_states_for_arrivals(&value_states, &script);
         // Arrivals are all zero after expansion
         let arrivals = split_arrival_states(&expanded, &script);
-        assert!(arrivals.iter().all(|&a| a == 0), "fresh arrivals should be zero");
+        assert!(
+            arrivals.iter().all(|&a| a == 0),
+            "fresh arrivals should be zero"
+        );
         // Values are preserved
         let eff = script.effective_state_size() as usize;
         let rio = script.reg_io_state_size as usize;
@@ -1280,29 +1282,31 @@ mod timing_arrival_tests {
         use std::io::BufWriter;
 
         let rio = 2u32;
-        let script = make_timing_script(rio, false, true);
+        let _script = make_timing_script(rio, false, true);
 
         // Create output mapping: 2 signals, bit positions 0 and 32
         let out2vcd = vec![
             (2, 0u32, vcd_ng::IdCode(0)),  // signal A at bit 0 (word 0)
-            (4, 32u32, vcd_ng::IdCode(1)),  // signal B at bit 32 (word 1)
+            (4, 32u32, vcd_ng::IdCode(1)), // signal B at bit 32 (word 1)
         ];
         let output_mapping = OutputVCDMapping { out2vcd };
 
         // 2 snapshots: rio=2 words each (just values, no xprop)
         // offsets are into value-only buffer
         let offsets_timestamps: Vec<(usize, u64)> = vec![
-            (0, 0),      // cycle 0 at t=0
-            (2, 10000),   // cycle 1 at t=10000ps (clock edge)
+            (0, 0),     // cycle 0 at t=0
+            (2, 10000), // cycle 1 at t=10000ps (clock edge)
         ];
         // State values: snap 0 all zeros, snap 1 both bits set
         let states: Vec<u32> = vec![
-            0x0000_0000, 0x0000_0000, // snap 0: A=0, B=0
-            0x0000_0001, 0x0000_0001, // snap 1: A=1, B=1
+            0x0000_0000,
+            0x0000_0000, // snap 0: A=0, B=0
+            0x0000_0001,
+            0x0000_0001, // snap 1: A=1, B=1
         ];
         // Arrival times: snap 0 all zero, snap 1 has 350ps for word 0, 885ps for word 1
         let arrival_states: Vec<u32> = vec![
-            0, 0,     // snap 0
+            0, 0, // snap 0
             350, 885, // snap 1: A arrives at 350ps, B arrives at 885ps
         ];
 
@@ -1318,9 +1322,7 @@ mod timing_arrival_tests {
             writer.add_wire(1, "B").unwrap();
             writer.upscope().unwrap();
             writer.enddefinitions().unwrap();
-            writer
-                .begin(vcd_ng::SimulationCommand::Dumpvars)
-                .unwrap();
+            writer.begin(vcd_ng::SimulationCommand::Dumpvars).unwrap();
 
             write_output_vcd_timed(
                 &mut writer,
@@ -1369,11 +1371,9 @@ mod timing_arrival_tests {
         use std::io::BufWriter;
 
         let rio = 1u32;
-        let script = make_timing_script(rio, false, true);
+        let _script = make_timing_script(rio, false, true);
 
-        let out2vcd = vec![
-            (2, 0u32, vcd_ng::IdCode(0)),
-        ];
+        let out2vcd = vec![(2, 0u32, vcd_ng::IdCode(0))];
         let output_mapping = OutputVCDMapping { out2vcd };
 
         let offsets_timestamps: Vec<(usize, u64)> = vec![
@@ -1392,9 +1392,7 @@ mod timing_arrival_tests {
             writer.add_wire(1, "A").unwrap();
             writer.upscope().unwrap();
             writer.enddefinitions().unwrap();
-            writer
-                .begin(vcd_ng::SimulationCommand::Dumpvars)
-                .unwrap();
+            writer.begin(vcd_ng::SimulationCommand::Dumpvars).unwrap();
 
             write_output_vcd_timed(
                 &mut writer,
@@ -1424,17 +1422,12 @@ mod timing_arrival_tests {
         use std::io::BufWriter;
 
         let rio = 1u32;
-        let script = make_timing_script(rio, false, true);
+        let _script = make_timing_script(rio, false, true);
 
-        let out2vcd = vec![
-            (2, 0u32, vcd_ng::IdCode(0)),
-        ];
+        let out2vcd = vec![(2, 0u32, vcd_ng::IdCode(0))];
         let output_mapping = OutputVCDMapping { out2vcd };
 
-        let offsets_timestamps: Vec<(usize, u64)> = vec![
-            (0, 0),
-            (1, 5000),
-        ];
+        let offsets_timestamps: Vec<(usize, u64)> = vec![(0, 0), (1, 5000)];
         let states: Vec<u32> = vec![0, 1];
         let arrival_states: Vec<u32> = vec![0, 0]; // zero arrival
 
@@ -1447,9 +1440,7 @@ mod timing_arrival_tests {
             writer.add_wire(1, "A").unwrap();
             writer.upscope().unwrap();
             writer.enddefinitions().unwrap();
-            writer
-                .begin(vcd_ng::SimulationCommand::Dumpvars)
-                .unwrap();
+            writer.begin(vcd_ng::SimulationCommand::Dumpvars).unwrap();
 
             write_output_vcd_timed(
                 &mut writer,

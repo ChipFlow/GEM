@@ -4,6 +4,12 @@
 //!
 //! An AIG is derived from netlistdb synthesized in AIGPDK or SKY130.
 
+#![allow(
+    clippy::ptr_arg,
+    clippy::too_many_arguments,
+    clippy::needless_range_loop
+)]
+
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
 use crate::sky130::{extract_cell_type, is_sky130_cell};
 use crate::sky130_pdk::{
@@ -524,7 +530,7 @@ impl AIG {
                         "A" => pin_a = ipin,
                         "CP" => pin_cp = ipin,
                         "E" => pin_en = ipin,
-                        i @ _ => {
+                        i => {
                             clilog::error!(
                                 "input pin {} unexpected for ck element {}",
                                 i,
@@ -985,7 +991,6 @@ impl AIG {
             self.aigpin_cell_origins[q].push((cellid, cell_type.to_string(), "Q".to_string()));
             let dff = self.dffs.entry(cellid).or_default();
             dff.q = q;
-            return;
         }
 
         // dfbbp with Q_N output: no pre-processing needed
@@ -1750,7 +1755,7 @@ impl AIG {
         }
 
         aig.fanouts_start = vec![0; aig.num_aigpins + 2];
-        for (_i, driver) in aig.drivers.iter().enumerate() {
+        for driver in aig.drivers.iter() {
             if let DriverType::AndGate(a, b) = *driver {
                 if (a >> 1) != 0 {
                     aig.fanouts_start[a >> 1] += 1;
@@ -1984,8 +1989,10 @@ impl AIG {
         let setup_time = dff_timing.max_setup();
         let hold_time = dff_timing.max_hold();
 
-        let mut report = TimingReport::default();
-        report.num_endpoints = self.dffs.len();
+        let mut report = TimingReport {
+            num_endpoints: self.dffs.len(),
+            ..Default::default()
+        };
 
         for (_cell_id, dff) in &self.dffs {
             // Get data arrival time at D input
@@ -2527,8 +2534,8 @@ mod xprop_tests {
         let (x_capable, stats) = aig.compute_x_capable_pins();
 
         assert_eq!(stats.num_x_sources, 1); // Just the DFF Q
-        // Pin 2 (DFF Q) is X source, pin 3 (AND(1,2)) is X-capable,
-        // pin 4 (AND(3,1)) is X-capable
+                                            // Pin 2 (DFF Q) is X source, pin 3 (AND(1,2)) is X-capable,
+                                            // pin 4 (AND(3,1)) is X-capable
         assert!(!x_capable[0]); // Tie0
         assert!(!x_capable[1]); // InputPort — not X
         assert!(x_capable[2]); // DFF Q — X source
@@ -2651,7 +2658,10 @@ mod xprop_tests {
         assert!(!x_sources[0]); // Tie0
         assert!(!x_sources[1]); // InputPort
         for i in 0..32 {
-            assert!(x_sources[rd_data[i]], "SRAM rd_data[{i}] should be X source");
+            assert!(
+                x_sources[rd_data[i]],
+                "SRAM rd_data[{i}] should be X source"
+            );
         }
 
         let (x_capable, stats) = aig.compute_x_capable_pins();
@@ -2666,8 +2676,7 @@ mod xprop_tests {
     #[test]
     fn test_x_prop_with_inv_chain() {
         // Integration test using the real inv_chain.v design
-        let verilog_path =
-            std::path::PathBuf::from("tests/timing_test/sky130_timing/inv_chain.v");
+        let verilog_path = std::path::PathBuf::from("tests/timing_test/sky130_timing/inv_chain.v");
         if !verilog_path.exists() {
             eprintln!("Skipping test_x_prop_with_inv_chain: inv_chain.v not found");
             return;
@@ -2680,14 +2689,23 @@ mod xprop_tests {
         let (x_capable, stats) = aig.compute_x_capable_pins();
 
         // inv_chain has 2 DFFs, so at least 2 X sources
-        assert!(stats.num_x_sources >= 2, "Expected at least 2 X sources from DFFs, got {}", stats.num_x_sources);
+        assert!(
+            stats.num_x_sources >= 2,
+            "Expected at least 2 X sources from DFFs, got {}",
+            stats.num_x_sources
+        );
         // The forward cone should propagate X through the inverter chain
-        assert!(stats.num_x_capable_pins >= stats.num_x_sources,
+        assert!(
+            stats.num_x_capable_pins >= stats.num_x_sources,
             "X-capable pins ({}) should be >= X sources ({})",
-            stats.num_x_capable_pins, stats.num_x_sources);
+            stats.num_x_capable_pins,
+            stats.num_x_sources
+        );
         // Sanity: not everything should be X-capable (inputs are known)
-        assert!(stats.num_x_capable_pins < stats.total_pins,
-            "Not all pins should be X-capable");
+        assert!(
+            stats.num_x_capable_pins < stats.total_pins,
+            "Not all pins should be X-capable"
+        );
 
         println!(
             "inv_chain X-prop: {}/{} pins ({:.1}%) X-capable, {} fixpoint iterations",
@@ -2699,8 +2717,15 @@ mod xprop_tests {
 
         // Verify no input ports are X-capable
         for (aigpin, driver) in aig.drivers.iter().enumerate() {
-            if matches!(driver, DriverType::InputPort(_) | DriverType::InputClockFlag(_, _)) {
-                assert!(!x_capable[aigpin], "Input port aigpin {} should not be X-capable", aigpin);
+            if matches!(
+                driver,
+                DriverType::InputPort(_) | DriverType::InputClockFlag(_, _)
+            ) {
+                assert!(
+                    !x_capable[aigpin],
+                    "Input port aigpin {} should not be X-capable",
+                    aigpin
+                );
             }
         }
     }

@@ -63,10 +63,7 @@ impl CppSpiFlash {
             unsafe { spiflash_ffi::spiflash_load(self.ptr, data.as_ptr(), data.len(), offset) };
 
         if result < 0 {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to load firmware into flash",
-            ))
+            Err(std::io::Error::other("Failed to load firmware into flash"))
         } else {
             Ok(result as usize)
         }
@@ -145,7 +142,7 @@ pub struct MonitorConfig {
 /// GPU↔CPU peripheral callback control block (must match Metal `PeripheralControl` struct).
 /// Lives in shared memory; GPU writes callback request, CPU reads and responds.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct PeripheralControl {
     // GPU → CPU
     pub needs_callback: u32,
@@ -163,24 +160,6 @@ pub struct PeripheralControl {
     // Autonomous mode fields
     pub autonomous_break_tick: u32, // tick offset where monitor first fired (0 = none, 1-indexed)
     pub autonomous_ticks_completed: u32, // counter incremented per autonomous tick
-}
-
-impl Default for PeripheralControl {
-    fn default() -> Self {
-        Self {
-            needs_callback: 0,
-            monitor_id: 0,
-            tick_number: 0,
-            _pad: 0,
-            flash_clk: 0,
-            flash_csn: 0,
-            flash_d_out: 0,
-            flash_d_in: 0,
-            prev_values: [0; 16],
-            autonomous_break_tick: 0,
-            autonomous_ticks_completed: 0,
-        }
-    }
 }
 
 // ── Clock domain configuration ───────────────────────────────────────────────
@@ -414,7 +393,7 @@ impl UartMonitor {
                     + (bits_received as usize) * self.cycles_per_bit
                     + self.cycles_per_bit / 2;
                 if cycle >= bit_center {
-                    let new_value = value | ((tx as u8) << bits_received);
+                    let new_value = value | (tx << bits_received);
                     if bits_received >= 7 {
                         UartState::StopBit {
                             start_cycle: start_cycle + 8 * self.cycles_per_bit,
@@ -444,7 +423,7 @@ impl UartMonitor {
                             event: "tx".to_string(),
                             payload: value,
                         });
-                        let ch = if value >= 32 && value < 127 {
+                        let ch = if (32..127).contains(&value) {
                             value as char
                         } else {
                             '.'
@@ -523,7 +502,7 @@ impl WatchlistEntry {
                 match format.as_str() {
                     "bin" => format!("{:0width$b}", value, width = pins.len()),
                     "dec" => format!("{}", value),
-                    _ => format!("0x{:0width$X}", value, width = (pins.len() + 3) / 4),
+                    _ => format!("0x{:0width$X}", value, width = pins.len().div_ceil(4)),
                 }
             }
         }

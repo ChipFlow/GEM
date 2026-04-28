@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Benchmarks for X-propagation CPU kernel overhead.
 
+#![allow(clippy::identity_op, clippy::erasing_op)]
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jacquard::sim::cpu_reference::{simulate_block_v1, simulate_block_v1_xprop};
 
@@ -83,33 +85,29 @@ fn bench_xprop_kernel(c: &mut Criterion) {
             let script_xcap = build_bench_script(true, num_ios, num_stages);
 
             let state_size = num_ios as usize;
-            let mut input_state = vec![0u32; state_size];
+            let input_state = vec![0u32; state_size];
             let mut output_state = vec![0u32; state_size];
             let mut sram_data = vec![0u32; 0];
 
             let id = format!("ios={}_stages={}", num_ios, num_stages);
 
             // Baseline: two-state kernel
-            group.bench_with_input(
-                BenchmarkId::new("two_state", &id),
-                &script,
-                |b, script| {
-                    b.iter(|| {
-                        output_state.fill(0);
-                        simulate_block_v1(
-                            black_box(script),
-                            black_box(&input_state),
-                            black_box(&mut output_state),
-                            black_box(&mut sram_data),
-                            false,
-                        );
-                    })
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("two_state", &id), &script, |b, script| {
+                b.iter(|| {
+                    output_state.fill(0);
+                    simulate_block_v1(
+                        black_box(script),
+                        black_box(&input_state),
+                        black_box(&mut output_state),
+                        black_box(&mut sram_data),
+                        false,
+                    );
+                })
+            });
 
             // X-prop: X-free partition (should match baseline)
             let script_xfree = build_bench_script(false, num_ios, num_stages);
-            let mut input_xmask = vec![0u32; state_size];
+            let input_xmask = vec![0u32; state_size];
             let mut output_xmask = vec![0u32; state_size];
             let mut sram_xmask = vec![0u32; 0];
 

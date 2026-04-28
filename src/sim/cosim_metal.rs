@@ -313,7 +313,14 @@ impl MetalSimulator {
         event_buffer_metal: &metal::Buffer,
         timing_constraints_buffer: Option<&metal::Buffer>,
     ) {
-        self.write_params(stage_i, num_blocks, num_major_stages, state_size, cycle_i, 0);
+        self.write_params(
+            stage_i,
+            num_blocks,
+            num_major_stages,
+            state_size,
+            cycle_i,
+            0,
+        );
 
         let command_buffer = self.command_queue.new_command_buffer();
         self.encode_dispatch(
@@ -550,7 +557,14 @@ impl MetalSimulator {
                 flash_din_params_buffer,
             );
             for stage_i in 0..num_major_stages {
-                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, arrival_state_offset);
+                self.write_params(
+                    stage_i,
+                    num_blocks,
+                    num_major_stages,
+                    state_size,
+                    0,
+                    arrival_state_offset,
+                );
                 self.encode_dispatch(
                     cb,
                     num_blocks,
@@ -584,7 +598,14 @@ impl MetalSimulator {
                 flash_din_params_buffer,
             );
             for stage_i in 0..num_major_stages {
-                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, arrival_state_offset);
+                self.write_params(
+                    stage_i,
+                    num_blocks,
+                    num_major_stages,
+                    state_size,
+                    0,
+                    arrival_state_offset,
+                );
                 self.encode_dispatch(
                     cb,
                     num_blocks,
@@ -653,8 +674,12 @@ impl MetalSimulator {
         timing_constraints_buffer: Option<&metal::Buffer>,
     ) {
         // Use schedule position 0 for profiling (all patterns have same kernel cost)
-        let (ref fall_prep_params_buffer, ref fall_ops_buffer, ref rise_prep_params_buffer, ref rise_ops_buffer) =
-            schedule_buffers.tick_buffers[0];
+        let (
+            ref fall_prep_params_buffer,
+            ref fall_ops_buffer,
+            ref rise_prep_params_buffer,
+            ref rise_ops_buffer,
+        ) = schedule_buffers.tick_buffers[0];
         #[inline]
         fn gpu_times(cb: &metal::CommandBufferRef) -> (f64, f64) {
             unsafe {
@@ -1282,8 +1307,14 @@ pub(crate) fn build_gpio_mapping(
         );
     }
 
-    let total_posedge: usize = clock_domains.iter().map(|d| d.posedge_flag_bits.len()).sum();
-    let total_negedge: usize = clock_domains.iter().map(|d| d.negedge_flag_bits.len()).sum();
+    let total_posedge: usize = clock_domains
+        .iter()
+        .map(|d| d.posedge_flag_bits.len())
+        .sum();
+    let total_negedge: usize = clock_domains
+        .iter()
+        .map(|d| d.negedge_flag_bits.len())
+        .sum();
     clilog::info!(
         "GPIO mapping: {} inputs, {} outputs, {} clock domains ({} posedge flags, {} negedge flags)",
         input_bits.len(),
@@ -2568,13 +2599,18 @@ pub fn run_cosim(
         "No clock domains matched from config. Ensure clock_gpio matches a clock input \
          in the netlist. Config clock_gpio={}, available domains: {:?}",
         config.clock_gpio,
-        gpio_map.clock_domains.iter().map(|d| &d.name).collect::<Vec<_>>()
+        gpio_map
+            .clock_domains
+            .iter()
+            .map(|d| &d.name)
+            .collect::<Vec<_>>()
     );
     {
         for (i, clk_cfg) in effective_clocks.iter().enumerate() {
-            if let Some(timing) = clock_timings.iter().find(|t| {
-                gpio_map.clock_domains[t.domain_index].clock_gpio == Some(clk_cfg.gpio)
-            }) {
+            if let Some(timing) = clock_timings
+                .iter()
+                .find(|t| gpio_map.clock_domains[t.domain_index].clock_gpio == Some(clk_cfg.gpio))
+            {
                 let domain = &gpio_map.clock_domains[timing.domain_index];
                 clilog::info!(
                     "Clock '{}' (gpio {}, period {}ps, phase {}ps) → domain '{}' \
@@ -2863,7 +2899,14 @@ pub fn run_cosim(
 
     // Pre-write params for all simulation stages (they don't change between ticks)
     for stage_i in 0..num_major_stages {
-        simulator.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, arrival_state_offset);
+        simulator.write_params(
+            stage_i,
+            num_blocks,
+            num_major_stages,
+            state_size,
+            0,
+            arrival_state_offset,
+        );
     }
 
     clilog::finish!(timer_prep);
@@ -2916,8 +2959,13 @@ pub fn run_cosim(
         crate::sim::vcd_io::StimulusVCDMapping,
         Vec<u8>, // prev_values for change detection
     )> = if let Some(ref stim_path) = opts.stimulus_vcd {
-        let file = std::fs::File::create(stim_path)
-            .unwrap_or_else(|e| panic!("Failed to create stimulus VCD {}: {}", stim_path.display(), e));
+        let file = std::fs::File::create(stim_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to create stimulus VCD {}: {}",
+                stim_path.display(),
+                e
+            )
+        });
         let bufwriter = std::io::BufWriter::new(file);
         let mut writer = vcd_ng::Writer::new(bufwriter);
         let mapping = crate::sim::vcd_io::setup_stimulus_vcd(
@@ -2949,16 +2997,17 @@ pub fn run_cosim(
         crate::sim::vcd_io::OutputVCDMapping,
         Vec<u32>, // prev_values for change detection (0=V0, 1=V1, 2=initial)
     )> = if let Some(ref timing_path) = opts.timing_vcd {
-        let file = std::fs::File::create(timing_path)
-            .unwrap_or_else(|e| panic!("Failed to create timing VCD {}: {}", timing_path.display(), e));
+        let file = std::fs::File::create(timing_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to create timing VCD {}: {}",
+                timing_path.display(),
+                e
+            )
+        });
         let bufwriter = std::io::BufWriter::new(file);
         let mut writer = vcd_ng::Writer::new(bufwriter);
-        let mapping = crate::sim::vcd_io::setup_cosim_output_vcd(
-            &mut writer,
-            netlistdb,
-            aig,
-            script,
-        );
+        let mapping =
+            crate::sim::vcd_io::setup_cosim_output_vcd(&mut writer, netlistdb, aig, script);
         let prev_values = vec![2u32; mapping.out2vcd.len()]; // 2 = initial sentinel
         clilog::info!(
             "Timing VCD enabled: {} output signals → {}",
@@ -2996,7 +3045,11 @@ pub fn run_cosim(
         for (&cellid, dff) in aig.dffs.iter() {
             if let Some(&pos) = script.input_map.get(&dff.q) {
                 let name = format!("{}", netlistdb.cellnames[cellid]);
-                entries.push(DffDumpEntry { cellid, q_pos: pos, name });
+                entries.push(DffDumpEntry {
+                    cellid,
+                    q_pos: pos,
+                    name,
+                });
             }
         }
         entries.sort_by_key(|e| e.cellid);
@@ -3004,12 +3057,21 @@ pub fn run_cosim(
         // Write header
         writeln!(writer, "# DFF State Dump").unwrap();
         writeln!(writer, "# Total DFFs: {}", entries.len()).unwrap();
-        writeln!(writer, "# Format: CYCLE <n> hash=<hex> ones=<count>/<total>").unwrap();
+        writeln!(
+            writer,
+            "# Format: CYCLE <n> hash=<hex> ones=<count>/<total>"
+        )
+        .unwrap();
         writeln!(writer, "# Then: <dff_name> <0|1>").unwrap();
         writeln!(writer, "#").unwrap();
         writeln!(writer, "# DFF index mapping:").unwrap();
         for (i, e) in entries.iter().enumerate() {
-            writeln!(writer, "# DFF[{}] pos={} cell={} name={}", i, e.q_pos, e.cellid, e.name).unwrap();
+            writeln!(
+                writer,
+                "# DFF[{}] pos={} cell={} name={}",
+                i, e.q_pos, e.cellid, e.name
+            )
+            .unwrap();
         }
         writeln!(writer, "#").unwrap();
 
@@ -3116,7 +3178,8 @@ pub fn run_cosim(
 
     let mut tick: usize = 0;
     while tick < max_ticks {
-        let dff_dump_active = dff_dump_state.as_ref()
+        let dff_dump_active = dff_dump_state
+            .as_ref()
             .map_or(false, |(_, _, max)| tick < reset_cycles + *max);
         let batch = if opts.check_with_cpu && tick < cpu_check_max_ticks {
             1 // single tick for CPU comparison
@@ -3242,10 +3305,7 @@ pub fn run_cosim(
         // ── Write stimulus VCD entries (falling + rising edge per tick) ──
         if let Some((ref mut writer, ref mapping, ref mut prev_values)) = stimulus_vcd_state {
             let input_state: &[u32] = unsafe {
-                std::slice::from_raw_parts(
-                    states_buffer.contents() as *const u32,
-                    state_size,
-                )
+                std::slice::from_raw_parts(states_buffer.contents() as *const u32, state_size)
             };
             let half_period = mapping.clock_period_ps / 2;
             let t_fall = tick as u64 * mapping.clock_period_ps;
@@ -3321,9 +3381,7 @@ pub fn run_cosim(
                         assert!(output_aigpin <= 1);
                         output_aigpin as u32
                     }
-                    pos => {
-                        (output_state[(pos >> 5) as usize] >> (pos & 31)) & 1
-                    }
+                    pos => (output_state[(pos >> 5) as usize] >> (pos & 31)) & 1,
                 };
 
                 if value_new == prev_values[i] {
@@ -3376,10 +3434,7 @@ pub fn run_cosim(
         if dff_dump_active && tick >= reset_cycles {
             use std::io::Write;
             let input_state: &[u32] = unsafe {
-                std::slice::from_raw_parts(
-                    states_buffer.contents() as *const u32,
-                    state_size,
-                )
+                std::slice::from_raw_parts(states_buffer.contents() as *const u32, state_size)
             };
             let output_state_dff: &[u32] = unsafe {
                 std::slice::from_raw_parts(
@@ -3400,10 +3455,14 @@ pub fn run_cosim(
                     let bit = e.q_pos & 31;
                     let in_val = if word < input_state.len() {
                         ((input_state[word] >> bit) & 1) as u8
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     let out_val = if word < output_state_dff.len() {
                         ((output_state_dff[word] >> bit) & 1) as u8
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     if in_val != 0 {
                         in_ones += 1;
                         in_hash = in_hash
@@ -3430,10 +3489,14 @@ pub fn run_cosim(
                     let bit = e.q_pos & 31;
                     let in_val = if word < input_state.len() {
                         ((input_state[word] >> bit) & 1) as u8
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     let out_val = if word < output_state_dff.len() {
                         ((output_state_dff[word] >> bit) & 1) as u8
-                    } else { 0 };
+                    } else {
+                        0
+                    };
                     let marker = if in_val != out_val { " *" } else { "" };
                     writeln!(writer, "{} in={} out={}{}", e.name, in_val, out_val, marker).unwrap();
                 }

@@ -195,7 +195,7 @@ pub fn build_staged_aigs(aig: &AIG, level_split: &[usize]) -> Vec<(usize, usize,
         let cur_split = level_split[i];
         let last_split = match i {
             0 => 0,
-            i @ _ => level_split[i - 1],
+            i => level_split[i - 1],
         };
         let staged = StagedAIG::from_split(
             aig,
@@ -206,7 +206,7 @@ pub fn build_staged_aigs(aig: &AIG, level_split: &[usize]) -> Vec<(usize, usize,
         for &endpt in &staged.endpoints {
             assert!(unrealized_orig_endpoints.swap_remove(&endpt));
         }
-        let primary_inputs = primary_inputs.get_or_insert_with(|| Default::default());
+        let primary_inputs = primary_inputs.get_or_insert_with(Default::default);
         for &inp in &staged.primary_output_pins {
             primary_inputs.insert(inp);
         }
@@ -219,7 +219,7 @@ pub fn build_staged_aigs(aig: &AIG, level_split: &[usize]) -> Vec<(usize, usize,
 
     let last_split = match level_split.len() {
         0 => 0,
-        i @ _ => level_split[i - 1],
+        i => level_split[i - 1],
     };
     ret.push((
         last_split,

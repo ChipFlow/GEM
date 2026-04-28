@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Partition scheduler and flattener
 
+#![allow(
+    clippy::doc_overindented_list_items,
+    clippy::doc_lazy_continuation,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::needless_range_loop
+)]
+
 use crate::aig::{DriverType, EndpointGroup, AIG};
 use crate::aigpdk::AIGPDK_SRAM_ADDR_WIDTH;
 use crate::liberty_parser::TimingLibrary;
@@ -385,13 +393,11 @@ impl FlatteningPart {
             .stages
             .iter()
             .zip(afters.iter())
-            .map(|(s, after)| {
+            .flat_map(|(s, after)| {
                 s.write_outs
                     .iter()
-                    .map(|&woi| after[woi * 32..(woi + 1) * 32].iter().copied())
-                    .flatten()
+                    .flat_map(|&woi| after[woi * 32..(woi + 1) * 32].iter().copied())
             })
-            .flatten()
             .collect::<Vec<_>>();
 
         // println!("test wos: {:?}", wos);
@@ -464,12 +470,11 @@ impl FlatteningPart {
                 }
             }
         }
-        self.num_duplicate_writeouts = ((comb_outputs_activations
+        self.num_duplicate_writeouts = comb_outputs_activations
             .values()
             .map(|v| v.len() - 1)
             .sum::<usize>()
-            + 31)
-            / 32) as u32;
+            .div_ceil(32) as u32;
         self.comb_outputs_activations = comb_outputs_activations;
 
         self.num_writeouts =
@@ -754,7 +759,7 @@ impl FlatteningPart {
         }
         assert_eq!(cur_sram_id, self.num_srams);
         assert_eq!(
-            (self.cnt_placed_duplicate_permute + 31) / 32,
+            self.cnt_placed_duplicate_permute.div_ceil(32),
             self.num_duplicate_writeouts
         );
 
@@ -851,7 +856,7 @@ impl FlatteningPart {
         let outputpos2localpos = rounds_idx_masks
             .iter()
             .enumerate()
-            .map(|(local_i, v)| {
+            .flat_map(|(local_i, v)| {
                 let mut local_op2lp = Vec::with_capacity(32);
                 let mut bit_id = 0;
                 for &(idx, mask) in v.iter().rev() {
@@ -869,7 +874,6 @@ impl FlatteningPart {
                 assert!(bit_id <= 32);
                 local_op2lp.into_iter()
             })
-            .flatten()
             .collect::<IndexMap<_, _>>();
         // println!("output2localpos: {:?}", outputpos2localpos);
 
@@ -1068,7 +1072,7 @@ fn build_flattened_script_v1(
     // Reserve a guaranteed-zero bit position for constant-D DFFs.
     // This must be in the padding area of the primary input words (never written to).
     let const_zero_pos = input_layout.len() as u32;
-    let mut states_start = ((input_layout.len() + 31) / 32) as u32;
+    let mut states_start = input_layout.len().div_ceil(32) as u32;
     if const_zero_pos == states_start * 32 {
         // No padding bits available, add one extra word for constant pool
         states_start += 1;
@@ -1094,9 +1098,9 @@ fn build_flattened_script_v1(
     let mut stages_flattening_parts = Vec::new();
 
     for (i, (init_parts, &staged)) in parts_in_stages
-        .into_iter()
+        .iter()
         .copied()
-        .zip(stageds.into_iter())
+        .zip(stageds.iter())
         .enumerate()
     {
         // first arrange parts onto blocks.
@@ -1173,7 +1177,7 @@ fn build_flattened_script_v1(
     for ((blocks_parts, flattening_parts), init_parts) in stages_blocks_parts
         .iter()
         .zip(stages_flattening_parts.iter_mut())
-        .zip(parts_in_stages.into_iter().copied())
+        .zip(parts_in_stages.iter().copied())
     {
         // build script per part in parallel. we will later assemble them to blocks.
         let parts_results: Vec<(Vec<u32>, Vec<(usize, Vec<usize>)>)> = flattening_parts
@@ -1820,8 +1824,7 @@ impl FlattenedScriptV1 {
                 }
             }
             // If most lookups fail but stripping a prefix works, apply globally
-            if sample_misses > sample_hits && common_prefix.is_some() {
-                let prefix = common_prefix.unwrap();
+            if let Some(prefix) = common_prefix.filter(|_| sample_misses > sample_hits) {
                 let prefix_dot = format!("{}.", prefix);
                 clilog::info!(
                     "SDF hierarchy prefix mismatch detected: stripping '{}' from {} cell paths",
@@ -2096,8 +2099,7 @@ impl FlattenedScriptV1 {
                     }
                 }
             }
-            if sample_misses > sample_hits && common_prefix.is_some() {
-                let prefix = common_prefix.unwrap();
+            if let Some(prefix) = common_prefix.filter(|_| sample_misses > sample_hits) {
                 let prefix_slash = format!("{}/", prefix);
                 clilog::info!(
                     "IR hierarchy prefix mismatch detected: stripping '{}' from {} cell paths",
@@ -2316,7 +2318,7 @@ impl FlattenedScriptV1 {
 /// to u64 ps. Used by `load_timing_from_ir`.
 fn ir_corner0_max(values: Option<timing_ir::Vector<'_, timing_ir::TimingValue>>) -> u64 {
     if let Some(v) = values {
-        if v.len() > 0 {
+        if !v.is_empty() {
             let m = v.get(0).max();
             if m > 0.0 {
                 return m.round() as u64;

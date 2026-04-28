@@ -105,6 +105,11 @@ impl EventBuffer {
         self.count.load(Ordering::Acquire) as usize
     }
 
+    /// Returns true if the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Check if any events were dropped due to overflow.
     pub fn had_overflow(&self) -> bool {
         self.overflow.load(Ordering::Acquire) != 0

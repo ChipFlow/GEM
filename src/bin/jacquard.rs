@@ -293,9 +293,10 @@ fn cmd_sim(args: SimArgs) {
     // Parse input VCD
     let input_vcd = std::fs::File::open(&args.input_vcd).unwrap();
     let mut bufrd = std::io::BufReader::with_capacity(65536, input_vcd);
-    let mut vcd_parser = vcd_ng::Parser::new(&mut bufrd);
-    let header = vcd_parser.parse_header().unwrap();
-    drop(vcd_parser);
+    let header = {
+        let mut vcd_parser = vcd_ng::Parser::new(&mut bufrd);
+        vcd_parser.parse_header().unwrap()
+    };
     use std::io::{Seek, SeekFrom};
     let mut vcd_file = bufrd.into_inner();
     vcd_file.seek(SeekFrom::Start(0)).unwrap();

@@ -5,6 +5,8 @@
 //! This is the canonical reference implementation of the Boolean processor,
 //! used for validation against GPU results (`--check-with-cpu`).
 
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+
 use crate::aigpdk::AIGPDK_SRAM_SIZE;
 
 /// CPU prototype partition executor for script version 1.
@@ -172,8 +174,8 @@ pub fn simulate_block_v1(
                 for k_inner in 0..4 {
                     let k = k_outer * 4 + k_inner;
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
-                    let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u32;
-                    let t_shuffle_2_idx = (t_shuffle >> 16) as u32;
+                    let t_shuffle_1_idx = t_shuffle & ((1 << 16) - 1);
+                    let t_shuffle_2_idx = t_shuffle >> 16;
                     sram_duplicate_perm[i as usize] |=
                         (writeouts[(t_shuffle_1_idx >> 5) as usize] >> (t_shuffle_1_idx & 31) & 1)
                             << (k * 2);
@@ -236,8 +238,8 @@ pub fn simulate_block_v1(
                 for k_inner in 0..4 {
                     let k = k_outer * 4 + k_inner;
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
-                    let t_shuffle_1_idx = (t_shuffle & ((1 << 16) - 1)) as u32;
-                    let t_shuffle_2_idx = (t_shuffle >> 16) as u32;
+                    let t_shuffle_1_idx = t_shuffle & ((1 << 16) - 1);
+                    let t_shuffle_2_idx = t_shuffle >> 16;
                     clken_perm[i as usize] |= (writeouts_for_clken
                         [(t_shuffle_1_idx >> 5) as usize]
                         >> (t_shuffle_1_idx & 31)
@@ -362,10 +364,7 @@ pub fn simulate_block_v1_xprop(
                     continue;
                 }
                 let (value, xmask_val) = match (idx >> 31) != 0 {
-                    false => (
-                        input_state[idx as usize],
-                        input_xmask[idx as usize],
-                    ),
+                    false => (input_state[idx as usize], input_xmask[idx as usize]),
                     true => (
                         output_state[(idx ^ (1 << 31)) as usize],
                         output_xmask[(idx ^ (1 << 31)) as usize],
@@ -405,12 +404,10 @@ pub fn simulate_block_v1_xprop(
                         let t_shuffle = script[script_pi + i * 4 + k_inner];
                         let idx1 = (t_shuffle & ((1 << 16) - 1)) as u16;
                         let idx2 = (t_shuffle >> 16) as u16;
-                        hier_v[i] |=
-                            (state_v[(idx1 >> 5) as usize] >> (idx1 & 31) & 1) << (k * 2);
+                        hier_v[i] |= (state_v[(idx1 >> 5) as usize] >> (idx1 & 31) & 1) << (k * 2);
                         hier_v[i] |=
                             (state_v[(idx2 >> 5) as usize] >> (idx2 & 31) & 1) << (k * 2 + 1);
-                        hier_x[i] |=
-                            (state_x[(idx1 >> 5) as usize] >> (idx1 & 31) & 1) << (k * 2);
+                        hier_x[i] |= (state_x[(idx1 >> 5) as usize] >> (idx1 & 31) & 1) << (k * 2);
                         hier_x[i] |=
                             (state_x[(idx2 >> 5) as usize] >> (idx2 & 31) & 1) << (k * 2 + 1);
                     }
@@ -483,19 +480,54 @@ pub fn simulate_block_v1_xprop(
             }
 
             let (r8_v, r8_x) = xprop_and_shift!(
-                v1_v << 16, v1_x << 16, v1_v, v1_x, xora, xorb, orb, 0xffff0000u32
+                v1_v << 16,
+                v1_x << 16,
+                v1_v,
+                v1_x,
+                xora,
+                xorb,
+                orb,
+                0xffff0000u32
             );
             let (r9_v, r9_x) = xprop_and_shift!(
-                r8_v >> 8, r8_x >> 8, r8_v >> 16, r8_x >> 16, xora, xorb, orb, 0xff00u32
+                r8_v >> 8,
+                r8_x >> 8,
+                r8_v >> 16,
+                r8_x >> 16,
+                xora,
+                xorb,
+                orb,
+                0xff00u32
             );
             let (r10_v, r10_x) = xprop_and_shift!(
-                r9_v >> 4, r9_x >> 4, r9_v >> 8, r9_x >> 8, xora, xorb, orb, 0xf0u32
+                r9_v >> 4,
+                r9_x >> 4,
+                r9_v >> 8,
+                r9_x >> 8,
+                xora,
+                xorb,
+                orb,
+                0xf0u32
             );
             let (r11_v, r11_x) = xprop_and_shift!(
-                r10_v >> 2, r10_x >> 2, r10_v >> 4, r10_x >> 4, xora, xorb, orb, 0b1100u32
+                r10_v >> 2,
+                r10_x >> 2,
+                r10_v >> 4,
+                r10_x >> 4,
+                xora,
+                xorb,
+                orb,
+                0b1100u32
             );
             let (r12_v, r12_x) = xprop_and_shift!(
-                r11_v >> 1, r11_x >> 1, r11_v >> 2, r11_x >> 2, xora, xorb, orb, 0b10u32
+                r11_v >> 1,
+                r11_x >> 1,
+                r11_v >> 2,
+                r11_x >> 2,
+                xora,
+                xorb,
+                orb,
+                0b10u32
             );
 
             hier_v[0] = r8_v | r9_v | r10_v | r11_v | r12_v;
@@ -522,8 +554,8 @@ pub fn simulate_block_v1_xprop(
                 for k_inner in 0..4 {
                     let k = k_outer * 4 + k_inner;
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
-                    let idx1 = (t_shuffle & ((1 << 16) - 1)) as u32;
-                    let idx2 = (t_shuffle >> 16) as u32;
+                    let idx1 = t_shuffle & ((1 << 16) - 1);
+                    let idx2 = t_shuffle >> 16;
                     sram_dup_v[i as usize] |=
                         (writeouts_v[(idx1 >> 5) as usize] >> (idx1 & 31) & 1) << (k * 2);
                     sram_dup_v[i as usize] |=
@@ -541,7 +573,7 @@ pub fn simulate_block_v1_xprop(
             let inv = script[script_pi + i * 4];
             // set0 clears bits → known zero (clears X too)
             sram_dup_v[i] = (sram_dup_v[i] & !set0) ^ inv;
-            sram_dup_x[i] = sram_dup_x[i] & !set0;
+            sram_dup_x[i] &= !set0;
         }
         script_pi += 256 * 4;
 
@@ -590,8 +622,8 @@ pub fn simulate_block_v1_xprop(
                 for k_inner in 0..4 {
                     let k = k_outer * 4 + k_inner;
                     let t_shuffle = script[script_pi + (i * 4 + k_inner) as usize];
-                    let idx1 = (t_shuffle & ((1 << 16) - 1)) as u32;
-                    let idx2 = (t_shuffle >> 16) as u32;
+                    let idx1 = t_shuffle & ((1 << 16) - 1);
+                    let idx2 = t_shuffle >> 16;
                     clken_v[i as usize] |=
                         (wo_v_for_clken[(idx1 >> 5) as usize] >> (idx1 & 31) & 1) << (k * 2);
                     clken_v[i as usize] |=
@@ -609,7 +641,7 @@ pub fn simulate_block_v1_xprop(
             let inv = script[script_pi + i * 4];
             let data_inv = script[script_pi + i * 4 + 2];
             clken_v[i] = (clken_v[i] & !set0) ^ inv;
-            clken_x[i] = clken_x[i] & !set0;
+            clken_x[i] &= !set0;
             writeouts_v[i] ^= data_inv;
             // data_inv doesn't affect X-mask (inversion preserves X)
         }
@@ -663,16 +695,12 @@ pub fn sanity_check_cpu_xprop(
         let mut output_state = vec![0u32; state_size];
         let mut output_xmask = vec![0u32; state_size];
         output_state.copy_from_slice(&cpu_states[((i + 1) * state_size)..((i + 2) * state_size)]);
-        output_xmask.copy_from_slice(
-            &cpu_xmasks[((i + 1) * state_size)..((i + 2) * state_size)],
-        );
+        output_xmask.copy_from_slice(&cpu_xmasks[((i + 1) * state_size)..((i + 2) * state_size)]);
 
         for stage_i in 0..script.num_major_stages {
             for blk_i in 0..script.num_blocks {
-                let blk_start =
-                    script.blocks_start[stage_i * script.num_blocks + blk_i];
-                let blk_end =
-                    script.blocks_start[stage_i * script.num_blocks + blk_i + 1];
+                let blk_start = script.blocks_start[stage_i * script.num_blocks + blk_i];
+                let blk_end = script.blocks_start[stage_i * script.num_blocks + blk_i + 1];
                 simulate_block_v1_xprop(
                     &script.blocks_data[blk_start..blk_end],
                     &cpu_states[(i * state_size)..((i + 1) * state_size)],
@@ -686,10 +714,8 @@ pub fn sanity_check_cpu_xprop(
             }
         }
 
-        cpu_states[((i + 1) * state_size)..((i + 2) * state_size)]
-            .copy_from_slice(&output_state);
-        cpu_xmasks[((i + 1) * state_size)..((i + 2) * state_size)]
-            .copy_from_slice(&output_xmask);
+        cpu_states[((i + 1) * state_size)..((i + 2) * state_size)].copy_from_slice(&output_state);
+        cpu_xmasks[((i + 1) * state_size)..((i + 2) * state_size)].copy_from_slice(&output_xmask);
 
         // Compare value lane
         if output_state != gpu_states[((i + 1) * state_size)..((i + 2) * state_size)] {
@@ -765,14 +791,19 @@ pub fn sanity_check_cpu(
 
 #[cfg(test)]
 mod xprop_tests {
+    #![allow(clippy::identity_op, clippy::erasing_op)]
     use super::*;
 
     /// X-prop AND formula extracted for direct testing.
     /// Returns (result_value, result_xmask).
     fn xprop_and(
-        a_v: u32, a_x: u32,
-        b_v: u32, b_x: u32,
-        xora: u32, xorb: u32, orb: u32,
+        a_v: u32,
+        a_x: u32,
+        b_v: u32,
+        b_x: u32,
+        xora: u32,
+        xorb: u32,
+        orb: u32,
     ) -> (u32, u32) {
         let a_eff = a_v ^ xora;
         let b_eff = (b_v ^ xorb) | orb;
@@ -803,7 +834,7 @@ mod xprop_tests {
     #[test]
     fn test_xprop_and_x_and_x() {
         // X & X = X
-        let (v, x) = xprop_and(0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0, 0, 0);
+        let (_v, x) = xprop_and(0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0, 0, 0);
         assert_eq!(x, 0xFFFFFFFF, "X & X should be X");
     }
 
@@ -825,7 +856,7 @@ mod xprop_tests {
         // orb=0xFFFFFFFF forces b_eff=all-1, so output = a_eff.
         // Also b_eff_x = b_x & !orb = 0, so X only from a_x.
         // With a_x = 0xFFFFFFFF → output should be X
-        let (v, x) = xprop_and(0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0, 0, 0xFFFFFFFF);
+        let (_v, x) = xprop_and(0, 0xFFFFFFFF, 0, 0xFFFFFFFF, 0, 0, 0xFFFFFFFF);
         assert_eq!(x, 0xFFFFFFFF, "orb passthrough should preserve a_x");
 
         // With a known, orb forces b=1 → output = a_eff (known)
@@ -839,8 +870,12 @@ mod xprop_tests {
         // xora inverts a before AND. With a_v=0, xora=0xFFFF → a_eff=0xFFFF
         // b_v=0, b_x=0xFFFF → X on b
         // So: 1 & X = X (for lower 16 bits)
-        let (v, x) = xprop_and(0, 0, 0, 0xFFFF, 0xFFFF, 0, 0);
-        assert_eq!(x & 0xFFFF, 0xFFFF, "inverted known-1 & X should propagate X");
+        let (_v, x) = xprop_and(0, 0, 0, 0xFFFF, 0xFFFF, 0, 0);
+        assert_eq!(
+            x & 0xFFFF,
+            0xFFFF,
+            "inverted known-1 & X should propagate X"
+        );
     }
 
     #[test]
@@ -886,9 +921,7 @@ mod xprop_tests {
         let clken: u32 = 0xFFFFFFFF;
         let clken_x: u32 = 0;
         let wo_v = (old_v & !clken) | (new_v & clken);
-        let wo_x = (old_x & !clken & !clken_x)
-            | (new_x & clken & !clken_x)
-            | clken_x;
+        let wo_x = (old_x & !clken & !clken_x) | (new_x & clken & !clken_x) | clken_x;
         assert_eq!(wo_v, new_v, "captures new value");
         assert_eq!(wo_x, new_x, "captures new X-mask");
 
@@ -896,19 +929,15 @@ mod xprop_tests {
         let clken: u32 = 0;
         let clken_x: u32 = 0;
         let wo_v = (old_v & !clken) | (new_v & clken);
-        let wo_x = (old_x & !clken & !clken_x)
-            | (new_x & clken & !clken_x)
-            | clken_x;
+        let wo_x = (old_x & !clken & !clken_x) | (new_x & clken & !clken_x) | clken_x;
         assert_eq!(wo_v, old_v, "retains old value");
         assert_eq!(wo_x, old_x, "retains old X-mask");
 
         // Case 3: clken X → output is X (conservative)
         let clken: u32 = 0;
         let clken_x: u32 = 0xFFFFFFFF;
-        let wo_v = (old_v & !clken) | (new_v & clken);
-        let wo_x = (old_x & !clken & !clken_x)
-            | (new_x & clken & !clken_x)
-            | clken_x;
+        let _wo_v = (old_v & !clken) | (new_v & clken);
+        let wo_x = (old_x & !clken & !clken_x) | (new_x & clken & !clken_x) | clken_x;
         assert_eq!(wo_x, 0xFFFFFFFF, "X clken makes everything X");
     }
 
@@ -922,7 +951,10 @@ mod xprop_tests {
 
         // Reading any address returns X
         let addr = 42;
-        assert_eq!(sram_xmask[addr], 0xFFFFFFFF, "SRAM read should be X before any write");
+        assert_eq!(
+            sram_xmask[addr], 0xFFFFFFFF,
+            "SRAM read should be X before any write"
+        );
         assert_eq!(sram_data[addr], 0, "SRAM data is 0 (but X-masked)");
     }
 
@@ -1023,7 +1055,7 @@ mod xprop_tests {
         // making the AND result = a_eff = hier[0].
         // Flag layout: script[pi + i*4] = xora, script[pi + i*4 + 1] = xorb, script[pi + i*4 + 2] = orb
         script[pi + 128 * 4 + 2] = 0xFFFFFFFF; // orb for thread 128 → passthrough
-        // For hier[1..7]: similar passthrough
+                                               // For hier[1..7]: similar passthrough
         for hi in 1..=7 {
             let hw = 1 << (7 - hi);
             // The tree node at [hw..2*hw] uses flags at [hw..2*hw]
@@ -1047,8 +1079,8 @@ mod xprop_tests {
         // inv = script[pi_flags + i*4 + 0]
         pi += 4096; // skip shuffle rounds
         script[pi] = 0xFFFFFFFF; // inv for IO word 0 → clken = 0xFFFFFFFF
-        // set0 = script[pi + i*4 + 1] = 0 (don't clear any bits)
-        // data_inv = script[pi + i*4 + 2] = 0 (don't invert writeout data)
+                                 // set0 = script[pi + i*4 + 1] = 0 (don't clear any bits)
+                                 // data_inv = script[pi + i*4 + 2] = 0 (don't invert writeout data)
         pi += 1024;
 
         // --- Dummy end partition (256 words) ---
@@ -1064,7 +1096,7 @@ mod xprop_tests {
         let num_ios = 4u32;
         let script = build_minimal_xprop_script(true, num_ios);
 
-        let state_size = (num_ios * 2) as usize; // value + X-mask
+        let _state_size = (num_ios * 2) as usize; // value + X-mask
         let mut input_state = vec![0u32; num_ios as usize];
         let mut output_state = vec![0u32; num_ios as usize];
         let mut input_xmask = vec![0u32; num_ios as usize];
@@ -1124,7 +1156,10 @@ mod xprop_tests {
 
         // X should propagate through (the bit-level reduction tree shifts bits,
         // so X won't necessarily be at bit 0, but output_xmask should be non-zero)
-        assert_ne!(output_xmask[0], 0, "X should propagate through passthrough kernel");
+        assert_ne!(
+            output_xmask[0], 0,
+            "X should propagate through passthrough kernel"
+        );
     }
 
     #[test]
@@ -1136,7 +1171,7 @@ mod xprop_tests {
         let mut input_state = vec![0u32; num_ios as usize];
         let mut output_state_xprop = vec![0u32; num_ios as usize];
         let mut output_state_std = vec![0u32; num_ios as usize];
-        let mut input_xmask = vec![0u32; num_ios as usize];
+        let input_xmask = vec![0u32; num_ios as usize];
         let mut output_xmask = vec![0u32; num_ios as usize];
 
         input_state[0] = 0xAB;
