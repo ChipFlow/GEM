@@ -1,0 +1,24 @@
+[package]
+name = "opensta-to-ir"
+version = "0.1.0"
+edition = "2021"
+description = "Preprocessing tool that drives OpenSTA and emits Jacquard timing IR. See docs/plans/ws2-opensta-to-ir.md and docs/adr/0006-sdf-preprocessing-model.md."
+license = "Apache-2.0"
+repository = "https://github.com/chipflow/Jacquard"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "opensta-to-ir"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+flatbuffers = "25"
+tempfile = "3"
+timing-ir = { path = "../timing-ir" }
+
+[dev-dependencies]
+tempfile = "3"

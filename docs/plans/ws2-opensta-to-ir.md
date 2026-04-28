@@ -28,7 +28,9 @@ Three components, single binary:
             └──────────────────── one process invocation ───────────────────────┘
 ```
 
-The Rust CLI invokes OpenSTA as a subprocess, feeds it the Tcl script via stdin (or `-f script.tcl`), captures the dump from a temporary file, and converts to IR.
+The Rust CLI invokes OpenSTA as a subprocess, writes the Tcl driver script to a temp directory, runs `sta -f $tmpdir/dump.tcl`, captures the dump file, and converts to IR. The Tcl driver lives at `crates/opensta-to-ir/tcl/dump_timing.tcl` and is embedded in the binary via `include_str!()` so the binary is self-contained at runtime — no separate Tcl file needs to ship alongside it.
+
+OpenSTA is located via `scripts/build-opensta.sh --print-binary` first (the canonical install path for the vendored submodule), then falling back to a `PATH` lookup, then `--opensta-bin <PATH>` override.
 
 Reasons for this shape:
 
@@ -76,7 +78,8 @@ Output:
   --json <PATH>                 Optional. JSON sidecar via flatc round-trip.
 
 Behaviour:
-  --opensta-bin <PATH>          Override the OpenSTA executable path. Default: PATH lookup.
+  --opensta-bin <PATH>          Override the OpenSTA executable path. Default: probe via
+                                `scripts/build-opensta.sh --print-binary`, then fall back to PATH.
   --keep-tmp                    Keep the Tcl script and dump file in $TMPDIR for debugging.
   --min-arcs <N>                Fail if fewer than N timing arcs are emitted. Default: 1.
   --allow-empty-parse           Disable the --min-arcs check. For test fixtures only.
@@ -144,7 +147,7 @@ Implementation:
 ### Test types
 
 - **Unit tests (Rust)**: dump-format parser tested against synthetic dump strings (no OpenSTA needed).
-- **Integration tests (Rust + OpenSTA)**: invoke the binary against committed fixtures, diff the resulting IR against golden IR via `timing-ir-diff`. Marked `#[ignore]` and only run when OpenSTA is on PATH.
+- **Integration tests (Rust + OpenSTA)**: invoke the binary against committed fixtures, diff the resulting IR against golden IR via `timing-ir-diff`. Each integration test gates itself on `scripts/build-opensta.sh --print-binary` succeeding — when the OpenSTA binary is unbuilt, tests skip with a clear "run scripts/build-opensta.sh" message rather than failing. CI runs them after building OpenSTA via the script.
 - **Failure-mode tests**: missing OpenSTA, malformed Tcl dump, zero-arc input, missing required argument — each surfaces the expected exit code.
 
 ### CI integration (closes WS4 remaining work)

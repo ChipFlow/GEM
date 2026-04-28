@@ -1,0 +1,167 @@
+//! Build a timing-IR FlatBuffers document from parsed dump records.
+//!
+//! Phase 0 WS2 (Phase 2.1) wires up corners and timing arcs only. Other
+//! record kinds are present in the parser and counted here, but their IR
+//! emission lands in Phase 2.2 / 2.3.
+
+use flatbuffers::{FlatBufferBuilder, WIPOffset};
+use timing_ir as ir;
+
+use crate::dump::{ArcRecord, CornerRecord, DumpDocument, DumpRecord, Origin};
+
+/// Counts of records seen during build, useful for the WS5
+/// `--min-arcs` parser-success assertion in the binary.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BuildStats {
+    pub corners: usize,
+    pub arcs: usize,
+    pub interconnects: usize,
+    pub setup_hold_checks: usize,
+    pub vendor_extensions: usize,
+}
+
+/// Build a finished IR buffer from a parsed dump document.
+///
+/// `generator_version` is the `opensta-to-ir` crate version (typically
+/// `env!("CARGO_PKG_VERSION")` from the binary's `main.rs`).
+pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildStats) {
+    let mut b = FlatBufferBuilder::with_capacity(4096);
+    let mut stats = BuildStats::default();
+
+    let corner_records: Vec<&CornerRecord> = doc
+        .records
+        .iter()
+        .filter_map(|r| match r {
+            DumpRecord::Corner(c) => Some(c),
+            _ => None,
+        })
+        .collect();
+    stats.corners = corner_records.len();
+
+    let mut corner_offsets = Vec::with_capacity(corner_records.len());
+    for c in &corner_records {
+        let name = b.create_string(&c.name);
+        let process = b.create_string(&c.process);
+        corner_offsets.push(ir::Corner::create(
+            &mut b,
+            &ir::CornerArgs {
+                name: Some(name),
+                process: Some(process),
+                voltage: c.voltage as f32,
+                temperature: c.temperature as f32,
+            },
+        ));
+    }
+    let corners_vec = b.create_vector(&corner_offsets);
+
+    let mut arc_offsets = Vec::new();
+    for record in &doc.records {
+        match record {
+            DumpRecord::Arc(arc) => {
+                arc_offsets.push(build_arc(&mut b, arc));
+                stats.arcs += 1;
+            }
+            DumpRecord::Interconnect(_) => stats.interconnects += 1,
+            DumpRecord::SetupHold(_) => stats.setup_hold_checks += 1,
+            DumpRecord::VendorExt(_) => stats.vendor_extensions += 1,
+            DumpRecord::Corner(_) => {} // already handled
+        }
+    }
+    let arcs_vec = b.create_vector(&arc_offsets);
+
+    // Empty vectors for kinds Phase 2.1 doesn't yet emit. The IR schema
+    // requires these tables to exist; populating them is Phase 2.2 / 2.3
+    // work. For now they are present but empty.
+    let interconnect_vec = b.create_vector::<WIPOffset<ir::InterconnectDelay>>(&[]);
+    let setup_hold_vec = b.create_vector::<WIPOffset<ir::SetupHoldCheck>>(&[]);
+    let vendor_ext_vec = b.create_vector::<WIPOffset<ir::VendorExtension>>(&[]);
+
+    let generator_tool = b.create_string(&format!("opensta-to-ir {generator_version}"));
+    let generator_version_str = b.create_string(generator_version);
+    let input_file_strs: Vec<_> = doc
+        .header
+        .input_files
+        .iter()
+        .map(|s| b.create_string(s))
+        .collect();
+    let input_files_vec = b.create_vector(&input_file_strs);
+
+    let schema_version =
+        ir::SchemaVersion::new(ir::SCHEMA_MAJOR, ir::SCHEMA_MINOR, ir::SCHEMA_PATCH);
+
+    let root = ir::TimingIR::create(
+        &mut b,
+        &ir::TimingIRArgs {
+            schema_version: Some(&schema_version),
+            corners: Some(corners_vec),
+            timing_arcs: Some(arcs_vec),
+            interconnect_delays: Some(interconnect_vec),
+            setup_hold_checks: Some(setup_hold_vec),
+            vendor_extensions: Some(vendor_ext_vec),
+            generator_tool: Some(generator_tool),
+            generator_version: Some(generator_version_str),
+            input_files: Some(input_files_vec),
+        },
+    );
+    ir::finish_timing_ir_buffer(&mut b, root);
+
+    (b.finished_data().to_vec(), stats)
+}
+
+fn build_arc<'a>(b: &mut FlatBufferBuilder<'a>, arc: &ArcRecord) -> WIPOffset<ir::TimingArc<'a>> {
+    let cell_instance = b.create_string(&arc.cell_instance);
+    let driver_pin = b.create_string(&arc.driver_pin);
+    let load_pin = b.create_string(&arc.load_pin);
+    let condition = b.create_string(&arc.condition);
+
+    let rise = [ir::TimingValue::new(
+        arc.corner_index,
+        arc.rise_min,
+        arc.rise_typ,
+        arc.rise_max,
+    )];
+    let fall = [ir::TimingValue::new(
+        arc.corner_index,
+        arc.fall_min,
+        arc.fall_typ,
+        arc.fall_max,
+    )];
+    let rise_vec = b.create_vector(&rise);
+    let fall_vec = b.create_vector(&fall);
+
+    let provenance = build_provenance(b, arc.origin);
+
+    ir::TimingArc::create(
+        b,
+        &ir::TimingArcArgs {
+            cell_instance: Some(cell_instance),
+            driver_pin: Some(driver_pin),
+            load_pin: Some(load_pin),
+            rise_delay: Some(rise_vec),
+            fall_delay: Some(fall_vec),
+            condition: Some(condition),
+            provenance: Some(provenance),
+        },
+    )
+}
+
+fn build_provenance<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    origin: Origin,
+) -> WIPOffset<ir::Provenance<'a>> {
+    let source_tool = b.create_string("opensta-to-ir");
+    let source_file = b.create_string("");
+    let ir_origin = match origin {
+        Origin::Asserted => ir::Origin::Asserted,
+        Origin::Computed => ir::Origin::Computed,
+        Origin::Defaulted => ir::Origin::Defaulted,
+    };
+    ir::Provenance::create(
+        b,
+        &ir::ProvenanceArgs {
+            source_tool: Some(source_tool),
+            source_file: Some(source_file),
+            origin: ir_origin,
+        },
+    )
+}
