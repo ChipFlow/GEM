@@ -13,6 +13,7 @@ indexmap = { version = "2.4.0", features = ["rayon"] }
 itertools = "0.13.0"
 mt-kahypar = "0.2.0"
 netlistdb = { version = "0.4.6", path = "vendor/eda-infra-rs/netlistdb" }
+opensta-to-ir = { path = "crates/opensta-to-ir" }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = "1.10.0"

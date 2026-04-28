@@ -173,17 +173,21 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
             args.sdf_debug,
         );
     } else if let Some(ref sdf_path) = args.sdf {
-        // Legacy hand-rolled SDF parser path. WS3 phase 3.3 retargets this
-        // to subprocess `opensta-to-ir` and feed the resulting IR through
-        // `load_timing_ir`. Phase 3.4 deletes the hand-rolled parser entirely.
-        load_sdf(
+        // INTERIM per ADR 0006: --sdf no longer uses the hand-rolled
+        // parser. Subprocess `opensta-to-ir` to convert SDF→IR, then
+        // consume the IR. The hand-rolled `load_sdf` function survives
+        // for callers that haven't yet migrated (cosim_metal.rs); Phase
+        // 3.4 deletes both the function and its only remaining caller.
+        load_sdf_via_opensta_to_ir(
             &mut script,
             &aig,
             &netlistdb,
             sdf_path,
-            &args.sdf_corner,
-            args.sdf_debug,
+            &args.netlist_verilog,
+            args.liberty.as_deref(),
+            args.top_module.as_deref(),
             args.clock_period_ps,
+            args.sdf_debug,
         );
     }
 
@@ -250,6 +254,103 @@ pub fn load_sdf(
         }
         Err(e) => clilog::warn!("Failed to load SDF: {}", e),
     }
+}
+
+/// Convert SDF → IR via `opensta-to-ir` (subprocesses OpenSTA), then
+/// consume the IR through `load_timing_from_ir`.
+///
+/// INTERIM per ADR 0006: this is the bridge that lets the existing
+/// `--sdf` CLI flag keep working without the hand-rolled SDF parser.
+/// Pre-release only; a native Rust SDF→IR converter replaces this path
+/// before first release.
+///
+/// Requires Liberty + Verilog (OpenSTA links the design from these).
+/// Without Liberty, no fallback exists in this code path — emit a
+/// clear warning and skip the SDF.
+#[allow(clippy::too_many_arguments)]
+pub fn load_sdf_via_opensta_to_ir(
+    script: &mut FlattenedScriptV1,
+    aig: &AIG,
+    netlistdb: &NetlistDB,
+    sdf_path: &Path,
+    verilog_path: &Path,
+    liberty_path: Option<&Path>,
+    top_module: Option<&str>,
+    clock_period_ps: Option<u64>,
+    debug: bool,
+) {
+    let Some(liberty_path) = liberty_path else {
+        clilog::warn!(
+            "--sdf without --liberty is not supported during the WS3 interim. \
+             Provide --liberty <PATH> or pre-convert the SDF with `opensta-to-ir` and use --timing-ir."
+        );
+        return;
+    };
+
+    let clock_ps = clock_period_ps.unwrap_or(25000);
+
+    let binary = match opensta_to_ir::opensta::find_opensta(None) {
+        Some(p) => p,
+        None => {
+            clilog::warn!("OpenSTA not built; cannot process --sdf. Run scripts/build-opensta.sh.");
+            return;
+        }
+    };
+
+    let top = top_module.unwrap_or_else(|| {
+        verilog_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("top")
+    });
+
+    let liberty_paths = vec![liberty_path.to_path_buf()];
+    let verilog_paths = vec![verilog_path.to_path_buf()];
+    let invocation = opensta_to_ir::opensta::Invocation {
+        liberty: &liberty_paths,
+        verilog: &verilog_paths,
+        sdf: Some(sdf_path),
+        spef: None,
+        sdc: None,
+        top,
+        generator_version: env!("CARGO_PKG_VERSION"),
+    };
+
+    clilog::info!(
+        "Loading SDF via opensta-to-ir (INTERIM): {:?} (clock_period={}ps)",
+        sdf_path,
+        clock_ps
+    );
+
+    let doc = match opensta_to_ir::opensta::run(&binary, &invocation, false, false) {
+        Ok(d) => d,
+        Err(e) => {
+            clilog::warn!("opensta-to-ir failed: {}", e);
+            return;
+        }
+    };
+
+    let (ir_buf, _stats) = opensta_to_ir::builder::build_ir(&doc, env!("CARGO_PKG_VERSION"));
+    let ir_file = match crate::sim::timing_ir_loader::TimingIrFile::from_bytes(ir_buf) {
+        Ok(f) => f,
+        Err(e) => {
+            clilog::warn!("Built IR is invalid: {}", e);
+            return;
+        }
+    };
+
+    let liberty_fallback = crate::liberty_parser::TimingLibrary::from_file(liberty_path).ok();
+
+    let ir = ir_file.view();
+    script.load_timing_from_ir(
+        aig,
+        netlistdb,
+        &ir,
+        clock_ps,
+        liberty_fallback.as_ref(),
+        debug,
+    );
+    script.inject_timing_to_script();
 }
 
 /// Load a Jacquard timing-IR (.jtir) file into a script.
