@@ -86,15 +86,16 @@ fn cli_min_arcs_failure_exit_3() {
 }
 
 #[test]
-fn cli_without_from_dump_errors() {
+fn cli_without_required_args_errors() {
     let dir = TempDir::new().unwrap();
     let out_path = dir.path().join("out.jtir");
+    // No --liberty / --verilog / --top; OpenSTA path requires all three.
     let status = Command::new(bin())
         .arg("--output")
         .arg(&out_path)
         .output()
         .expect("run binary");
-    assert_eq!(status.status.code(), Some(1));
+    assert_eq!(status.status.code(), Some(4));
     let stderr = String::from_utf8_lossy(&status.stderr);
-    assert!(stderr.contains("not yet implemented"), "stderr: {stderr}");
+    assert!(stderr.contains("--liberty"), "stderr: {stderr}");
 }

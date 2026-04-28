@@ -1,11 +1,10 @@
 //! `opensta-to-ir` CLI binary.
 //!
-//! Phase 0 WS2 (Phase 2.1): the OpenSTA subprocess invocation is not yet
-//! wired up. The `--from-dump` escape hatch reads a pre-generated dump
-//! file (the format the Tcl driver will produce) and exercises the
-//! dump → IR pipeline end-to-end. The escape hatch is genuinely useful
-//! beyond Phase 2.1 — fixture-driven workflows can regenerate golden IR
-//! from a saved dump without re-running OpenSTA.
+//! Phase 0 WS2 (Phase 2.1-followup-A): subprocess plumbing is wired but
+//! the embedded Tcl driver currently emits a stub dump (header + default
+//! corner + `# end`). Real timing-arc extraction is the next slice. The
+//! `--from-dump` flag remains as a fixture-driven workflow that
+//! regenerates IR from a saved dump without re-running OpenSTA.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -76,6 +75,14 @@ struct Args {
     /// Disable the --min-arcs check. For test fixtures only.
     #[arg(long = "allow-empty-parse", default_value_t = false)]
     allow_empty_parse: bool,
+
+    /// Keep the OpenSTA temp directory after the run for debugging.
+    #[arg(long = "keep-tmp", default_value_t = false)]
+    keep_tmp: bool,
+
+    /// Echo OpenSTA's stdout/stderr to ours.
+    #[arg(short = 'v', long = "verbose", default_value_t = false)]
+    verbose: bool,
 }
 
 fn main() -> ExitCode {
@@ -90,21 +97,15 @@ fn main() -> ExitCode {
 }
 
 fn run(args: &Args) -> Result<u8, (u8, String)> {
-    let dump_text = match &args.from_dump {
-        Some(path) => std::fs::read_to_string(path)
-            .map_err(|e| (EXIT_ARG_INVALID, format!("reading {}: {e}", path.display())))?,
-        None => {
-            return Err((
-                EXIT_OPENSTA_FAILED,
-                "OpenSTA subprocess invocation is not yet implemented in Phase 2.1; \
-                 pass --from-dump <PATH> to test the dump→IR pipeline."
-                    .to_string(),
-            ));
+    let doc = match &args.from_dump {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| (EXIT_ARG_INVALID, format!("reading {}: {e}", path.display())))?;
+            opensta_to_ir::dump::parse_dump(&text)
+                .map_err(|e| (EXIT_BUILD_FAILED, format!("parsing dump: {e}")))?
         }
+        None => run_opensta(args)?,
     };
-
-    let doc = opensta_to_ir::dump::parse_dump(&dump_text)
-        .map_err(|e| (EXIT_BUILD_FAILED, format!("parsing dump: {e}")))?;
 
     let (buf, stats) = opensta_to_ir::builder::build_ir(&doc, env!("CARGO_PKG_VERSION"));
 
@@ -133,4 +134,43 @@ fn run(args: &Args) -> Result<u8, (u8, String)> {
         stats.arcs
     );
     Ok(EXIT_OK)
+}
+
+fn run_opensta(args: &Args) -> Result<opensta_to_ir::dump::DumpDocument, (u8, String)> {
+    if args.liberty.is_empty() {
+        return Err((
+            EXIT_ARG_INVALID,
+            "at least one --liberty is required".into(),
+        ));
+    }
+    if args.verilog.is_empty() {
+        return Err((
+            EXIT_ARG_INVALID,
+            "at least one --verilog is required".into(),
+        ));
+    }
+    let top = args
+        .top
+        .as_deref()
+        .ok_or_else(|| (EXIT_ARG_INVALID, "--top <NAME> is required".to_string()))?;
+
+    let binary =
+        opensta_to_ir::opensta::find_opensta(args.opensta_bin.as_deref()).ok_or_else(|| {
+            (
+                EXIT_OPENSTA_FAILED,
+                opensta_to_ir::opensta::InvokeError::BinaryNotFound.to_string(),
+            )
+        })?;
+
+    let invocation = opensta_to_ir::opensta::Invocation {
+        liberty: &args.liberty,
+        verilog: &args.verilog,
+        sdf: args.sdf.as_deref(),
+        spef: args.spef.as_deref(),
+        sdc: args.sdc.as_deref(),
+        top,
+        generator_version: env!("CARGO_PKG_VERSION"),
+    };
+    opensta_to_ir::opensta::run(&binary, &invocation, args.keep_tmp, args.verbose)
+        .map_err(|e| (EXIT_OPENSTA_FAILED, e.to_string()))
 }
