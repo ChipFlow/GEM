@@ -67,6 +67,8 @@ Deliverables:
 
 Per ADR 0006, Jacquard's hand-rolled SDF parser is deleted in Phase 0 rather than maintained through later phases. The runtime gains a new IR input path; the old SDF input path becomes an interim convenience wrapper over WS2.
 
+Detailed design and phased implementation: [`ws3-delete-sdf-parser.md`](ws3-delete-sdf-parser.md).
+
 Deliverables:
 
 - Delete `src/sdf_parser.rs` and the SDF→Jacquard-internal-types code path. Remove all direct consumers.

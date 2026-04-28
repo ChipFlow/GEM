@@ -159,15 +159,15 @@ Implementation:
 
 Splitting WS2 into focused PRs keeps reviewability tight. Each phase exits with a runnable end-to-end on its scope:
 
-| Phase | Scope | Exit signal |
-|---|---|---|
-| 2.1 | Single-corner, timing-arc IOPATHs only. CLI scaffolding. | `inv_chain_pnr` round-trips through `opensta-to-ir` → `timing-ir-diff` clean. |
-| 2.2 | Add interconnect delays. | MCU SoC subset round-trips. |
-| 2.3 | Add setup/hold checks. | DFFs in MCU SoC produce correct setup/hold IR. |
-| 2.4 | Multi-corner. | 3-corner synthetic fixture produces 3-corner IR. |
-| 2.5 | WS5 `--min-arcs` + `--allow-empty-parse`. CI corpus integration. | WS4 corpus job in CI; WS2 task complete. |
+| Phase | Scope | Exit signal | Status |
+|---|---|---|---|
+| 2.1 | Single-corner, timing-arc IOPATHs only. CLI scaffolding. | AIGPDK AND2 round-trip clean through `opensta-to-ir` end-to-end. | ✅ landed (50b8600). `inv_chain_pnr` golden-IR check deferred to 2.5 (needs SKY130 .lib availability). |
+| 2.2 | Add interconnect delays (`wire`-role edges, with optional SPEF). | Multi-cell design produces INTERCONNECT records that round-trip. | ⏳ pending. |
+| 2.3 | Add setup/hold checks. | DFF setup/hold round-trips end-to-end. | 🟡 minimum landed (8343b14): AIGPDK DFF emits both rising and falling SETUP_HOLD. Recovery / removal / width checks remain unimplemented; conditional setup/hold (COND) not exercised. |
+| 2.4 | Multi-corner. | 3-corner synthetic fixture produces 3-corner IR. | ⏳ pending. |
+| 2.5 | CI corpus integration; golden-IR fixtures for representative designs. | WS4 corpus job in CI; WS2 task complete. | ⏳ pending; depends on SKY130 .lib availability for `inv_chain_pnr`. |
 
-WS3 (delete `src/sdf_parser.rs` + wire interim runtime hook) can begin once Phase 2.1 lands, in parallel with 2.2–2.5.
+WS3 (delete `src/sdf_parser.rs` + wire interim runtime hook) can begin once Phase 2.1 lands, in parallel with 2.2–2.5. With 2.1 + 2.3-minimum landed (delay arcs + setup/hold checks), the IR has the must-have content for the runtime cutover; multi-corner and interconnects would refine the result without blocking it.
 
 ## Open questions
 
