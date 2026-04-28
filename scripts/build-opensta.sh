@@ -174,7 +174,23 @@ suggest_install() {
 
 log "configuring OpenSTA in ${BUILD_DIR}"
 mkdir -p "${BUILD_DIR}"
-if ! cmake -S "${SUBMODULE_PATH}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release; then
+
+# On macOS, Apple ships an old flex without FlexLexer.h and an old bison.
+# Homebrew's keg-only formulas live under their own prefixes; CMake's
+# default search paths miss them. Hand-feed CMake the homebrew paths.
+EXTRA_CMAKE_ARGS=()
+if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+    if FLEX_PREFIX="$(brew --prefix flex 2>/dev/null)"; then
+        EXTRA_CMAKE_ARGS+=("-DFLEX_INCLUDE_DIR=${FLEX_PREFIX}/include")
+        EXTRA_CMAKE_ARGS+=("-DFLEX_EXECUTABLE=${FLEX_PREFIX}/bin/flex")
+    fi
+    if BISON_PREFIX="$(brew --prefix bison 2>/dev/null)"; then
+        EXTRA_CMAKE_ARGS+=("-DBISON_EXECUTABLE=${BISON_PREFIX}/bin/bison")
+    fi
+fi
+
+if ! cmake -S "${SUBMODULE_PATH}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
+    "${EXTRA_CMAKE_ARGS[@]}"; then
     err "cmake configure failed"
     suggest_install
     exit 5
