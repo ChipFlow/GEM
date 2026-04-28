@@ -171,7 +171,7 @@ WS3 (delete `src/sdf_parser.rs` + wire interim runtime hook) can begin once Phas
 Items not pinned by this design; resolve during implementation or in follow-up:
 
 - **OpenSTA version pinning**: which range do we support? Initially target the submodule pin (`f361dd65`) only; widen with empirical evidence. Documented in the binary's `--help`.
-- **OpenSTA installation**: contributors must have OpenSTA installed (built from `vendor/opensta/` or `brew install opensta`). Document in the root README and crate README. Build-from-source instructions go in `docs/dev/build-opensta.md` if the install story turns out to be non-trivial.
+- **OpenSTA installation**: contributors run `scripts/build-opensta.sh` once (idempotent; `--force` to rebuild). The script initialises the `vendor/opensta/` submodule if needed, checks build prerequisites, and invokes CMake. Brewfile-based dependency install is required first on macOS (`brew bundle --file vendor/opensta/Brewfile`); Linux contributors follow `vendor/opensta/Dockerfile.ubuntu22.04`. The script prints the binary path on success; `--print-binary` is the dependency probe for tests and CI.
 - **Long-running designs**: real SoC SDFs can have hundreds of thousands of arcs. Investigate streaming the dump (Tcl flushing line-by-line, Rust reading the FIFO incrementally) if memory becomes an issue. Defer until profiling shows it matters.
 - **Errors during Tcl execution**: how aggressively do we surface OpenSTA's `error` vs `warning` messages? Current plan: capture all stderr, replay on failure, otherwise quiet. `--strict-tcl` upgrades warnings to errors.
 - **Tcl-script versioning**: the dump format header has `# format-version: 1`. Bump on breaking changes; binary refuses unknown versions.

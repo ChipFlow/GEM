@@ -43,8 +43,9 @@ Next steps:
 |---|---|---|---|
 | `flatc` | regenerating timing-IR bindings when editing `crates/timing-ir/schemas/timing_ir.fbs` | `brew install flatbuffers` | `apt install flatbuffers-compiler` |
 | `mdbook` | building docs locally | `brew install mdbook` | `cargo install mdbook` |
+| OpenSTA | building the vendored `vendor/opensta/` for use by `opensta-to-ir` and the timing-correctness CI corpus | `brew bundle --file vendor/opensta/Brewfile` then run `scripts/build-opensta.sh` | see `vendor/opensta/Dockerfile.ubuntu22.04`, then run `scripts/build-opensta.sh` |
 
-Contributors editing only Rust / C++ / kernel sources do not need `flatc`; the generated bindings are checked in.
+Contributors editing only Rust / C++ / kernel sources do not need `flatc` or OpenSTA; the IR bindings are checked in and the OpenSTA build is only required when running the timing-correctness regression corpus.
 
 ## Quick Start
 
