@@ -20,6 +20,14 @@ module tiny(A, B, Y);
 endmodule
 "#;
 
+const DFF_VERILOG: &str = r#"
+module dff_test(CLK, D, Q);
+  input CLK, D;
+  output Q;
+  DFF d1 (.CLK(CLK), .D(D), .Q(Q));
+endmodule
+"#;
+
 fn bin() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_opensta-to-ir"))
 }
@@ -96,4 +104,62 @@ fn aigpdk_and2_emits_two_arcs() {
         assert!(r.max() < 5.0, "arc {} rise_max {} too large", i, r.max());
         assert!(r.max() > 0.0, "arc {} rise_max should be non-zero", i);
     }
+}
+
+#[test]
+fn aigpdk_dff_emits_setup_hold_records() {
+    let Some(_sta) = find_opensta(None) else {
+        eprintln!("skipping: OpenSTA not built; run scripts/build-opensta.sh");
+        return;
+    };
+
+    let dir = TempDir::new().unwrap();
+    let v_path = dir.path().join("dff.v");
+    let out_path = dir.path().join("dff.jtir");
+    std::fs::write(&v_path, DFF_VERILOG).unwrap();
+
+    let lib = aigpdk_lib();
+    let output = Command::new(bin())
+        .arg("--liberty")
+        .arg(&lib)
+        .arg("--verilog")
+        .arg(&v_path)
+        .arg("--top")
+        .arg("dff_test")
+        .arg("--output")
+        .arg(&out_path)
+        .output()
+        .expect("run opensta-to-ir");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    let buf = std::fs::read(&out_path).expect("output IR written");
+    let ir = root_as_timing_ir(&buf).expect("readable IR");
+
+    // Expect at least one CLK→Q delay arc.
+    let arcs = ir.timing_arcs().expect("arcs vector present");
+    assert!(!arcs.is_empty(), "expected CLK→Q arc, got 0");
+
+    // Setup/hold checks for the DFF — AIGPDK Liberty defines both rising
+    // and falling, so we expect 2 records keyed by edge.
+    let checks = ir.setup_hold_checks().expect("setup_hold vector present");
+    assert!(
+        !checks.is_empty(),
+        "expected at least one SETUP_HOLD record, got 0"
+    );
+
+    let c0 = checks.get(0);
+    assert_eq!(c0.cell_instance(), Some("d1"));
+    assert_eq!(c0.d_pin(), Some("D"));
+    assert_eq!(c0.clk_pin(), Some("CLK"));
+    let setup = c0.setup().expect("setup values");
+    assert_eq!(setup.len(), 1, "single corner");
+    let hold = c0.hold().expect("hold values");
+    assert_eq!(hold.len(), 1, "single corner");
 }

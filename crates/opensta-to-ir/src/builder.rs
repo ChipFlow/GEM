@@ -1,13 +1,15 @@
 //! Build a timing-IR FlatBuffers document from parsed dump records.
 //!
-//! Phase 0 WS2 (Phase 2.1) wires up corners and timing arcs only. Other
-//! record kinds are present in the parser and counted here, but their IR
-//! emission lands in Phase 2.2 / 2.3.
+//! Phase 0 WS2 (Phase 2.3) wires up corners, timing arcs, and setup/hold
+//! checks. Interconnect delays and vendor extensions are present in the
+//! parser and counted here, but their IR emission lands in later slices.
 
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use timing_ir as ir;
 
-use crate::dump::{ArcRecord, CornerRecord, DumpDocument, DumpRecord, Origin};
+use crate::dump::{
+    ArcRecord, CornerRecord, DumpDocument, DumpRecord, Edge, Origin, SetupHoldRecord,
+};
 
 /// Counts of records seen during build, useful for the WS5
 /// `--min-arcs` parser-success assertion in the binary.
@@ -55,25 +57,28 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
     let corners_vec = b.create_vector(&corner_offsets);
 
     let mut arc_offsets = Vec::new();
+    let mut setup_hold_offsets = Vec::new();
     for record in &doc.records {
         match record {
             DumpRecord::Arc(arc) => {
                 arc_offsets.push(build_arc(&mut b, arc));
                 stats.arcs += 1;
             }
+            DumpRecord::SetupHold(check) => {
+                setup_hold_offsets.push(build_setup_hold(&mut b, check));
+                stats.setup_hold_checks += 1;
+            }
             DumpRecord::Interconnect(_) => stats.interconnects += 1,
-            DumpRecord::SetupHold(_) => stats.setup_hold_checks += 1,
             DumpRecord::VendorExt(_) => stats.vendor_extensions += 1,
             DumpRecord::Corner(_) => {} // already handled
         }
     }
     let arcs_vec = b.create_vector(&arc_offsets);
+    let setup_hold_vec = b.create_vector(&setup_hold_offsets);
 
-    // Empty vectors for kinds Phase 2.1 doesn't yet emit. The IR schema
-    // requires these tables to exist; populating them is Phase 2.2 / 2.3
-    // work. For now they are present but empty.
+    // Empty vectors for record kinds not yet wired. Interconnect and
+    // vendor extensions land in later slices.
     let interconnect_vec = b.create_vector::<WIPOffset<ir::InterconnectDelay>>(&[]);
-    let setup_hold_vec = b.create_vector::<WIPOffset<ir::SetupHoldCheck>>(&[]);
     let vendor_ext_vec = b.create_vector::<WIPOffset<ir::VendorExtension>>(&[]);
 
     let generator_tool = b.create_string(&format!("opensta-to-ir {generator_version}"));
@@ -139,6 +144,52 @@ fn build_arc<'a>(b: &mut FlatBufferBuilder<'a>, arc: &ArcRecord) -> WIPOffset<ir
             load_pin: Some(load_pin),
             rise_delay: Some(rise_vec),
             fall_delay: Some(fall_vec),
+            condition: Some(condition),
+            provenance: Some(provenance),
+        },
+    )
+}
+
+fn build_setup_hold<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    check: &SetupHoldRecord,
+) -> WIPOffset<ir::SetupHoldCheck<'a>> {
+    let cell_instance = b.create_string(&check.cell_instance);
+    let d_pin = b.create_string(&check.d_pin);
+    let clk_pin = b.create_string(&check.clk_pin);
+    let condition = b.create_string(&check.condition);
+
+    let setup = [ir::TimingValue::new(
+        check.corner_index,
+        check.setup_min,
+        check.setup_typ,
+        check.setup_max,
+    )];
+    let hold = [ir::TimingValue::new(
+        check.corner_index,
+        check.hold_min,
+        check.hold_typ,
+        check.hold_max,
+    )];
+    let setup_vec = b.create_vector(&setup);
+    let hold_vec = b.create_vector(&hold);
+
+    let provenance = build_provenance(b, check.origin);
+
+    let edge = match check.edge {
+        Edge::Posedge => ir::CheckEdge::Posedge,
+        Edge::Negedge => ir::CheckEdge::Negedge,
+    };
+
+    ir::SetupHoldCheck::create(
+        b,
+        &ir::SetupHoldCheckArgs {
+            cell_instance: Some(cell_instance),
+            d_pin: Some(d_pin),
+            clk_pin: Some(clk_pin),
+            edge,
+            setup: Some(setup_vec),
+            hold: Some(hold_vec),
             condition: Some(condition),
             provenance: Some(provenance),
         },
