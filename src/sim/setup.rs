@@ -33,6 +33,8 @@ pub struct DesignArgs {
     pub xprop: bool,
     /// Path to Liberty library file for timing data (pre-layout, no SDF needed).
     pub liberty: Option<PathBuf>,
+    /// Path to a Jacquard timing-IR (.jtir) file. Mutually exclusive with `sdf`.
+    pub timing_ir: Option<PathBuf>,
 }
 
 /// Result of loading a design: everything needed for simulation.
@@ -159,8 +161,21 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
         );
     }
 
-    // Load SDF timing data if provided
-    if let Some(ref sdf_path) = args.sdf {
+    // Load timing IR if provided (preferred path, per docs/adr/0006-sdf-preprocessing-model.md).
+    if let Some(ref ir_path) = args.timing_ir {
+        load_timing_ir(
+            &mut script,
+            &aig,
+            &netlistdb,
+            ir_path,
+            args.clock_period_ps,
+            args.liberty.as_deref(),
+            args.sdf_debug,
+        );
+    } else if let Some(ref sdf_path) = args.sdf {
+        // Legacy hand-rolled SDF parser path. WS3 phase 3.3 retargets this
+        // to subprocess `opensta-to-ir` and feed the resulting IR through
+        // `load_timing_ir`. Phase 3.4 deletes the hand-rolled parser entirely.
         load_sdf(
             &mut script,
             &aig,
@@ -172,12 +187,11 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
         );
     }
 
-    // Load Liberty-only timing if provided and no SDF
-    if args.sdf.is_none() {
+    // Load Liberty-only timing if provided and no SDF/IR
+    if args.sdf.is_none() && args.timing_ir.is_none() {
         if let Some(ref lib_path) = args.liberty {
             use crate::liberty_parser::TimingLibrary;
-            let lib = TimingLibrary::from_file(lib_path)
-                .expect("Failed to load Liberty library");
+            let lib = TimingLibrary::from_file(lib_path).expect("Failed to load Liberty library");
             let clock_ps = args.clock_period_ps.unwrap_or(25000);
             clilog::info!(
                 "Loading Liberty timing: {:?} (clock_period={}ps)",
@@ -236,6 +250,56 @@ pub fn load_sdf(
         }
         Err(e) => clilog::warn!("Failed to load SDF: {}", e),
     }
+}
+
+/// Load a Jacquard timing-IR (.jtir) file into a script.
+///
+/// Mirrors `load_sdf` but consumes the IR via `TimingIrFile`. Optionally
+/// uses a Liberty library as fallback for cells absent from the IR.
+pub fn load_timing_ir(
+    script: &mut FlattenedScriptV1,
+    aig: &AIG,
+    netlistdb: &NetlistDB,
+    ir_path: &Path,
+    clock_period_ps: Option<u64>,
+    liberty_fallback_path: Option<&Path>,
+    debug: bool,
+) {
+    let clock_ps = clock_period_ps.unwrap_or(25000);
+    clilog::info!(
+        "Loading timing IR: {:?} (clock_period={}ps)",
+        ir_path,
+        clock_ps
+    );
+
+    let ir_file = match crate::sim::timing_ir_loader::TimingIrFile::from_path(ir_path) {
+        Ok(f) => f,
+        Err(e) => {
+            clilog::warn!("Failed to load timing IR: {}", e);
+            return;
+        }
+    };
+
+    let liberty_fallback = liberty_fallback_path.and_then(|p| {
+        match crate::liberty_parser::TimingLibrary::from_file(p) {
+            Ok(lib) => Some(lib),
+            Err(e) => {
+                clilog::warn!("Liberty fallback unavailable: {}", e);
+                None
+            }
+        }
+    });
+
+    let ir = ir_file.view();
+    script.load_timing_from_ir(
+        aig,
+        netlistdb,
+        &ir,
+        clock_ps,
+        liberty_fallback.as_ref(),
+        debug,
+    );
+    script.inject_timing_to_script();
 }
 
 /// Build timing constraint buffer for GPU-side setup/hold checking.

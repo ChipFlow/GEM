@@ -8,7 +8,10 @@ use clap::{Parser, Subcommand};
 use jacquard::sim::setup::DesignArgs;
 
 #[derive(Parser)]
-#[command(name = "jacquard", about = "Jacquard — GPU-accelerated RTL logic simulator")]
+#[command(
+    name = "jacquard",
+    about = "Jacquard — GPU-accelerated RTL logic simulator"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -84,7 +87,7 @@ struct SimArgs {
     json_path: Option<PathBuf>,
 
     /// Path to SDF file for per-instance back-annotated delays.
-    #[clap(long)]
+    #[clap(long, conflicts_with = "timing_ir")]
     sdf: Option<PathBuf>,
 
     /// SDF corner selection: min, typ, or max.
@@ -94,6 +97,11 @@ struct SimArgs {
     /// Enable SDF debug output.
     #[clap(long)]
     sdf_debug: bool,
+
+    /// Path to a Jacquard timing-IR (.jtir) file. Generate with the
+    /// `opensta-to-ir` preprocessing tool. Mutually exclusive with `--sdf`.
+    #[clap(long)]
+    timing_ir: Option<PathBuf>,
 
     /// Enable selective X-propagation.
     ///
@@ -170,7 +178,7 @@ struct CosimArgs {
     gpu_profile: bool,
 
     /// Path to SDF file for per-instance back-annotated delays.
-    #[clap(long)]
+    #[clap(long, conflicts_with = "timing_ir")]
     sdf: Option<PathBuf>,
 
     /// SDF corner selection: min, typ, or max.
@@ -180,6 +188,11 @@ struct CosimArgs {
     /// Enable SDF debug output.
     #[clap(long)]
     sdf_debug: bool,
+
+    /// Path to a Jacquard timing-IR (.jtir) file. Generate with the
+    /// `opensta-to-ir` preprocessing tool. Mutually exclusive with `--sdf`.
+    #[clap(long)]
+    timing_ir: Option<PathBuf>,
 
     /// Path to write stimulus VCD (all primary inputs driven by cosim).
     /// Forces single-tick mode for accurate per-cycle capture.
@@ -226,12 +239,17 @@ struct DumpPathsArgs {
     clock_period: u64,
 
     /// Path to SDF file for per-instance back-annotated delays.
-    #[clap(long)]
+    #[clap(long, conflicts_with = "timing_ir")]
     sdf: Option<PathBuf>,
 
     /// SDF corner selection: min, typ, or max.
     #[clap(long, default_value = "typ")]
     sdf_corner: String,
+
+    /// Path to a Jacquard timing-IR (.jtir) file. Generate with the
+    /// `opensta-to-ir` preprocessing tool. Mutually exclusive with `--sdf`.
+    #[clap(long)]
+    timing_ir: Option<PathBuf>,
 
     /// Number of critical paths to dump (default: 5).
     #[clap(long, default_value = "5")]
@@ -255,6 +273,7 @@ fn cmd_sim(args: SimArgs) {
         clock_period_ps: None,
         xprop: args.xprop,
         liberty: args.liberty.clone(),
+        timing_ir: args.timing_ir.clone(),
     };
 
     #[allow(unused_mut)]
@@ -436,8 +455,11 @@ fn cmd_sim(args: SimArgs) {
         let arrival_states = vcd_io::split_arrival_states(&gpu_states[..], &design.script);
         // Debug: show arrival statistics
         let nonzero_count = arrival_states.iter().filter(|&&v| v != 0).count();
-        clilog::info!("Arrival states: {} total, {} non-zero",
-            arrival_states.len(), nonzero_count);
+        clilog::info!(
+            "Arrival states: {} total, {} non-zero",
+            arrival_states.len(),
+            nonzero_count
+        );
         let xmask_states = if design.script.xprop_enabled {
             let eff = design.script.effective_state_size() as usize;
             let num_snapshots = gpu_states.len() / eff;
@@ -561,7 +583,8 @@ fn sim_metal(
     };
     // When timing arrivals are enabled, expand further to include arrival section
     if script.timing_arrivals_enabled {
-        expanded_states = jacquard::sim::vcd_io::expand_states_for_arrivals(&expanded_states, script);
+        expanded_states =
+            jacquard::sim::vcd_io::expand_states_for_arrivals(&expanded_states, script);
     }
     let mut input_states_uvec: UVec<_> = expanded_states.into();
     input_states_uvec.as_mut_uptr(device);
@@ -1291,6 +1314,7 @@ fn cmd_dump_paths(args: DumpPathsArgs) {
         clock_period_ps: Some(args.clock_period),
         xprop: false,
         liberty: args.liberty.clone(),
+        timing_ir: args.timing_ir.clone(),
     };
 
     let mut design = setup::load_design(&design_args);
@@ -1388,6 +1412,7 @@ fn cmd_cosim(args: CosimArgs) {
             clock_period_ps,
             xprop: false, // cosim doesn't support xprop yet
             liberty: None,
+            timing_ir: args.timing_ir.clone(),
         };
 
         let mut design = setup::load_design(&design_args);
