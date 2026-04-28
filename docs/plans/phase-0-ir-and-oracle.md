@@ -53,6 +53,8 @@ Scope guard: if you find yourself adding fields that represent computed timing g
 
 Per ADR 0006, `opensta-to-ir` is a shipped preprocessing tool, not merely a validation helper. Post-release it remains as an alternative preprocessing path for users who want OpenSTA-computed timing.
 
+Detailed design and phased implementation: [`ws2-opensta-to-ir.md`](ws2-opensta-to-ir.md).
+
 Deliverables:
 
 - A Tcl script runnable by OpenSTA that loads Liberty + Verilog + SDF + (optionally) SPEF + SDC, then emits a machine-readable dump of timing annotations.
