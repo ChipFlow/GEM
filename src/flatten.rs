@@ -213,7 +213,6 @@ pub struct FlattenedScriptV1 {
     pub delay_patch_map: Vec<(usize, Vec<usize>)>,
 
     // === X-Propagation Fields ===
-
     /// Whether X-propagation is enabled for this design.
     /// When true, the state buffer is doubled (value + X-mask) and
     /// X-capable partitions use dual-lane computation.
@@ -231,7 +230,6 @@ pub struct FlattenedScriptV1 {
     pub xprop_state_offset: u32,
 
     // === Timing Arrival Readback Fields ===
-
     /// Whether timing arrival readback is enabled for timed VCD output.
     /// When true, the state buffer includes an arrival section and the GPU
     /// kernel writes per-output arrival times to global memory.
@@ -1339,7 +1337,8 @@ fn build_flattened_script_v1(
                             if let Some(&out_pos) = output_map.get(&pin) {
                                 let out_word = out_pos >> 5;
                                 // Find which partition owns this output word
-                                for (s_idx, s_parts) in parts_in_stages.iter().copied().enumerate() {
+                                for (s_idx, s_parts) in parts_in_stages.iter().copied().enumerate()
+                                {
                                     for (p_idx, _p) in s_parts.iter().enumerate() {
                                         if part_x_flags[s_idx][p_idx] {
                                             let fp = &stages_flattening_parts[s_idx][p_idx];
@@ -1472,8 +1471,7 @@ impl FlattenedScriptV1 {
             "Cannot enable timing arrivals without SDF timing data"
         );
         self.timing_arrivals_enabled = true;
-        self.arrival_state_offset =
-            self.reg_io_state_size * (1 + self.xprop_enabled as u32);
+        self.arrival_state_offset = self.reg_io_state_size * (1 + self.xprop_enabled as u32);
     }
 
     /// build a flattened script.
@@ -1496,7 +1494,14 @@ impl FlattenedScriptV1 {
         num_blocks: usize,
         input_layout: Vec<usize>,
     ) -> FlattenedScriptV1 {
-        build_flattened_script_v1(aig, stageds, parts_in_stages, num_blocks, input_layout, None)
+        build_flattened_script_v1(
+            aig,
+            stageds,
+            parts_in_stages,
+            num_blocks,
+            input_layout,
+            None,
+        )
     }
 
     /// Build a flattened script with X-propagation support.
@@ -1565,8 +1570,7 @@ impl FlattenedScriptV1 {
                                 .and_then(|pin| {
                                     pin.timing_arcs.iter().find_map(|arc| {
                                         if arc.timing_type.is_none()
-                                            || arc.timing_type.as_deref()
-                                                == Some("combinational")
+                                            || arc.timing_type.as_deref() == Some("combinational")
                                         {
                                             Some((
                                                 arc.cell_rise_ps.unwrap_or(0),
@@ -1602,9 +1606,7 @@ impl FlattenedScriptV1 {
                         fallback_count += 1;
                         dff_timing
                             .as_ref()
-                            .map(|t| {
-                                PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps)
-                            })
+                            .map(|t| PackedDelay::from_u64(t.clk_to_q_rise_ps, t.clk_to_q_fall_ps))
                             .unwrap_or_default()
                     }
                     DriverType::SRAM(_) => {
@@ -1643,7 +1645,11 @@ impl FlattenedScriptV1 {
         self.clock_period_ps = clock_period_ps;
         self.timing_enabled = true;
 
-        let nonzero = self.gate_delays.iter().filter(|d| d.max_delay() > 0).count();
+        let nonzero = self
+            .gate_delays
+            .iter()
+            .filter(|d| d.max_delay() > 0)
+            .count();
         clilog::info!(
             "Loaded Liberty timing: {} gate delays ({} from cell origins, {} fallback, {} nonzero), \
              {} DFF constraints, clock={}ps",
@@ -1688,7 +1694,8 @@ impl FlattenedScriptV1 {
                 } else {
                     clilog::debug!(
                         "inject_timing: aigpin {} out of range (gate_delays len={})",
-                        aigpin, self.gate_delays.len()
+                        aigpin,
+                        self.gate_delays.len()
                     );
                 }
             }
@@ -2017,6 +2024,266 @@ impl FlattenedScriptV1 {
         }
     }
 
+    /// Load timing from a Jacquard timing-IR document.
+    ///
+    /// Mirrors `load_timing_from_sdf` but consumes the IR directly, with
+    /// `/` as the hierarchy separator (OpenSTA's default divider) instead
+    /// of `.` (SDF's). See `docs/plans/ws3-delete-sdf-parser.md`.
+    pub fn load_timing_from_ir(
+        &mut self,
+        aig: &AIG,
+        netlistdb: &NetlistDB,
+        ir: &timing_ir::TimingIR<'_>,
+        clock_period_ps: u64,
+        liberty_fallback: Option<&TimingLibrary>,
+        debug: bool,
+    ) {
+        // cellid → IR cell_instance path. NetlistDB iterates leaf-first,
+        // so reverse and join with '/'.
+        let mut cellid_to_ir_path: HashMap<usize, String> = HashMap::new();
+        for cellid in 1..netlistdb.num_cells {
+            let parts: Vec<&str> = netlistdb.cellnames[cellid]
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            let ir_path: String = parts.iter().rev().cloned().collect::<Vec<_>>().join("/");
+            cellid_to_ir_path.insert(cellid, ir_path);
+        }
+
+        // Index arcs and checks by cell_instance for fast lookup.
+        let mut arcs_by_cell: HashMap<&str, Vec<timing_ir::TimingArc<'_>>> = HashMap::new();
+        if let Some(arcs) = ir.timing_arcs() {
+            for i in 0..arcs.len() {
+                let arc = arcs.get(i);
+                if let Some(name) = arc.cell_instance() {
+                    arcs_by_cell.entry(name).or_default().push(arc);
+                }
+            }
+        }
+        let mut checks_by_cell: HashMap<&str, Vec<timing_ir::SetupHoldCheck<'_>>> = HashMap::new();
+        if let Some(checks) = ir.setup_hold_checks() {
+            for i in 0..checks.len() {
+                let check = checks.get(i);
+                if let Some(name) = check.cell_instance() {
+                    checks_by_cell.entry(name).or_default().push(check);
+                }
+            }
+        }
+
+        // Hierarchy prefix detection — same heuristic as the SDF version,
+        // using '/' instead of '.'.
+        {
+            let mut sample_hits = 0usize;
+            let mut sample_misses = 0usize;
+            let mut common_prefix: Option<String> = None;
+            for (_, path) in cellid_to_ir_path.iter().take(100) {
+                if arcs_by_cell.contains_key(path.as_str())
+                    || checks_by_cell.contains_key(path.as_str())
+                {
+                    sample_hits += 1;
+                } else {
+                    sample_misses += 1;
+                    if let Some(slash_pos) = path.find('/') {
+                        let stripped = &path[slash_pos + 1..];
+                        if arcs_by_cell.contains_key(stripped)
+                            || checks_by_cell.contains_key(stripped)
+                        {
+                            let prefix = &path[..slash_pos];
+                            if common_prefix.is_none() {
+                                common_prefix = Some(prefix.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            if sample_misses > sample_hits && common_prefix.is_some() {
+                let prefix = common_prefix.unwrap();
+                let prefix_slash = format!("{}/", prefix);
+                clilog::info!(
+                    "IR hierarchy prefix mismatch detected: stripping '{}' from {} cell paths",
+                    prefix_slash,
+                    cellid_to_ir_path.len()
+                );
+                for path in cellid_to_ir_path.values_mut() {
+                    if let Some(stripped) = path.strip_prefix(&prefix_slash) {
+                        *path = stripped.to_string();
+                    }
+                }
+            }
+        }
+
+        // Wire delays from interconnect_delays. Empty pre-WS2.2; the
+        // logic remains so that path is wired when WS2.2 lands.
+        let mut wire_delays_per_cell: HashMap<usize, (u64, u64)> = HashMap::new();
+        if let Some(ics) = ir.interconnect_delays() {
+            let path_to_cellid: HashMap<&str, usize> = cellid_to_ir_path
+                .iter()
+                .map(|(c, p)| (p.as_str(), *c))
+                .collect();
+            for i in 0..ics.len() {
+                let ic = ics.get(i);
+                if let Some(to_pin) = ic.to_pin() {
+                    if let Some(slash_pos) = to_pin.rfind('/') {
+                        let dest_inst = &to_pin[..slash_pos];
+                        if let Some(&dest_cellid) = path_to_cellid.get(dest_inst) {
+                            let d = ir_corner0_max(ic.delay());
+                            let entry = wire_delays_per_cell.entry(dest_cellid).or_insert((0, 0));
+                            entry.0 = entry.0.max(d);
+                            entry.1 = entry.1.max(d);
+                        }
+                    }
+                }
+            }
+        }
+        let num_wire_delays = wire_delays_per_cell.len();
+
+        self.gate_delays = vec![PackedDelay::default(); aig.num_aigpins + 1];
+
+        let mut matched = 0usize;
+        let mut unmatched = 0usize;
+        let mut fallback_count = 0usize;
+        let mut unmatched_instances: Vec<String> = Vec::new();
+
+        let lib_and_delay = liberty_fallback
+            .and_then(|lib| lib.and_gate_delay("AND2_00_0"))
+            .unwrap_or((0, 0));
+        let lib_dff_timing = liberty_fallback.and_then(|lib| lib.dff_timing());
+        let lib_sram_timing = liberty_fallback.and_then(|lib| lib.sram_timing());
+
+        for aigpin in 1..=aig.num_aigpins {
+            let origin = &aig.aigpin_cell_origins[aigpin];
+            let delay = if !origin.is_empty() {
+                let mut total_rise: u64 = 0;
+                let mut total_fall: u64 = 0;
+                let mut any_matched = false;
+                let mut any_unmatched = false;
+
+                for (cellid, _cell_type, output_pin_name) in origin {
+                    if let Some(ir_path) = cellid_to_ir_path.get(cellid) {
+                        if let Some(arcs) = arcs_by_cell.get(ir_path.as_str()) {
+                            // Match the existing SDF semantics: first arc whose
+                            // load_pin matches the origin output pin, or fall
+                            // back to the first arc on the cell.
+                            let arc = arcs
+                                .iter()
+                                .find(|a| {
+                                    a.load_pin().is_some_and(|p| p == output_pin_name.as_str())
+                                })
+                                .or_else(|| arcs.first());
+                            if let Some(arc) = arc {
+                                any_matched = true;
+                                let rise_ps = ir_corner0_max(arc.rise_delay());
+                                let fall_ps = ir_corner0_max(arc.fall_delay());
+                                let wire = wire_delays_per_cell.get(cellid);
+                                total_rise += rise_ps + wire.map_or(0, |w| w.0);
+                                total_fall += fall_ps + wire.map_or(0, |w| w.1);
+                            } else {
+                                any_unmatched = true;
+                                if debug && unmatched_instances.len() < 20 {
+                                    unmatched_instances.push(format!("{} (no arc)", ir_path));
+                                }
+                            }
+                        } else {
+                            any_unmatched = true;
+                            if debug && unmatched_instances.len() < 20 {
+                                unmatched_instances.push(ir_path.clone());
+                            }
+                        }
+                    }
+                }
+
+                if any_matched {
+                    matched += 1;
+                    if any_unmatched {
+                        unmatched += 1;
+                    }
+                    PackedDelay::from_u64(total_rise, total_fall)
+                } else {
+                    unmatched += 1;
+                    self.get_liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        lib_and_delay,
+                        &lib_dff_timing,
+                        &lib_sram_timing,
+                        &mut fallback_count,
+                    )
+                }
+            } else {
+                match &aig.drivers[aigpin] {
+                    DriverType::AndGate(_, _) => PackedDelay::default(),
+                    DriverType::InputPort(_)
+                    | DriverType::InputClockFlag(_, _)
+                    | DriverType::Tie0 => PackedDelay::default(),
+                    DriverType::DFF(_) => self.get_liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        lib_and_delay,
+                        &lib_dff_timing,
+                        &lib_sram_timing,
+                        &mut fallback_count,
+                    ),
+                    DriverType::SRAM(_) => self.get_liberty_fallback_delay(
+                        &aig.drivers[aigpin],
+                        lib_and_delay,
+                        &lib_dff_timing,
+                        &lib_sram_timing,
+                        &mut fallback_count,
+                    ),
+                }
+            };
+            self.gate_delays[aigpin] = delay;
+        }
+
+        self.dff_constraints = Vec::with_capacity(aig.dffs.len());
+        let lib_setup = lib_dff_timing.as_ref().map(|t| t.max_setup()).unwrap_or(0) as u16;
+        let lib_hold = lib_dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0) as u16;
+
+        for (&cell_id, dff) in &aig.dffs {
+            let data_state_pos = self.output_map.get(&dff.d_iv).copied().unwrap_or(u32::MAX);
+            let (setup_ps, hold_ps) = if let Some(ir_path) = cellid_to_ir_path.get(&cell_id) {
+                if let Some(checks) = checks_by_cell.get(ir_path.as_str()) {
+                    if let Some(check) = checks.first() {
+                        let setup = ir_corner0_max(check.setup());
+                        let hold = ir_corner0_max(check.hold());
+                        let setup = if setup > 0 { setup as u16 } else { lib_setup };
+                        let hold = if hold > 0 { hold as u16 } else { lib_hold };
+                        (setup, hold)
+                    } else {
+                        (lib_setup, lib_hold)
+                    }
+                } else {
+                    (lib_setup, lib_hold)
+                }
+            } else {
+                (lib_setup, lib_hold)
+            };
+
+            self.dff_constraints.push(DFFConstraint {
+                setup_ps,
+                hold_ps,
+                data_state_pos,
+                cell_id: cell_id as u32,
+            });
+        }
+
+        self.clock_period_ps = clock_period_ps;
+        self.timing_enabled = true;
+
+        clilog::info!(
+            "Loaded IR timing: {} matched, {} unmatched ({} Liberty fallback), {} wire delays, {} DFF constraints, clock={}ps",
+            matched, unmatched, fallback_count, num_wire_delays, self.dff_constraints.len(), clock_period_ps
+        );
+
+        if debug && !unmatched_instances.is_empty() {
+            clilog::warn!(
+                "IR unmatched instances (first {}):",
+                unmatched_instances.len()
+            );
+            for inst in &unmatched_instances {
+                clilog::warn!("  {}", inst);
+            }
+        }
+    }
+
     /// Get a fallback delay from Liberty for a given driver type.
     fn get_liberty_fallback_delay(
         &self,
@@ -2042,6 +2309,21 @@ impl FlattenedScriptV1 {
             _ => PackedDelay::default(),
         }
     }
+}
+
+/// Extract the max value at corner 0 from an optional IR `TimingValue`
+/// vector. Returns 0 for missing or non-positive values. Rounds f64 ps
+/// to u64 ps. Used by `load_timing_from_ir`.
+fn ir_corner0_max(values: Option<timing_ir::Vector<'_, timing_ir::TimingValue>>) -> u64 {
+    if let Some(v) = values {
+        if v.len() > 0 {
+            let m = v.get(0).max();
+            if m > 0.0 {
+                return m.round() as u64;
+            }
+        }
+    }
+    0
 }
 
 #[cfg(test)]
@@ -3001,10 +3283,7 @@ mod xprop_tests {
         blocks_data[9] = xprop_state_offset;
 
         assert_eq!(blocks_data[8], 1, "word 8 should be 1 for X-capable");
-        assert_eq!(
-            blocks_data[9], rio,
-            "word 9 should be xprop_state_offset"
-        );
+        assert_eq!(blocks_data[9], rio, "word 9 should be xprop_state_offset");
 
         // Non-X-capable partition
         blocks_data[8] = 0;

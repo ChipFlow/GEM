@@ -23,6 +23,11 @@ mod schema;
 // `timing_ir::schema::jacquard::timing_ir::TimingArc`.
 pub use schema::jacquard::timing_ir::*;
 
+// Re-export the FlatBuffers Vector type so consumers can use it in
+// function signatures without depending on the `flatbuffers` crate
+// directly.
+pub use flatbuffers::Vector;
+
 /// Structured diff between two IR documents. Used by the `timing-ir-diff`
 /// binary and by integration tests.
 pub mod diff;
