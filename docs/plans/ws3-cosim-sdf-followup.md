@@ -89,33 +89,62 @@ on a 3M-tick run:
   tolerant deserializer in `cosim_metal.rs::run_cosim`. Without that
   filter the comparison panicked on the first SPI entry.
 
-### `--max-cycles` is half-cycles, not clock cycles
+### chipflow's `num_steps` and `timestamp` are edge-counted
 
-Important footgun discovered while comparing against the cxxrtl
-reference: Jacquard's cosim `--max-cycles N` (and the `num_cycles`
-config field) counts **scheduler ticks**, where one tick = one
-half-period of the GCD of all clock domains. For a single 25 MHz
-clock that's 20 ns granularity, so `--max-cycles 3000000` is 1.5 M
-clock cycles = 60 ms simulated time. Verified via
-`MultiClockScheduler::new` at `src/sim/cosim_metal.rs:1557` (comment:
-*"alternating between falling … and rising … edges"*; `lcm/gcd = 2`
-for a single domain).
+**Retraction.** Earlier drafts of this section claimed Jacquard's
+`--max-cycles` counts half-cycles. That was a misdiagnosis based on
+reading `MultiClockScheduler::new` (which does emit per-edge raw
+entries) without noticing the pairing layer at
+`src/sim/cosim_metal.rs:2604-2675` that collapses them into one
+paired buffer per cycle. Today, **`--max-cycles N` correctly counts
+N full clock cycles**: each cosim tick does one fall-edge dispatch
+plus one rise-edge dispatch and DFFs capture once per tick. Verified
+via `--stimulus-vcd` trace (5 ticks → simulated time spans 0–200000
+ps for a 40 ns period clock, exactly 5 cycles).
 
-cxxrtl harnesses (chipflow's default `num_steps = 3,000,000`) count
-**full evaluation steps** ≈ full clock cycles, so the same numeric
-budget covers 2× more simulated time. Capturing the full 155-event
-reference sequence on this design therefore needs `--max-cycles
-≈ 6,000,000` here. Either:
+The actual unit difference vs chipflow's cxxrtl harness:
 
-- Bump the budget when running the comparison, or
-- Add a CLI alias `--max-clock-cycles` that takes 2 × clock-domain
-  count and converts to ticks internally (clearer naming; defer to
-  follow-up).
+- chipflow's `num_steps` is the count of `tick()` calls; each `tick()`
+  bumps `++timestamp` twice (once after the negedge dispatch, once
+  after the posedge), so the `events_reference.json` `timestamp`
+  field counts **clock edges** (a full cycle = posedge-to-posedge =
+  2 edges). The harness:
+  ```cpp
+  auto tick = [&]() {
+      {{interface}}.step(timestamp);
+      top.clk.set(false); agent.step(); ++timestamp;  // post-negedge (odd)
+      top.clk.set(true);  agent.step(); ++timestamp;  // post-posedge (even)
+  };
+  for (int i = 0; i < num_steps; i++) tick();
+  ```
+  See `chipflow-lib/chipflow/common/sim/main.cc.jinja:32-74`.
+- The half-tick timestamp is an **intentional design**, not a bug:
+  parity tags each event with the clock phase it fired on (useful for
+  verification of async paths).
+- chipflow's `num_steps` therefore doubles as an edge budget: 3 M
+  num_steps = 3 M edges = 1.5 M full clock cycles.
 
-After accounting for the half-cycle factor, Jacquard's per-byte rate
-is within ~14 % of cxxrtl on this design — bound primarily by the
-SPI-flash model's response latency (the firmware spends ~95 % of
-cycles waiting on flash reads at this point in boot).
+To compare a Jacquard cosim run against today's `events_reference.json`,
+divide reference timestamps by 2 to convert edges → cycles. Empirical
+spot-check on mcu_soc/sky130: byte-0 in Jacquard at `--max-cycles
+200000` arrives at tick 28682; reference timestamp 58290 / 2 = 29145
+cycles; ratio 0.984× (simulators agree on simulated time within 2%).
+
+The earlier "67 of 155 events captured" gap is **not** a budget
+issue — chipflow drives input stimulus via `design/tests/input.json`
+and reference events 69+ require those driven inputs. See
+[`post-ws3-handoff.md`](post-ws3-handoff.md) follow-ups.
+
+The earlier "Jacquard ~14% slower per byte than cxxrtl" claim relied
+on a phantom half-cycle correction; it is also retracted. There is
+no rate gap to explain at this level.
+
+### Planned: rename `--max-cycles` → `--max-clock-edges`, switch
+### cosim's internal granularity to edges
+
+Tracked as an open follow-up in `post-ws3-handoff.md`. Aligns
+Jacquard's CLI 1:1 with chipflow's `num_steps` and unlocks per-edge
+event timestamping.
 
 ## Option A — restore cosim `--sdf` ergonomics
 

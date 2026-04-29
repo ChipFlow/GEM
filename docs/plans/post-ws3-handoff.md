@@ -15,9 +15,20 @@ restoring `--sdf` ergonomics is documented as Option A in
 [`ws3-cosim-sdf-followup.md`](ws3-cosim-sdf-followup.md).
 
 End-to-end verification on sky130 mcu_soc passed: all 67 captured UART payloads
-match the cxxrtl reference exactly (zero divergence). The raw event-count gap
-between Jacquard and cxxrtl is fully explained by `--max-cycles` counting
-half-cycles vs cxxrtl's `num_steps` counting full cycles.
+match the cxxrtl reference exactly (zero divergence). The 67-of-155 event-count
+gap is **not** a `--max-cycles` budget shortfall — it's because chipflow's
+cxxrtl harness drives input stimulus via `design/tests/input.json` (GPIO sets,
+UART RX bytes, I²C ACKs, SPI MISO data) and Jacquard's cosim has no equivalent
+input-driving mechanism yet. Reference events 0–68 are firmware-autonomous boot
+output (UART banner + SPI flash readback) which Jacquard reproduces faithfully;
+events 69+ require the missing stimulus path. See open follow-up below.
+
+Note: chipflow's cxxrtl harness counts both `num_steps` and the events_reference
+`timestamp` field in **clock edges**, not full cycles (a full cycle =
+posedge-to-posedge = 2 edges). Jacquard's cosim currently counts full cycles
+internally. Both observations of "Jacquard needed 2× the budget to match
+chipflow" reduce to this unit difference, not a half-cycle bug. Aligning
+Jacquard to internal-edge granularity is a separate follow-up below.
 
 ## Phase 0 status snapshot
 
@@ -74,17 +85,50 @@ pre-3.4, plus a new `liberty_file` pointing at the volare-installed sky130 lib.
 **Test**: rerun the mcu_soc cosim flow without the manual `opensta-to-ir`
 pre-step; result should match today's output byte-for-byte.
 
-### 3. `--max-clock-cycles` CLI alias (small)
+### 3. Edge-granularity refactor: rename `--max-cycles` → `--max-clock-edges` (medium)
 
-Footgun documented in [`ws3-cosim-sdf-followup.md`](ws3-cosim-sdf-followup.md):
-`--max-cycles` actually counts `MultiClockScheduler` ticks (= half-cycles for a
-single-domain design). cxxrtl users comparing budgets will trip over this.
+Status from earlier investigation: `--max-cycles` does NOT count half-cycles
+today — it counts full clock cycles (verified via VCD trace and UART decoder
+math; see commit `9347f09` which fixed the prior half-speed-DFF bug). The
+"half-cycle footgun" described in earlier drafts of this doc and in
+[`ws3-cosim-sdf-followup.md`](ws3-cosim-sdf-followup.md) was a misdiagnosis.
 
-Add `--max-clock-cycles N` that resolves internally to `N * schedule_len` ticks.
-Either flag works; document the half-cycle one as legacy or rename it.
+The actual unit mismatch with chipflow is: chipflow's `num_steps` and the
+events_reference `timestamp` field are in **clock edges** (the harness's
+`++timestamp` increments after both the negedge and posedge dispatch within
+each `tick()` call). Edge granularity is intentional in chipflow — it lets
+events be tagged with the phase they fired on (parity → posedge vs negedge),
+which is useful for verification of async paths.
 
-Touches `src/bin/jacquard.rs` (`SimArgs`, `CosimArgs`) and the cosim/sim setup
-path that currently reads `args.max_cycles`.
+To match chipflow and to support per-edge event timestamping in Jacquard:
+
+1. Move cosim's internal counters from cycle-granularity to edge-granularity.
+   The infra is mostly in place: `MultiClockScheduler` already emits per-edge
+   raw entries (`src/sim/cosim_metal.rs:1567-1620`), and `fall_ops` /
+   `rise_ops` are already separate. The pairing layer at `:2604-2675` would
+   become a flat per-edge `edge_buffers`; the simulate loop at `:546` becomes
+   `for edge_offset in 0..batch_size` doing one dispatch per iter.
+2. Rename `--max-cycles` → `--max-clock-edges` (canonical, 1:1 portable with
+   chipflow's `num_steps`). Drop `--max-cycles` outright — no `.jtir` users in
+   the wild. Tape-out math: `edges = 2 × cycles` (single-domain).
+3. UART decoder `cycles_per_bit` becomes `edges_per_bit`
+   (`src/sim/cosim_metal.rs:2417`); for 25 MHz/115200 baud single-domain that's
+   `217 × 2 = 434`. Re-introduces the `*2` factor that `c57a94b` removed —
+   correctly justified this time because the unit changes.
+4. Stimulus VCD timestamp emission (`:3279-3340`) collapses from
+   `t_fall`/`t_rise` pair-per-tick to a single timestamp-per-edge.
+5. UART event capture at `:3799` records `timestamp: edge` directly — matches
+   chipflow's events_reference convention out of the box.
+
+Touches `src/bin/jacquard.rs` (`SimArgs`, `CosimArgs`), `src/sim/cosim_metal.rs`
+(main loop, dispatch encoder, schedule builder, UART params, VCD writer,
+event capture), and a naming sweep (`tick` → `edge` ~30+ occurrences).
+`MultiClockScheduler` itself does not change. `BATCH_SIZE` may want renaming
+or doubling so wall-clock-per-batch stays steady.
+
+Multi-clock-domain event comparison is **deferred** — the parity-encodes-edge
+convention does not trivially generalize beyond single-domain. Park until we
+have a multi-domain test to design against.
 
 ### 4. WS5 — parser-success assertions (small-to-medium)
 
@@ -132,23 +176,32 @@ Plausible reframings:
 Worth deciding before starting WS4 work. The phase plan
 (`docs/plans/phase-0-ir-and-oracle.md` § WS4) should be updated either way.
 
-### 2. mcu_soc/sky130 vs cxxrtl rate gap (~14 % residual)
+### 2. mcu_soc/sky130 vs cxxrtl rate gap (resolved — was misdiagnosed)
 
-After correcting for the half-cycle factor, Jacquard's per-byte rate on
-mcu_soc is ~14 % slower than the cxxrtl reference's apparent rate. The
-firmware is ~95 % blocked on SPI flash reads at this point in boot, so the
-gap likely reflects flash-model latency differences. Not a phase-0 blocker;
-worth a focused investigation when timing-arrival accuracy matters
-(e.g. validating critical-path setup violations against an SDF-replay golden).
+Earlier drafts claimed "Jacquard's per-byte rate is ~14 % slower than the
+cxxrtl reference after correcting for the half-cycle factor." That correction
+was unfounded — there is no half-cycle factor in Jacquard's tick counter
+(verified via VCD trace, see open follow-up #3 above). Empirically, byte 0 in
+the smoke test arrives at Jacquard tick 28682 vs reference timestamp 58290
+(= 29145 edges = 29145 cycles when chipflow's edges÷2 is applied), a 0.984×
+ratio — i.e. **simulators agree on simulated time within 2%** at the same
+firmware event. There is no rate gap to explain.
 
-### 3. mcu_soc `events_reference.json` — coverage end-to-end?
+### 3. mcu_soc `events_reference.json` — coverage end-to-end (blocked on input-stimulus driver)
 
-Today's run captured 67 of 155 expected UART events at `--max-cycles 3000000`
-(= 1.5 M clock cycles). The reference goes to ~3 M clock cycles' worth of
-output. A full-coverage run takes `--max-cycles ≈ 6000000` here, ≈ 9 minutes
-wall time. We confirmed all 67 captured payloads match. Worth re-running once
-WS2.2 lands so the comparison covers both the reference's full sequence and
-realistic wire-delay-aware timing.
+Today's smoke run captured 67 of 155 expected events at `--max-cycles 3000000`.
+The earlier framing — "need ~6 M cycles to capture all 155" — was based on the
+half-cycle misdiagnosis. The actual block is that the reference's events 69+
+require driven input stimulus (chipflow's `design/tests/input.json`: `gpio_1
+set`, `uart_1 tx`, `i2c_0 ack`, `user_spi_0 set_data`, etc.). First non-
+autonomous event in the reference is `gpio_1 change` at index 69, edge-ts
+3334054 (= cycle 1.667 M). Jacquard's cosim has only static `constant_inputs`
+and cannot drive the dynamic stimulus, so it stops matching the reference at
+that point regardless of `--max-cycles`.
+
+Re-run after the input-stimulus driver lands (open follow-up below). Until
+then, treat 0–68 as the full reproducible reference; payloads must match
+exactly there.
 
 ## Critical context to know (carried forward)
 
@@ -175,10 +228,21 @@ These facts surfaced during WS2/WS3 and remain relevant:
   `opensta-to-ir` — not `6_final.v` (the wrapper). See
   [`ws3-cosim-sdf-followup.md`](ws3-cosim-sdf-followup.md) for the full
   recipe.
-- **`--max-cycles` half-cycle gotcha**: `MultiClockScheduler` produces
-  `lcm/gcd` ticks per period (= 2 for single-domain). `--max-cycles N`
-  simulates `N / schedule_len` clock cycles. Re-validate any
-  cycle-budget number from cxxrtl/comparable tools.
+- **`--max-cycles` semantics (today)**: counts **full clock cycles** in
+  Jacquard. Not half-cycles, despite what earlier drafts of this doc claimed.
+  Verified via VCD trace at `--max-cycles 5 --stimulus-vcd`: clock toggles
+  once per tick over a 40 ns period for 25 MHz single-domain. Plan is to
+  rename to `--max-clock-edges` and switch internal granularity to edges (see
+  open follow-up #3).
+- **chipflow `num_steps` and `events_reference` `timestamp` are in clock
+  edges**, not full cycles. A full cycle = posedge-to-posedge = 2 edges. To
+  compare against a chipflow events_reference today, divide its `timestamp`
+  by 2 to get cycle counts; or wait for the edge-granularity refactor and
+  compare 1:1.
+- **chipflow drives input stimulus via `design/tests/input.json`** — `wait`
+  (synchronize on output event) + `action` (drive input). Jacquard cosim
+  doesn't yet have an equivalent. Reference events 0–68 (mcu_soc) are
+  firmware-autonomous and reproduce; events 69+ require driven inputs.
 
 ## Verification
 
