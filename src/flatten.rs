@@ -1760,7 +1760,6 @@ impl FlattenedScriptV1 {
         (clock_ps, constraints)
     }
 
-
     /// Load timing from a Jacquard timing-IR document.
     ///
     /// Consumes the IR directly with `/` as the hierarchy separator
@@ -2298,9 +2297,10 @@ mod ir_delay_tests {
         // setup=85, hold=-28). The negative SDF holds become 0 after the
         // consumer's clamp.
         let mut sh_offsets = Vec::new();
-        for (cell, setup_ps, hold_ps) in
-            [("dff_in", 80.0_f64, -30.0_f64), ("dff_out", 85.0_f64, -28.0_f64)]
-        {
+        for (cell, setup_ps, hold_ps) in [
+            ("dff_in", 80.0_f64, -30.0_f64),
+            ("dff_out", 85.0_f64, -28.0_f64),
+        ] {
             let ci = b.create_string(cell);
             let dp = b.create_string("D");
             let cp = b.create_string("CLK");

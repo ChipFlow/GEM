@@ -20,7 +20,10 @@ use ulib::{AsUPtr, Device};
 
 /// Runtime options for co-simulation.
 pub struct CosimOpts {
-    pub max_cycles: Option<usize>,
+    /// Limit number of simulated clock edges. One full clock cycle = 2
+    /// edges (posedge + negedge) for single-domain. Matches chipflow's
+    /// cxxrtl `num_steps` 1:1.
+    pub max_clock_edges: Option<usize>,
     pub num_blocks: usize,
     pub flash_verbose: bool,
     pub check_with_cpu: bool,
@@ -41,7 +44,7 @@ pub struct CosimOpts {
 pub struct CosimResult {
     pub passed: bool,
     pub uart_events: Vec<UartEvent>,
-    pub ticks_simulated: usize,
+    pub edges_simulated: usize,
 }
 
 // ── Simulation Parameters (must match Metal shader) ──────────────────────────
@@ -188,14 +191,15 @@ struct WbTraceChannel {
 /// Batch size for GPU-only simulation (no per-tick CPU interaction).
 const BATCH_SIZE: usize = 1024;
 
-/// Pre-allocated Metal buffers for each schedule position's fall/rise ops.
+/// Pre-allocated Metal buffers for each scheduler edge's ops.
 struct ScheduleBuffers {
-    /// Per-schedule-tick: (fall_params, fall_ops, rise_params, rise_ops).
-    tick_buffers: Vec<(metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer)>,
-    /// Number of fall ops per schedule tick (for CPU verification).
-    fall_ops_lens: Vec<usize>,
-    /// Number of rise ops per schedule tick (for CPU verification).
-    rise_ops_lens: Vec<usize>,
+    /// Per-scheduler-edge: (params, ops). Length = scheduler.schedule.len()
+    /// (= 2 for single-domain: edge 0 = falling, edge 1 = rising).
+    edge_buffers: Vec<(metal::Buffer, metal::Buffer)>,
+    /// Number of ops per scheduler edge (for CPU verification).
+    edge_ops_lens: Vec<usize>,
+    /// Time per scheduler edge in picoseconds (= MultiClockScheduler::gcd_ps).
+    gcd_ps: u64,
 }
 
 // ── Metal Simulator ──────────────────────────────────────────────────────────
@@ -489,28 +493,33 @@ impl MetalSimulator {
         encoder.end_encoding();
     }
 
-    /// Encode and commit a GPU-only batch of K ticks in a single command buffer.
+    /// Encode and commit a GPU-only batch of K edges in a single command buffer.
     ///
-    /// No per-tick CPU interaction — flash and UART are handled entirely on GPU.
+    /// No per-edge CPU interaction — flash and UART are handled entirely on GPU.
     /// A single signal at the end notifies the CPU that the batch is complete.
     ///
-    /// Each tick encodes:
-    ///   1. state_prep (falling edge ops)
+    /// Each edge encodes:
+    ///   1. state_prep (per-edge ops: clk + posedge/negedge flags for any
+    ///      domains active at this scheduler edge)
     ///   2. gpu_apply_flash_din
-    ///   3. simulate_v1_stage × num_stages (falling edge)
-    ///   4. state_prep (rising edge ops)
-    ///   5. gpu_apply_flash_din
-    ///   6. simulate_v1_stage × num_stages (rising edge)
-    ///   7. gpu_flash_model_step (after rising edge — sees posedge SPI CLK)
-    ///   8. gpu_io_step (UART + bus trace)
+    ///   3. simulate_v1_stage × num_stages
+    ///   4. gpu_flash_model_step (sees the SPI CLK after this edge)
+    ///   5. gpu_io_step (UART + bus trace)
     ///
-    /// The flash model runs TWICE per tick (after each half-cycle simulate).
-    /// This is critical because the SPI CLK
-    /// signal passes through clock gating logic (Q = system_CLK & EN_latch),
-    /// so the flash sees CLK=0 after the falling edge and CLK=EN_latch after
-    /// the rising edge. The d_in from the falling-edge flash step is picked up
-    /// by the rising-edge apply_flash_din, allowing the flash controller to
-    /// see the MISO response within the same tick.
+    /// The flash model still runs after every dispatch — for single-domain that's
+    /// twice per cycle (once after the falling edge, once after the rising edge),
+    /// matching the previous "dual-step per tick" behavior. This is critical
+    /// because the SPI CLK signal passes through clock gating logic
+    /// (Q = system_CLK & EN_latch), so the flash sees CLK=0 after the falling
+    /// edge and CLK=EN_latch after the rising edge. The d_in from the falling-
+    /// edge flash step is picked up by the rising-edge apply_flash_din,
+    /// allowing the flash controller to see the MISO response within the same
+    /// cycle.
+    ///
+    /// gpu_io_step also runs after every edge — UART decoder's `current_cycle`
+    /// counter therefore advances at edge granularity, matching chipflow's
+    /// events_reference timestamp convention. UART `cycles_per_bit` must be
+    /// expressed in edges (= 2× clock cycles for single-domain).
     ///
     /// Returns the event value that signals batch completion.
     #[allow(clippy::too_many_arguments)]
@@ -541,15 +550,14 @@ impl MetalSimulator {
     ) -> u64 {
         let batch_done = self.event_counter.get() + 1;
         let cb = self.command_queue.new_command_buffer();
-        let schedule_len = schedule_buffers.tick_buffers.len();
+        let edges_per_period = schedule_buffers.edge_buffers.len();
 
-        for tick_offset in 0..batch_size {
-            let sched_idx = (schedule_offset + tick_offset) % schedule_len;
-            let (ref fall_params, ref fall_ops, ref rise_params, ref rise_ops) =
-                schedule_buffers.tick_buffers[sched_idx];
+        for edge_offset in 0..batch_size {
+            let sched_idx = (schedule_offset + edge_offset) % edges_per_period;
+            let (ref edge_params, ref edge_ops) = schedule_buffers.edge_buffers[sched_idx];
 
-            // ── Falling edge: state_prep + flash_din + simulate ──
-            self.encode_state_prep(cb, states_buffer, fall_params, fall_ops);
+            // state_prep (clk + edge flags) + flash_din + simulate
+            self.encode_state_prep(cb, states_buffer, edge_params, edge_ops);
             self.encode_apply_flash_din(
                 cb,
                 states_buffer,
@@ -578,49 +586,7 @@ impl MetalSimulator {
                 );
             }
 
-            // ── Flash model step after falling edge ──
-            // Flash sees SPI CLK=0 (clock gated low when system CLK=0).
-            // Produces d_in that will be applied before rising-edge simulate.
-            self.encode_flash_model_step(
-                cb,
-                states_buffer,
-                flash_state_buffer,
-                flash_model_params_buffer,
-                flash_data_buffer,
-            );
-
-            // ── Rising edge: state_prep + flash_din + simulate ──
-            self.encode_state_prep(cb, states_buffer, rise_params, rise_ops);
-            self.encode_apply_flash_din(
-                cb,
-                states_buffer,
-                flash_state_buffer,
-                flash_din_params_buffer,
-            );
-            for stage_i in 0..num_major_stages {
-                self.write_params(
-                    stage_i,
-                    num_blocks,
-                    num_major_stages,
-                    state_size,
-                    0,
-                    arrival_state_offset,
-                );
-                self.encode_dispatch(
-                    cb,
-                    num_blocks,
-                    stage_i,
-                    blocks_start_buffer,
-                    blocks_data_buffer,
-                    sram_data_buffer,
-                    states_buffer,
-                    event_buffer_metal,
-                    timing_constraints_buffer,
-                );
-            }
-
-            // ── Flash model step after rising edge + IO step ──
-            // Flash sees SPI CLK after DFFs have latched (posedge system CLK).
+            // Flash model + io_step after this edge.
             self.encode_flash_model_step(
                 cb,
                 states_buffer,
@@ -673,13 +639,8 @@ impl MetalSimulator {
         wb_trace_params_buffer: &metal::Buffer,
         timing_constraints_buffer: Option<&metal::Buffer>,
     ) {
-        // Use schedule position 0 for profiling (all patterns have same kernel cost)
-        let (
-            ref fall_prep_params_buffer,
-            ref fall_ops_buffer,
-            ref rise_prep_params_buffer,
-            ref rise_ops_buffer,
-        ) = schedule_buffers.tick_buffers[0];
+        // Use schedule position 0 for profiling (all patterns have same kernel cost).
+        let (ref edge_prep_params_buffer, ref edge_ops_buffer) = schedule_buffers.edge_buffers[0];
         #[inline]
         fn gpu_times(cb: &metal::CommandBufferRef) -> (f64, f64) {
             unsafe {
@@ -691,40 +652,10 @@ impl MetalSimulator {
             }
         }
 
-        println!("\n=== GPU Kernel Profiling ({} ticks) ===\n", num_ticks);
+        println!("\n=== GPU Kernel Profiling ({} edges) ===\n", num_ticks);
 
-        // Warmup: 10 ticks (with dual flash stepping)
-        for _ in 0..10 {
-            let cb = self.command_queue.new_command_buffer();
-            self.encode_state_prep(cb, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
-            self.encode_apply_flash_din(
-                cb,
-                states_buffer,
-                flash_state_buffer,
-                flash_din_params_buffer,
-            );
-            for stage_i in 0..num_major_stages {
-                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, 0);
-                self.encode_dispatch(
-                    cb,
-                    num_blocks,
-                    stage_i,
-                    blocks_start_buffer,
-                    blocks_data_buffer,
-                    sram_data_buffer,
-                    states_buffer,
-                    event_buffer_metal,
-                    timing_constraints_buffer,
-                );
-            }
-            self.encode_flash_model_step(
-                cb,
-                states_buffer,
-                flash_state_buffer,
-                flash_model_params_buffer,
-                flash_data_buffer,
-            );
-            self.encode_state_prep(cb, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
+        let encode_full_edge = |cb: &metal::CommandBufferRef| {
+            self.encode_state_prep(cb, states_buffer, edge_prep_params_buffer, edge_ops_buffer);
             self.encode_apply_flash_din(
                 cb,
                 states_buffer,
@@ -761,32 +692,35 @@ impl MetalSimulator {
                 wb_trace_channel_buffer,
                 wb_trace_params_buffer,
             );
+        };
+
+        // Warmup
+        for _ in 0..10 {
+            let cb = self.command_queue.new_command_buffer();
+            encode_full_edge(cb);
             cb.commit();
             cb.wait_until_completed();
         }
 
-        let mut time_state_prep_fall = 0.0f64;
+        let mut time_state_prep = 0.0f64;
         let mut time_flash_din = 0.0f64;
-        let mut time_simulate_fall = 0.0f64;
-        let mut time_flash_step_fall = 0.0f64;
-        let mut time_state_prep_rise = 0.0f64;
-        let mut time_simulate_rise = 0.0f64;
-        let mut time_flash_step_rise = 0.0f64;
+        let mut time_simulate = 0.0f64;
+        let mut time_flash_step = 0.0f64;
         let mut time_io_step = 0.0f64;
-        let mut time_full_tick = 0.0f64;
+        let mut time_full_edge = 0.0f64;
 
         let wall_start = std::time::Instant::now();
 
-        for _tick in 0..num_ticks {
-            // 1. state_prep (falling) — isolated
+        for _edge in 0..num_ticks {
+            // state_prep — isolated
             let cb1 = self.command_queue.new_command_buffer();
-            self.encode_state_prep(cb1, states_buffer, fall_prep_params_buffer, fall_ops_buffer);
+            self.encode_state_prep(cb1, states_buffer, edge_prep_params_buffer, edge_ops_buffer);
             cb1.commit();
             cb1.wait_until_completed();
             let (s, e) = gpu_times(cb1);
-            time_state_prep_fall += e - s;
+            time_state_prep += e - s;
 
-            // 2. gpu_apply_flash_din — isolated
+            // gpu_apply_flash_din — isolated
             let cb1b = self.command_queue.new_command_buffer();
             self.encode_apply_flash_din(
                 cb1b,
@@ -799,7 +733,7 @@ impl MetalSimulator {
             let (s, e) = gpu_times(cb1b);
             time_flash_din += e - s;
 
-            // 3. simulate (falling) — isolated per stage
+            // simulate — isolated per stage
             for stage_i in 0..num_major_stages {
                 self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, 0);
                 let cb2 = self.command_queue.new_command_buffer();
@@ -817,83 +751,27 @@ impl MetalSimulator {
                 cb2.commit();
                 cb2.wait_until_completed();
                 let (s, e) = gpu_times(cb2);
-                time_simulate_fall += e - s;
+                time_simulate += e - s;
             }
 
-            // 3b. gpu_flash_model_step after falling edge — isolated
-            let cb2b = self.command_queue.new_command_buffer();
+            // gpu_flash_model_step — isolated
+            let cb3 = self.command_queue.new_command_buffer();
             self.encode_flash_model_step(
-                cb2b,
+                cb3,
                 states_buffer,
                 flash_state_buffer,
                 flash_model_params_buffer,
                 flash_data_buffer,
             );
-            cb2b.commit();
-            cb2b.wait_until_completed();
-            let (s, e) = gpu_times(cb2b);
-            time_flash_step_fall += e - s;
-
-            // 4. state_prep (rising) — isolated
-            let cb3 = self.command_queue.new_command_buffer();
-            self.encode_state_prep(cb3, states_buffer, rise_prep_params_buffer, rise_ops_buffer);
             cb3.commit();
             cb3.wait_until_completed();
             let (s, e) = gpu_times(cb3);
-            time_state_prep_rise += e - s;
+            time_flash_step += e - s;
 
-            // 5. gpu_apply_flash_din — isolated
-            let cb3b = self.command_queue.new_command_buffer();
-            self.encode_apply_flash_din(
-                cb3b,
-                states_buffer,
-                flash_state_buffer,
-                flash_din_params_buffer,
-            );
-            cb3b.commit();
-            cb3b.wait_until_completed();
-            let (s, e) = gpu_times(cb3b);
-            time_flash_din += e - s;
-
-            // 6. simulate (rising) — isolated per stage
-            for stage_i in 0..num_major_stages {
-                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, 0);
-                let cb4 = self.command_queue.new_command_buffer();
-                self.encode_dispatch(
-                    cb4,
-                    num_blocks,
-                    stage_i,
-                    blocks_start_buffer,
-                    blocks_data_buffer,
-                    sram_data_buffer,
-                    states_buffer,
-                    event_buffer_metal,
-                    timing_constraints_buffer,
-                );
-                cb4.commit();
-                cb4.wait_until_completed();
-                let (s, e) = gpu_times(cb4);
-                time_simulate_rise += e - s;
-            }
-
-            // 7. gpu_flash_model_step after rising edge — isolated
-            let cb5 = self.command_queue.new_command_buffer();
-            self.encode_flash_model_step(
-                cb5,
-                states_buffer,
-                flash_state_buffer,
-                flash_model_params_buffer,
-                flash_data_buffer,
-            );
-            cb5.commit();
-            cb5.wait_until_completed();
-            let (s, e) = gpu_times(cb5);
-            time_flash_step_rise += e - s;
-
-            // 8. gpu_io_step — isolated
-            let cb6 = self.command_queue.new_command_buffer();
+            // gpu_io_step — isolated
+            let cb4 = self.command_queue.new_command_buffer();
             self.encode_io_step(
-                cb6,
+                cb4,
                 states_buffer,
                 uart_state_buffer,
                 uart_params_buffer,
@@ -901,106 +779,25 @@ impl MetalSimulator {
                 wb_trace_channel_buffer,
                 wb_trace_params_buffer,
             );
-            cb6.commit();
-            cb6.wait_until_completed();
-            let (s, e) = gpu_times(cb6);
+            cb4.commit();
+            cb4.wait_until_completed();
+            let (s, e) = gpu_times(cb4);
             time_io_step += e - s;
 
-            // Full tick in single CB for comparison
+            // Full edge in single CB for comparison
             let cb_full = self.command_queue.new_command_buffer();
-            self.encode_state_prep(
-                cb_full,
-                states_buffer,
-                fall_prep_params_buffer,
-                fall_ops_buffer,
-            );
-            self.encode_apply_flash_din(
-                cb_full,
-                states_buffer,
-                flash_state_buffer,
-                flash_din_params_buffer,
-            );
-            for stage_i in 0..num_major_stages {
-                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, 0);
-                self.encode_dispatch(
-                    cb_full,
-                    num_blocks,
-                    stage_i,
-                    blocks_start_buffer,
-                    blocks_data_buffer,
-                    sram_data_buffer,
-                    states_buffer,
-                    event_buffer_metal,
-                    timing_constraints_buffer,
-                );
-            }
-            self.encode_flash_model_step(
-                cb_full,
-                states_buffer,
-                flash_state_buffer,
-                flash_model_params_buffer,
-                flash_data_buffer,
-            );
-            self.encode_state_prep(
-                cb_full,
-                states_buffer,
-                rise_prep_params_buffer,
-                rise_ops_buffer,
-            );
-            self.encode_apply_flash_din(
-                cb_full,
-                states_buffer,
-                flash_state_buffer,
-                flash_din_params_buffer,
-            );
-            for stage_i in 0..num_major_stages {
-                self.write_params(stage_i, num_blocks, num_major_stages, state_size, 0, 0);
-                self.encode_dispatch(
-                    cb_full,
-                    num_blocks,
-                    stage_i,
-                    blocks_start_buffer,
-                    blocks_data_buffer,
-                    sram_data_buffer,
-                    states_buffer,
-                    event_buffer_metal,
-                    timing_constraints_buffer,
-                );
-            }
-            self.encode_flash_model_step(
-                cb_full,
-                states_buffer,
-                flash_state_buffer,
-                flash_model_params_buffer,
-                flash_data_buffer,
-            );
-            self.encode_io_step(
-                cb_full,
-                states_buffer,
-                uart_state_buffer,
-                uart_params_buffer,
-                uart_channel_buffer,
-                wb_trace_channel_buffer,
-                wb_trace_params_buffer,
-            );
+            encode_full_edge(cb_full);
             cb_full.commit();
             cb_full.wait_until_completed();
             let (s, e) = gpu_times(cb_full);
-            time_full_tick += e - s;
+            time_full_edge += e - s;
         }
 
         let wall_elapsed = wall_start.elapsed();
         let n = num_ticks as f64;
 
-        let time_flash_step = time_flash_step_fall + time_flash_step_rise;
-        let total_isolated = time_state_prep_fall
-            + time_flash_din
-            + time_simulate_fall
-            + time_flash_step_fall
-            + time_state_prep_rise
-            + time_simulate_rise
-            + time_flash_step_rise
-            + time_io_step;
+        let total_isolated =
+            time_state_prep + time_flash_din + time_simulate + time_flash_step + time_io_step;
 
         let print_kernel = |name: &str, t: f64| {
             let us = t / n * 1e6;
@@ -1009,58 +806,51 @@ impl MetalSimulator {
             } else {
                 0.0
             };
-            println!("  {:<36} {:>8.2}μs/tick  {:>5.1}%", name, us, pct);
+            println!("  {:<36} {:>8.2}μs/edge  {:>5.1}%", name, us, pct);
         };
 
         println!("Per-kernel GPU time (isolated command buffers):");
-        print_kernel("state_prep (falling)", time_state_prep_fall);
-        print_kernel("gpu_apply_flash_din (2×)", time_flash_din);
-        print_kernel("simulate_v1_stage (falling)", time_simulate_fall);
-        print_kernel("gpu_flash_model_step (falling)", time_flash_step_fall);
-        print_kernel("state_prep (rising)", time_state_prep_rise);
-        print_kernel("simulate_v1_stage (rising)", time_simulate_rise);
-        print_kernel("gpu_flash_model_step (rising)", time_flash_step_rise);
+        print_kernel("state_prep", time_state_prep);
+        print_kernel("gpu_apply_flash_din", time_flash_din);
+        print_kernel("simulate_v1_stage", time_simulate);
+        print_kernel("gpu_flash_model_step", time_flash_step);
         print_kernel("gpu_io_step", time_io_step);
         println!(
-            "  {:<36} {:>8.2}μs/tick",
+            "  {:<36} {:>8.2}μs/edge",
             "TOTAL (isolated sum)",
             total_isolated / n * 1e6
         );
         println!();
         println!(
-            "  {:<36} {:>8.2}μs/tick",
-            "Full tick (single CB)",
-            time_full_tick / n * 1e6
+            "  {:<36} {:>8.2}μs/edge",
+            "Full edge (single CB)",
+            time_full_edge / n * 1e6
         );
         println!(
-            "  {:<36} {:>8.2}μs/tick",
-            "Wall clock (2× ticks, profiling)",
+            "  {:<36} {:>8.2}μs/edge",
+            "Wall clock (2× edges, profiling)",
             wall_elapsed.as_secs_f64() / n * 1e6
         );
         println!();
-
-        let sim_us = time_simulate_fall / n * 1e6 + time_simulate_rise / n * 1e6;
-        let io_us = time_flash_din / n * 1e6 + time_flash_step / n * 1e6 + time_io_step / n * 1e6;
-        let prep_us = time_state_prep_fall / n * 1e6 + time_state_prep_rise / n * 1e6;
         println!(
-            "  Simulation kernels total:     {:>8.2}μs/tick  ({:.1}%)",
-            sim_us,
-            100.0 * (time_simulate_fall + time_simulate_rise) / total_isolated
+            "  Simulation kernels total:     {:>8.2}μs/edge  ({:.1}%)",
+            time_simulate / n * 1e6,
+            100.0 * time_simulate / total_isolated
         );
         println!(
-            "  IO model kernels total:       {:>8.2}μs/tick  ({:.1}%)",
-            io_us,
+            "  IO model kernels total:       {:>8.2}μs/edge  ({:.1}%)",
+            (time_flash_din + time_flash_step + time_io_step) / n * 1e6,
             100.0 * (time_flash_din + time_flash_step + time_io_step) / total_isolated
         );
         println!(
-            "  State prep total:             {:>8.2}μs/tick  ({:.1}%)",
-            prep_us,
-            100.0 * (time_state_prep_fall + time_state_prep_rise) / total_isolated
+            "  State prep total:             {:>8.2}μs/edge  ({:.1}%)",
+            time_state_prep / n * 1e6,
+            100.0 * time_state_prep / total_isolated
         );
         println!();
         println!(
-            "  CB submission overhead:        {:>8.2}μs/tick (wall - GPU)",
-            (wall_elapsed.as_secs_f64() - total_isolated - time_full_tick) / n * 1e6
+            "  CB submission overhead:        {:>8.2}μs/edge (wall - GPU)",
+            (wall_elapsed.as_secs_f64() - total_isolated - time_full_edge) / n * 1e6
         );
     }
 }
@@ -1523,8 +1313,8 @@ struct TickEdges {
 /// `gcd(H1, H2, ...)` and the schedule repeats every `lcm(H1, H2, ...) / gcd` ticks.
 /// Each tick in the schedule records which domains have falling/rising edges.
 struct MultiClockScheduler {
-    /// GCD of all half-periods in picoseconds.
-    #[allow(dead_code)]
+    /// GCD of all half-periods in picoseconds. One scheduler edge advances
+    /// simulated time by `gcd_ps`.
     gcd_ps: u64,
     /// One entry per GCD tick in the LCM cycle.
     schedule: Vec<TickEdges>,
@@ -1630,11 +1420,14 @@ impl MultiClockScheduler {
         Self { gcd_ps, schedule }
     }
 
-    /// Build the falling-edge BitOps for a given schedule tick.
+    /// Build BitOps for a single scheduler edge.
     ///
-    /// Only toggles flags for domains that have a falling edge at this tick.
-    /// Also sets clock input port values and constants.
-    fn build_tick_fall_ops(
+    /// Handles all clock domains' edges at this tick uniformly: a domain with
+    /// a falling edge sets its clk input low and asserts negedge_flag; a domain
+    /// with a rising edge sets its clk input high and asserts posedge_flag.
+    /// Domains with no edge at this tick leave their clk input untouched and
+    /// deassert both flags.
+    fn build_edge_ops(
         &self,
         tick_idx: usize,
         gpio_map: &GpioMapping,
@@ -1652,11 +1445,14 @@ impl MultiClockScheduler {
             value: reset_val as u32,
         });
 
-        // Per-domain clock flags
+        // Per-domain clock + edge flags
         for (i, domain) in gpio_map.clock_domains.iter().enumerate() {
-            let (has_fall, _has_rise) = tick.domain_edges[i];
+            let (has_fall, has_rise) = tick.domain_edges[i];
 
-            // Set clock input port value: falling = 0
+            // Set clock input. Falling and rising at the same scheduler tick
+            // can't both be true for one domain (they're encoded as different
+            // edge_count parities), so the order doesn't matter — but
+            // defensively: rising wins, since posedge eval is what DFFs sample.
             if has_fall {
                 if let Some(pos) = domain.clock_input_pos {
                     ops.push(BitOp {
@@ -1665,71 +1461,6 @@ impl MultiClockScheduler {
                     });
                 }
             }
-
-            // Set negedge flags = 1 for domains with falling edge, 0 otherwise
-            for &pos in &domain.negedge_flag_bits {
-                ops.push(BitOp {
-                    position: pos,
-                    value: if has_fall { 1 } else { 0 },
-                });
-            }
-            // Clear posedge flags for domains with falling edge
-            for &pos in &domain.posedge_flag_bits {
-                ops.push(BitOp {
-                    position: pos,
-                    value: 0,
-                });
-            }
-        }
-
-        // Constant inputs
-        for (gpio_str, val) in constant_inputs {
-            if let Ok(gpio_idx) = gpio_str.parse::<usize>() {
-                if let Some(&pos) = gpio_map.input_bits.get(&gpio_idx) {
-                    ops.push(BitOp {
-                        position: pos,
-                        value: *val as u32,
-                    });
-                }
-            }
-        }
-        // Named constant ports
-        for (port_name, val) in constant_ports {
-            if let Some(&pos) = gpio_map.named_input_bits.get(port_name) {
-                ops.push(BitOp {
-                    position: pos,
-                    value: *val as u32,
-                });
-            }
-        }
-
-        ops
-    }
-
-    /// Build the rising-edge BitOps for a given schedule tick.
-    fn build_tick_rise_ops(
-        &self,
-        tick_idx: usize,
-        gpio_map: &GpioMapping,
-        reset_gpio: usize,
-        reset_val: u8,
-        constant_inputs: &HashMap<String, u8>,
-        constant_ports: &HashMap<String, u8>,
-    ) -> Vec<BitOp> {
-        let tick = &self.schedule[tick_idx % self.schedule.len()];
-        let mut ops = Vec::new();
-
-        // Reset
-        ops.push(BitOp {
-            position: gpio_map.input_bits[&reset_gpio],
-            value: reset_val as u32,
-        });
-
-        // Per-domain clock flags
-        for (i, domain) in gpio_map.clock_domains.iter().enumerate() {
-            let (_has_fall, has_rise) = tick.domain_edges[i];
-
-            // Set clock input port value: rising = 1
             if has_rise {
                 if let Some(pos) = domain.clock_input_pos {
                     ops.push(BitOp {
@@ -1739,18 +1470,18 @@ impl MultiClockScheduler {
                 }
             }
 
-            // Set posedge flags = 1 for domains with rising edge, 0 otherwise
+            // Edge flags: posedge for domains rising at this edge, negedge for
+            // falling, both deasserted otherwise.
             for &pos in &domain.posedge_flag_bits {
                 ops.push(BitOp {
                     position: pos,
                     value: if has_rise { 1 } else { 0 },
                 });
             }
-            // Clear negedge flags for domains with rising edge
             for &pos in &domain.negedge_flag_bits {
                 ops.push(BitOp {
                     position: pos,
-                    value: 0,
+                    value: if has_fall { 1 } else { 0 },
                 });
             }
         }
@@ -2315,7 +2046,6 @@ pub fn run_cosim(
     opts: &CosimOpts,
     timing_constraints: &Option<Vec<u32>>,
 ) -> CosimResult {
-    let max_ticks = opts.max_cycles.unwrap_or(config.num_cycles);
     let script = &design.script;
     let aig = &design.aig;
     let netlistdb = &design.netlistdb;
@@ -2532,7 +2262,6 @@ pub fn run_cosim(
     // ── Build GPU-side state_prep + IO model buffers ──────────────────────
 
     let timer_prep = clilog::stimer!("build_state_prep_buffers");
-    let reset_cycles = config.reset_cycles;
 
     // Initial reset value
     let reset_val_active = if config.reset_active_high { 1u8 } else { 0u8 };
@@ -2601,78 +2330,65 @@ pub fn run_cosim(
         }
     }
 
-    // Build per-cycle BitOp buffers from multi-clock schedule.
+    // Build per-edge BitOp buffers from multi-clock schedule.
     //
-    // The scheduler produces one entry per GCD tick (half-cycle edges).
-    // Each cosim tick = one full clock cycle = fall eval + rise eval.
-    // We pair consecutive schedule entries: fall_ops from entry 2*i,
-    // rise_ops from entry 2*i+1. This ensures DFFs capture on every tick.
+    // The scheduler produces one entry per GCD tick (= one clock edge for
+    // single-domain). Each cosim "edge" iteration applies one set of edge
+    // ops (clk + posedge/negedge flags for any domains active at this tick)
+    // and runs one simulate dispatch. DFFs capture on the dispatch where
+    // posedge_flag=1. For single-domain this gives 2 edges per full cycle
+    // (one falling, one rising); for multi-domain, schedule_len edges per
+    // LCM period at GCD granularity.
     let schedule_buffers = {
         let scheduler = MultiClockScheduler::new(&clock_timings);
-        assert!(
-            scheduler.schedule.len() % 2 == 0,
-            "Multi-clock schedule length {} must be even (each cycle = fall + rise)",
-            scheduler.schedule.len()
-        );
-        let num_cycles = scheduler.schedule.len() / 2;
-        let mut tick_buffers = Vec::with_capacity(num_cycles);
-        let mut fall_ops_lens = Vec::with_capacity(num_cycles);
-        let mut rise_ops_lens = Vec::with_capacity(num_cycles);
+        let edges_per_period = scheduler.schedule.len();
+        let mut edge_buffers = Vec::with_capacity(edges_per_period);
+        let mut edge_ops_lens = Vec::with_capacity(edges_per_period);
 
-        for cycle_idx in 0..num_cycles {
-            let fall_tick_idx = cycle_idx * 2;
-            let rise_tick_idx = cycle_idx * 2 + 1;
-            let fall_ops = scheduler.build_tick_fall_ops(
-                fall_tick_idx,
+        for edge_idx in 0..edges_per_period {
+            let ops = scheduler.build_edge_ops(
+                edge_idx,
                 &gpio_map,
                 reset_gpio,
                 reset_val_active,
                 &config.constant_inputs,
                 &config.constant_ports,
             );
-            let rise_ops = scheduler.build_tick_rise_ops(
-                rise_tick_idx,
-                &gpio_map,
-                reset_gpio,
-                reset_val_active,
-                &config.constant_inputs,
-                &config.constant_ports,
-            );
-            let fall_len = fall_ops.len();
-            let rise_len = rise_ops.len();
-            let fall_ops_buf = create_ops_buffer(&simulator.device, &fall_ops);
-            let rise_ops_buf = create_ops_buffer(&simulator.device, &rise_ops);
-            let fall_params = create_prep_params_buffer(
-                &simulator.device,
-                state_size as u32,
-                fall_ops.len() as u32,
-                0,
-                0,
-            );
-            let rise_params = create_prep_params_buffer(
-                &simulator.device,
-                state_size as u32,
-                rise_ops.len() as u32,
-                0,
-                0,
-            );
-            tick_buffers.push((fall_params, fall_ops_buf, rise_params, rise_ops_buf));
-            fall_ops_lens.push(fall_len);
-            rise_ops_lens.push(rise_len);
+            let len = ops.len();
+            let ops_buf = create_ops_buffer(&simulator.device, &ops);
+            let params =
+                create_prep_params_buffer(&simulator.device, state_size as u32, len as u32, 0, 0);
+            edge_buffers.push((params, ops_buf));
+            edge_ops_lens.push(len);
         }
 
         clilog::info!(
-            "Multi-clock schedule: {} GCD ticks → {} cycle buffer sets",
-            scheduler.schedule.len(),
-            tick_buffers.len()
+            "Multi-clock schedule: {} edges per LCM period (gcd={}ps)",
+            edges_per_period,
+            scheduler.gcd_ps
         );
 
         ScheduleBuffers {
-            tick_buffers,
-            fall_ops_lens,
-            rise_ops_lens,
+            edge_buffers,
+            edge_ops_lens,
+            gcd_ps: scheduler.gcd_ps,
         }
     };
+
+    // Edge-granularity conversion: config fields `reset_cycles` and
+    // `num_cycles` are user-facing in clock cycles, but internal counters
+    // (the main loop's `tick` variable, scheduler offsets, UART decoder
+    // current_cycle) advance per scheduler edge. For single-domain that's
+    // 2 edges per period; for multi-domain this is the LCM-period edge
+    // count and "cycle" is interpreted as one LCM period (see open follow-up
+    // about multi-domain event comparison).
+    let edges_per_cycle = schedule_buffers.edge_buffers.len();
+    let reset_edges = config.reset_cycles * edges_per_cycle;
+    // CLI --max-clock-edges is already in edges; config `num_cycles` is in
+    // cycles and gets multiplied here.
+    let max_edges = opts
+        .max_clock_edges
+        .unwrap_or(config.num_cycles * edges_per_cycle);
 
     // ── GPU Flash IO buffers ────────────────────────────────────────────
 
@@ -2827,7 +2543,10 @@ pub fn run_cosim(
         p.tx_out_pos = uart_tx_gpio
             .and_then(|tx| gpio_map.output_bits.get(&tx).copied())
             .unwrap_or(0);
-        p.cycles_per_bit = uart_cycles_per_bit;
+        // GPU UART decoder's `current_cycle` advances per gpu_io_step call (=
+        // once per scheduler edge), so it counts edges. Convert the user-
+        // friendly cycles_per_bit (= clock_hz/baud) into edges_per_bit.
+        p.cycles_per_bit = uart_cycles_per_bit * edges_per_cycle as u32;
     }
 
     // UartChannel (shared ring buffer, CPU drains after each batch)
@@ -2887,7 +2606,7 @@ pub fn run_cosim(
     // ── GPU Kernel Profiling (optional) ──────────────────────────────────
 
     if opts.gpu_profile {
-        let profile_ticks = opts.max_cycles.unwrap_or(1000).min(5000);
+        let profile_ticks = opts.max_clock_edges.unwrap_or(1000).min(5000);
         simulator.profile_gpu_kernels(
             profile_ticks,
             num_blocks,
@@ -2918,7 +2637,7 @@ pub fn run_cosim(
         return CosimResult {
             passed: true,
             uart_events: Vec::new(),
-            ticks_simulated: 0,
+            edges_simulated: 0,
         };
     }
 
@@ -3048,14 +2767,16 @@ pub fn run_cosim(
         }
         writeln!(writer, "#").unwrap();
 
-        let max_cycles = opts.dump_dff_cycles;
+        // dump_dff_cycles is user-facing (cycles); internal counter is in edges.
+        let max_dump_edges = opts.dump_dff_cycles * edges_per_cycle;
         clilog::info!(
-            "DFF dump enabled: {} DFFs, {} cycles → {}",
+            "DFF dump enabled: {} DFFs, {} cycles ({} edges) → {}",
             entries.len(),
-            max_cycles,
+            opts.dump_dff_cycles,
+            max_dump_edges,
             dump_path.display()
         );
-        Some((writer, entries, max_cycles))
+        Some((writer, entries, max_dump_edges))
     } else {
         None
     };
@@ -3071,20 +2792,15 @@ pub fn run_cosim(
     // Helper: update reset value in all schedule ops buffers
     let update_reset_in_ops = |reset_val: u8| {
         let reset_pos = gpio_map.input_bits[&reset_gpio];
-        for (sched_idx, (ref fall_params, ref fall_buf, ref rise_params, ref rise_buf)) in
-            schedule_buffers.tick_buffers.iter().enumerate()
+        for (sched_idx, (ref _params, ref ops_buf)) in
+            schedule_buffers.edge_buffers.iter().enumerate()
         {
-            let _ = (fall_params, rise_params); // params don't contain reset
-            for (buf, len) in [
-                (fall_buf, schedule_buffers.fall_ops_lens[sched_idx]),
-                (rise_buf, schedule_buffers.rise_ops_lens[sched_idx]),
-            ] {
-                let ops: &mut [BitOp] =
-                    unsafe { std::slice::from_raw_parts_mut(buf.contents() as *mut BitOp, len) };
-                for op in ops.iter_mut() {
-                    if op.position == reset_pos {
-                        op.value = reset_val as u32;
-                    }
+            let len = schedule_buffers.edge_ops_lens[sched_idx];
+            let ops: &mut [BitOp] =
+                unsafe { std::slice::from_raw_parts_mut(ops_buf.contents() as *mut BitOp, len) };
+            for op in ops.iter_mut() {
+                if op.position == reset_pos {
+                    op.value = reset_val as u32;
                 }
             }
         }
@@ -3145,38 +2861,38 @@ pub fn run_cosim(
         Vec::new()
     };
     let mut cpu_check_mismatches: usize = 0;
-    let cpu_check_max_ticks = if opts.check_with_cpu { 500 } else { 0 };
+    let cpu_check_max_edges = if opts.check_with_cpu { 500 } else { 0 };
 
     let mut post_reset_state_snapshot: Option<Vec<u32>> = None;
 
     let mut tick: usize = 0;
-    while tick < max_ticks {
+    while tick < max_edges {
         let dff_dump_active = dff_dump_state
             .as_ref()
-            .map_or(false, |(_, _, max)| tick < reset_cycles + *max);
-        let batch = if opts.check_with_cpu && tick < cpu_check_max_ticks {
+            .map_or(false, |(_, _, max)| tick < reset_edges + *max);
+        let batch = if opts.check_with_cpu && tick < cpu_check_max_edges {
             1 // single tick for CPU comparison
         } else if stimulus_vcd_state.is_some() || timing_vcd_state.is_some() {
             1 // single tick for stimulus/timing VCD capture
         } else if dff_dump_active {
             1 // single tick for DFF state capture
-        } else if trace_ticks > 0 && tick < reset_cycles + trace_ticks {
+        } else if trace_ticks > 0 && tick < reset_edges + trace_ticks {
             1 // single tick for tracing
         } else if deep_diag {
             1 // single tick for deep diagnostics
         } else {
-            BATCH_SIZE.min(max_ticks - tick)
+            BATCH_SIZE.min(max_edges - tick)
         };
 
         // Don't cross reset boundary within a batch
-        let batch = if tick < reset_cycles && tick + batch > reset_cycles {
-            reset_cycles - tick
+        let batch = if tick < reset_edges && tick + batch > reset_edges {
+            reset_edges - tick
         } else {
             batch
         };
 
         // Update reset value and flash in_reset for this batch
-        let in_reset = tick < reset_cycles;
+        let in_reset = tick < reset_edges;
         let current_reset_val = if in_reset {
             reset_val_active
         } else {
@@ -3192,7 +2908,7 @@ pub fn run_cosim(
 
         // Save pre-tick state for CPU verification
         let saved_flash_d_i: u8;
-        if opts.check_with_cpu && tick < cpu_check_max_ticks && batch == 1 {
+        if opts.check_with_cpu && tick < cpu_check_max_edges && batch == 1 {
             let gpu_states: &[u32] = unsafe {
                 std::slice::from_raw_parts(states_buffer.contents() as *const u32, 2 * state_size)
             };
@@ -3267,7 +2983,7 @@ pub fn run_cosim(
             timing_constraints_buffer.as_ref(),
             arrival_state_offset,
         );
-        schedule_offset = (schedule_offset + batch) % schedule_buffers.tick_buffers.len();
+        schedule_offset = (schedule_offset + batch) % schedule_buffers.edge_buffers.len();
         prof_batch_encode += t_encode.elapsed().as_nanos() as u64;
 
         // Wait for GPU batch to complete
@@ -3275,46 +2991,20 @@ pub fn run_cosim(
         simulator.spin_wait(batch_done);
         prof_gpu_wait += t_wait.elapsed().as_nanos() as u64;
 
-        // ── Write stimulus VCD entries (falling + rising edge per tick) ──
+        // ── Write stimulus VCD entries (one timestamp per scheduler edge) ──
         if let Some((ref mut writer, ref mapping, ref mut prev_values)) = stimulus_vcd_state {
             let input_state: &[u32] = unsafe {
                 std::slice::from_raw_parts(states_buffer.contents() as *const u32, state_size)
             };
-            let half_period = mapping.clock_period_ps / 2;
-            let t_fall = tick as u64 * mapping.clock_period_ps;
-            let t_rise = t_fall + half_period;
+            // One cosim tick advances simulated time by gcd_ps (= half-period
+            // for single-domain). Emit signal values as currently driven on
+            // GPU-side input_state — clock and all other inputs read directly.
+            let _ = mapping.clock_period_ps; // kept for future use; gcd_ps is canonical
+            let t_edge = tick as u64 * schedule_buffers.gcd_ps;
 
-            // Falling edge: clock=0, all other signals as currently driven
-            writer.timestamp(t_fall).unwrap();
-            for (sig_idx, &(pos, vid, is_clock)) in mapping.signals.iter().enumerate() {
-                let val = if is_clock {
-                    0u8
-                } else {
-                    ((input_state[(pos >> 5) as usize] >> (pos & 31)) & 1) as u8
-                };
-                if val != prev_values[sig_idx] {
-                    writer
-                        .change_scalar(
-                            vid,
-                            if val != 0 {
-                                vcd_ng::Value::V1
-                            } else {
-                                vcd_ng::Value::V0
-                            },
-                        )
-                        .unwrap();
-                    prev_values[sig_idx] = val;
-                }
-            }
-
-            // Rising edge: clock=1, all signals same (only clock changes)
-            writer.timestamp(t_rise).unwrap();
-            for (sig_idx, &(pos, vid, is_clock)) in mapping.signals.iter().enumerate() {
-                let val = if is_clock {
-                    1u8
-                } else {
-                    ((input_state[(pos >> 5) as usize] >> (pos & 31)) & 1) as u8
-                };
+            writer.timestamp(t_edge).unwrap();
+            for (sig_idx, &(pos, vid, _is_clock)) in mapping.signals.iter().enumerate() {
+                let val = ((input_state[(pos >> 5) as usize] >> (pos & 31)) & 1) as u8;
                 if val != prev_values[sig_idx] {
                     writer
                         .change_scalar(
@@ -3404,7 +3094,7 @@ pub fn run_cosim(
         }
 
         // ── Dump DFF states (if active for this cycle) ──
-        if dff_dump_active && tick >= reset_cycles {
+        if dff_dump_active && tick >= reset_edges {
             use std::io::Write;
             let input_state: &[u32] = unsafe {
                 std::slice::from_raw_parts(states_buffer.contents() as *const u32, state_size)
@@ -3415,7 +3105,7 @@ pub fn run_cosim(
                     state_size,
                 )
             };
-            let cycle = tick - reset_cycles;
+            let cycle = tick - reset_edges;
             if let Some((ref mut writer, ref entries, _)) = dff_dump_state {
                 // Compute hash for both input_state (pre-capture) and output_state (post-capture)
                 let mut in_hash: u64 = 0;
@@ -3478,7 +3168,7 @@ pub fn run_cosim(
         }
 
         // Per-tick flash signal diagnostic
-        if trace_ticks > 0 && tick + batch <= reset_cycles + trace_ticks as usize {
+        if trace_ticks > 0 && tick + batch <= reset_edges + trace_ticks as usize {
             let output_state: &[u32] = unsafe {
                 std::slice::from_raw_parts(
                     (states_buffer.contents() as *const u32).add(state_size),
@@ -3498,20 +3188,20 @@ pub fn run_cosim(
                 tick + batch, flash_clk, flash_csn, fs.d_i, fs.command, fs.addr, fs.in_reset);
         }
 
-        // ── CPU verification: simulate same tick on CPU and compare ──
-        if opts.check_with_cpu && tick < cpu_check_max_ticks && batch == 1 {
-            // CPU state_prep(fall): copy output → input, apply fall_ops
-            // Use schedule position 0 for CPU verification (single-clock backward compat)
-            let cpu_sched_idx = 0;
+        // ── CPU verification: simulate same edge on CPU and compare ──
+        if opts.check_with_cpu && tick < cpu_check_max_edges && batch == 1 {
+            // CPU state_prep: copy output → input, apply edge ops at the
+            // current schedule position.
+            let cpu_sched_idx = schedule_offset % schedule_buffers.edge_buffers.len();
             cpu_states.copy_within(state_size..2 * state_size, 0);
-            let (_, ref cpu_fall_buf, _, _) = schedule_buffers.tick_buffers[cpu_sched_idx];
-            let cpu_fall_ops: &[BitOp] = unsafe {
+            let (_, ref cpu_edge_buf) = schedule_buffers.edge_buffers[cpu_sched_idx];
+            let cpu_edge_ops: &[BitOp] = unsafe {
                 std::slice::from_raw_parts(
-                    cpu_fall_buf.contents() as *const BitOp,
-                    schedule_buffers.fall_ops_lens[cpu_sched_idx],
+                    cpu_edge_buf.contents() as *const BitOp,
+                    schedule_buffers.edge_ops_lens[cpu_sched_idx],
                 )
             };
-            for op in cpu_fall_ops {
+            for op in cpu_edge_ops {
                 let word_idx = op.position as usize >> 5;
                 let bit_mask = 1u32 << (op.position & 31);
                 if op.value != 0 {
@@ -3546,75 +3236,15 @@ pub fn run_cosim(
                     }
                 }
                 if tick == 0 {
-                    eprintln!(
-                        "  CPU after flash_din(fall): word[4]=0x{:08X}",
-                        cpu_states[4]
-                    );
+                    eprintln!("  CPU after flash_din: word[4]=0x{:08X}", cpu_states[4]);
                 }
             }
 
-            // CPU simulate(fall): run all partitions
-            for stage_i in 0..num_major_stages {
-                for block_i in 0..num_blocks {
-                    let start = script.blocks_start[stage_i * num_blocks + block_i];
-                    let end = script.blocks_start[stage_i * num_blocks + block_i + 1];
-                    if start == end {
-                        continue;
-                    }
-                    let (input_half, output_half) = cpu_states.split_at_mut(state_size);
-                    simulate_block_v1(
-                        &script.blocks_data[start..end],
-                        input_half,
-                        output_half,
-                        &mut cpu_sram,
-                    );
-                }
-            }
-
-            // CPU state_prep(rise): copy output → input, apply rise_ops
-            cpu_states.copy_within(state_size..2 * state_size, 0);
-            let (_, _, _, ref cpu_rise_buf) = schedule_buffers.tick_buffers[cpu_sched_idx];
-            let cpu_rise_ops: &[BitOp] = unsafe {
-                std::slice::from_raw_parts(
-                    cpu_rise_buf.contents() as *const BitOp,
-                    schedule_buffers.rise_ops_lens[cpu_sched_idx],
-                )
-            };
-            for op in cpu_rise_ops {
-                let word_idx = op.position as usize >> 5;
-                let bit_mask = 1u32 << (op.position & 31);
-                if op.value != 0 {
-                    cpu_states[word_idx] |= bit_mask;
-                } else {
-                    cpu_states[word_idx] &= !bit_mask;
-                }
-            }
-
-            // CPU apply_flash_din (same d_i for both edges within a tick)
-            unsafe {
-                let p = &*(flash_din_params_buffer.contents() as *const FlashDinParams);
-                if p.has_flash != 0 {
-                    for i in 0..4 {
-                        let pos = p.d_in_pos[i];
-                        if pos == 0xFFFFFFFF {
-                            continue;
-                        }
-                        let word_idx = (pos >> 5) as usize;
-                        let bit_mask = 1u32 << (pos & 31);
-                        if (saved_flash_d_i >> i) & 1 != 0 {
-                            cpu_states[word_idx] |= bit_mask;
-                        } else {
-                            cpu_states[word_idx] &= !bit_mask;
-                        }
-                    }
-                }
-            }
-
-            // CPU simulate(rise): run all partitions
-            let use_diag = tick == reset_cycles; // first tick after reset release
+            // CPU simulate: run all partitions for this edge
+            let use_diag = tick == reset_edges; // first edge after reset release
             if use_diag {
                 eprintln!(
-                    "=== DIAG: Rising-edge simulate at tick {} (first post-reset) ===",
+                    "=== DIAG: Edge simulate at edge {} (first post-reset) ===",
                     tick
                 );
                 eprintln!(
@@ -3658,8 +3288,8 @@ pub fn run_cosim(
                 }
             }
 
-            // Direct AIG evaluation comparison at first few post-reset ticks
-            if tick >= reset_cycles && tick <= reset_cycles + 5 {
+            // Direct AIG evaluation comparison at first few post-reset edges
+            if tick >= reset_edges && tick <= reset_edges + 5 {
                 let (input_half, output_half) = cpu_states.split_at(state_size);
                 compare_aig_vs_flattened(
                     aig,
@@ -3750,7 +3380,7 @@ pub fn run_cosim(
                 if cpu_check_mismatches > 200 {
                     eprintln!("Too many mismatches, stopping CPU check");
                 }
-            } else if tick <= reset_cycles + 5 || tick % 50 == 0 {
+            } else if tick <= reset_edges + 5 || tick % 50 == 0 {
                 eprintln!(
                     "CHECK-WITH-CPU tick {}: OK (state_size={}, sram_size={})",
                     tick, state_size, script.sram_storage_size
@@ -3758,7 +3388,7 @@ pub fn run_cosim(
             }
 
             // Per-tick output state change tracking
-            if tick >= reset_cycles.saturating_sub(2) && tick <= reset_cycles + 15 {
+            if tick >= reset_edges.saturating_sub(2) && tick <= reset_edges + 15 {
                 let gpu_output = &gpu_states[state_size..2 * state_size];
                 let _changed_words: usize = gpu_output
                     .iter()
@@ -3845,7 +3475,7 @@ pub fn run_cosim(
         tick += batch;
 
         // Deep diagnostics: SRAM activity + flash transaction tracking
-        if deep_diag && tick > reset_cycles && batch == 1 {
+        if deep_diag && tick > reset_edges && batch == 1 {
             unsafe {
                 let fs = &*(flash_state_buffer.contents() as *const FlashState);
                 let fmp = &*(flash_model_params_buffer.contents() as *const FlashModelParams);
@@ -3902,7 +3532,7 @@ pub fn run_cosim(
         }
 
         // Diagnostic: dump flash-related signals
-        if trace_ticks > 0 && tick <= reset_cycles + trace_ticks && tick > reset_cycles {
+        if trace_ticks > 0 && tick <= reset_edges + trace_ticks && tick > reset_edges {
             unsafe {
                 let st = std::slice::from_raw_parts(
                     states_buffer.contents() as *const u32,
@@ -3947,7 +3577,7 @@ pub fn run_cosim(
         // Progress logging
         if tick > 0 && tick % 100000 < BATCH_SIZE {
             let elapsed = sim_start.elapsed();
-            let us_per_tick = elapsed.as_micros() as f64 / tick as f64;
+            let us_per_edge = elapsed.as_micros() as f64 / tick as f64;
             // Read UART TX bit and decoder state for diagnostics
             let (uart_tx_val, uart_dec_state, uart_dec_cycle) = unsafe {
                 let up = &*(uart_params_buffer.contents() as *const UartParams);
@@ -3963,12 +3593,12 @@ pub fn run_cosim(
             };
             clilog::info!(
                 "Tick {} / {} ({:.1}μs/tick, batches={}, UART bytes={}, tx={}, uart_st={}, uart_cyc={})",
-                tick, max_ticks, us_per_tick, total_batches, uart_events.len(),
+                tick, max_edges, us_per_edge, total_batches, uart_events.len(),
                 uart_tx_val, uart_dec_state, uart_dec_cycle
             );
         }
-        if tick >= reset_cycles && tick - batch < reset_cycles {
-            clilog::info!("Reset released at tick {}", reset_cycles);
+        if tick >= reset_edges && tick - batch < reset_edges {
+            clilog::info!("Reset released at tick {}", reset_edges);
             // Snapshot output state just after reset for change detection
             if post_reset_state_snapshot.is_none() {
                 let st = unsafe {
@@ -3985,7 +3615,7 @@ pub fn run_cosim(
     // Print profiling results
     let total_ns = prof_batch_encode + prof_gpu_wait + prof_drain;
     let print_prof = |name: &str, ns: u64| {
-        let us = ns as f64 / 1000.0 / max_ticks as f64;
+        let us = ns as f64 / 1000.0 / max_edges as f64;
         let pct = if total_ns > 0 {
             100.0 * ns as f64 / total_ns as f64
         } else {
@@ -4001,7 +3631,7 @@ pub fn run_cosim(
     println!(
         "  {:<32} {:>8.1}μs/tick  100.0%",
         "TOTAL (instrumented)",
-        total_ns as f64 / 1000.0 / max_ticks as f64
+        total_ns as f64 / 1000.0 / max_edges as f64
     );
     println!();
     println!("  Total batches:                 {}", total_batches);
@@ -4077,14 +3707,14 @@ pub fn run_cosim(
 
     println!();
     println!("=== GPU Simulation Results ===");
-    println!("Ticks simulated: {}", max_ticks);
+    println!("Edges simulated: {}", max_edges);
     println!("UART bytes received: {}", uart_events.len());
 
-    if max_ticks > 0 {
-        let us_per_tick = sim_elapsed.as_micros() as f64 / max_ticks as f64;
+    if max_edges > 0 {
+        let us_per_edge = sim_elapsed.as_micros() as f64 / max_edges as f64;
         println!(
             "Time per tick: {:.1}μs ({:.1}s total)",
-            us_per_tick,
+            us_per_edge,
             sim_elapsed.as_secs_f64()
         );
     }
@@ -4232,13 +3862,13 @@ pub fn run_cosim(
         if cpu_check_mismatches == 0 {
             clilog::info!(
                 "CPU verification: PASSED ({} ticks checked)",
-                cpu_check_max_ticks.min(max_ticks)
+                cpu_check_max_edges.min(max_edges)
             );
         } else {
             clilog::warn!(
                 "CPU verification: {} total mismatches in {} ticks",
                 cpu_check_mismatches,
-                cpu_check_max_ticks.min(max_ticks)
+                cpu_check_max_edges.min(max_edges)
             );
         }
     }
@@ -4258,6 +3888,6 @@ pub fn run_cosim(
     CosimResult {
         passed: events_passed,
         uart_events,
-        ticks_simulated: max_ticks,
+        edges_simulated: max_edges,
     }
 }

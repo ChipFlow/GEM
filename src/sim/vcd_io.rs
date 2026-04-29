@@ -339,7 +339,7 @@ pub fn parse_input_vcd(
     aig: &AIG,
     script: &FlattenedScriptV1,
     netlistdb: &NetlistDB,
-    max_cycles: Option<usize>,
+    max_clock_edges: Option<usize>,
 ) -> ParsedInputVCD {
     use vcd_ng::{FFValueChange, FastFlowToken};
 
@@ -371,9 +371,9 @@ pub fn parse_input_vcd(
                             state[p as usize >> 5] &= !(1 << (p & 31));
                         }
                     }
-                    if let Some(max_cycles) = max_cycles {
-                        if offsets_timestamps.len() >= max_cycles {
-                            clilog::info!("reached maximum cycles, stop reading input vcd");
+                    if let Some(max_clock_edges) = max_clock_edges {
+                        if offsets_timestamps.len() >= max_clock_edges {
+                            clilog::info!("reached --max-clock-edges, stop reading input vcd");
                             break;
                         }
                     }

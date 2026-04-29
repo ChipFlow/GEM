@@ -78,9 +78,11 @@ struct SimArgs {
     #[clap(long)]
     check_with_cpu: bool,
 
-    /// Limit the number of simulated cycles.
+    /// Limit the number of simulated clock edges. One full clock cycle =
+    /// 2 edges (posedge + negedge) for single-domain. Matches chipflow
+    /// cxxrtl `num_steps` 1:1.
     #[clap(long)]
-    max_cycles: Option<usize>,
+    max_clock_edges: Option<usize>,
 
     /// JSON file path for extracting display format strings.
     #[clap(long)]
@@ -157,9 +159,11 @@ struct CosimArgs {
     #[clap(long, default_value = "64")]
     num_blocks: usize,
 
-    /// Maximum system clock ticks to simulate.
+    /// Limit the number of simulated clock edges. One full clock cycle =
+    /// 2 edges (posedge + negedge) for single-domain. Matches chipflow
+    /// cxxrtl `num_steps` 1:1.
     #[clap(long)]
-    max_cycles: Option<usize>,
+    max_clock_edges: Option<usize>,
 
     /// Enable verbose flash model debug output.
     #[clap(long)]
@@ -312,7 +316,7 @@ fn cmd_sim(args: SimArgs) {
         &design.aig,
         &design.script,
         &design.netlistdb,
-        args.max_cycles,
+        args.max_clock_edges,
     );
 
     // Set up output VCD writer
@@ -1406,7 +1410,7 @@ fn cmd_cosim(args: CosimArgs) {
         let timing_constraints = setup::build_timing_constraints(&design.script);
 
         let opts = CosimOpts {
-            max_cycles: args.max_cycles,
+            max_clock_edges: args.max_clock_edges,
             num_blocks: args.num_blocks,
             flash_verbose: args.flash_verbose,
             check_with_cpu: args.check_with_cpu,
