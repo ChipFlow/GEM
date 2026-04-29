@@ -1,5 +1,14 @@
 # Handoff — WS3 Phase 3.4: delete SDF parser + migrate test fixtures
 
+> **STATUS: RESOLVED 2026-04-29.** Phase 3.4 landed in `9b2eb00` (deletion +
+> migration), with follow-ups in `6d999c8` (mcu_soc IR-conversion guidance),
+> `41542c4` (events_reference tolerant parser + wiring), `91147dc`
+> (max-cycles half-cycle gotcha doc), `2dd5889` (gitignore hygiene).
+> End-to-end verified on sky130 mcu_soc — see
+> [`post-ws3-handoff.md`](post-ws3-handoff.md) for current state and open
+> follow-ups. The body of this document is preserved as historical context
+> for the cutover.
+
 **Created:** 2026-04-28
 **Resumes:** [`ws3-delete-sdf-parser.md`](ws3-delete-sdf-parser.md), Phase 3.4
 **Predecessor commits in `main`:** `93bbdd3` (3.1), `d51c583` (3.2), `52229b2` (3.3)
