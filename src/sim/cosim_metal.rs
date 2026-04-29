@@ -1435,6 +1435,7 @@ impl MultiClockScheduler {
         reset_val: u8,
         constant_inputs: &HashMap<String, u8>,
         constant_ports: &HashMap<String, u8>,
+        model_driven_positions: &[u32],
     ) -> Vec<BitOp> {
         let tick = &self.schedule[tick_idx % self.schedule.len()];
         let mut ops = Vec::new();
@@ -1505,6 +1506,16 @@ impl MultiClockScheduler {
                     value: *val as u32,
                 });
             }
+        }
+
+        // Placeholders for peripheral-model-driven inputs. Initial value 0;
+        // updated each batch in `update_model_driven_in_ops` to reflect the
+        // current model state.
+        for &pos in model_driven_positions {
+            ops.push(BitOp {
+                position: pos,
+                value: 0,
+            });
         }
 
         ops
@@ -2330,6 +2341,35 @@ pub fn run_cosim(
         }
     }
 
+    // Instantiate CPU-side peripheral models from config.gpios. Their
+    // driven input positions are appended as placeholder BitOps in each
+    // edge_buffer's ops list so state_prep applies them every edge; values
+    // are updated dynamically in the main loop as `set` actions fire.
+    let mut gpio_models: Vec<crate::sim::models::gpio::GpioModel> = Vec::new();
+    let mut model_driven_positions: Vec<u32> = Vec::new();
+    for gcfg in &config.gpios {
+        match crate::sim::models::gpio::GpioModel::new(gcfg, |idx| {
+            gpio_map.input_bits.get(&idx).copied()
+        }) {
+            Some(model) => {
+                model_driven_positions.extend_from_slice(model.driven_positions());
+                clilog::info!(
+                    "GPIO model `{}` registered: {} pins",
+                    model.name,
+                    model.pin_count()
+                );
+                gpio_models.push(model);
+            }
+            None => {
+                panic!(
+                    "GPIO config `{}` references pin indices not present in input \
+                     mapping; pins={:?}",
+                    gcfg.name, gcfg.pins
+                );
+            }
+        }
+    }
+
     // Build per-edge BitOp buffers from multi-clock schedule.
     //
     // The scheduler produces one entry per GCD tick (= one clock edge for
@@ -2353,6 +2393,7 @@ pub fn run_cosim(
                 reset_val_active,
                 &config.constant_inputs,
                 &config.constant_ports,
+                &model_driven_positions,
             );
             let len = ops.len();
             let ops_buf = create_ops_buffer(&simulator.device, &ops);
@@ -2836,6 +2877,27 @@ pub fn run_cosim(
         }
     };
 
+    // Helper: sync model-driven input bits into all per-edge ops buffers.
+    // Called whenever a peripheral model's state changes (e.g. after a
+    // queued action is applied).
+    let update_model_driven_in_ops = |overrides: &crate::sim::models::ModelOverrides| {
+        if overrides.is_empty() {
+            return;
+        }
+        for (sched_idx, (ref _params, ref ops_buf)) in
+            schedule_buffers.edge_buffers.iter().enumerate()
+        {
+            let len = schedule_buffers.edge_ops_lens[sched_idx];
+            let ops: &mut [BitOp] =
+                unsafe { std::slice::from_raw_parts_mut(ops_buf.contents() as *mut BitOp, len) };
+            for op in ops.iter_mut() {
+                if let Some(&val) = overrides.get(&op.position) {
+                    op.value = val as u32;
+                }
+            }
+        }
+    };
+
     // Track schedule position across batches
     let mut schedule_offset: usize = 0;
 
@@ -2897,7 +2959,28 @@ pub fn run_cosim(
 
     let mut tick: usize = 0;
     let mut stop_triggered = false;
+    let mut gpio_models = gpio_models; // re-bind as mutable for the loop
     while tick < max_edges {
+        // Drain queued actions for each peripheral model and sync resulting
+        // input drives into the per-edge ops buffers.
+        if let Some(d) = input_dispatcher.as_mut() {
+            let mut overrides = crate::sim::models::ModelOverrides::new();
+            let mut any_change = false;
+            for model in gpio_models.iter_mut() {
+                let actions = d.pending_actions(&model.name);
+                if !actions.is_empty() {
+                    for a in &actions {
+                        model.apply_action(a);
+                    }
+                    any_change = true;
+                }
+                model.contribute_overrides(&mut overrides);
+            }
+            if any_change {
+                update_model_driven_in_ops(&overrides);
+            }
+        }
+
         // Honor a `stop` action from the input dispatcher.
         if let Some(d) = input_dispatcher.as_ref() {
             if d.stopped() {

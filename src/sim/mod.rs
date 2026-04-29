@@ -13,6 +13,7 @@
 pub mod cosim_metal;
 pub mod cpu_reference;
 pub mod input_stim;
+pub mod models;
 pub mod setup;
 pub mod timing_ir_loader;
 pub mod vcd_io;
