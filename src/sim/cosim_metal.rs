@@ -2781,6 +2781,36 @@ pub fn run_cosim(
         None
     };
 
+    // ── Input stimulus dispatcher (optional) ─────────────────────────────
+    //
+    // Loads a chipflow-format `input.json` if one is configured. Supports
+    // `stop` actions (halt simulation cleanly) and `uart_<N> tx` waits
+    // (synchronize on captured UART TX bytes). GPIO / UART RX / I2C / SPI
+    // peripheral drivers are follow-ups.
+    let mut input_dispatcher = match config.input_commands.as_deref() {
+        Some(path_str) => {
+            let path = std::path::Path::new(path_str);
+            match crate::sim::input_stim::InputDispatcher::from_file(path) {
+                Ok(d) => {
+                    clilog::info!(
+                        "Loaded input stimulus: {} commands from {}",
+                        d.len(),
+                        path.display()
+                    );
+                    Some(d)
+                }
+                Err(e) => {
+                    panic!(
+                        "Failed to load input commands from {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+        }
+        None => None,
+    };
+
     // ── GPU-only simulation loop ─────────────────────────────────────────
     //
     // All IO models (flash + UART) run on GPU. No per-tick CPU interaction.
@@ -2866,11 +2896,31 @@ pub fn run_cosim(
     let mut post_reset_state_snapshot: Option<Vec<u32>> = None;
 
     let mut tick: usize = 0;
+    let mut stop_triggered = false;
     while tick < max_edges {
+        // Honor a `stop` action from the input dispatcher.
+        if let Some(d) = input_dispatcher.as_ref() {
+            if d.stopped() {
+                clilog::info!(
+                    "Stop action triggered at edge {}{}",
+                    tick,
+                    d.stop_reason()
+                        .map(|r| format!(": {}", r))
+                        .unwrap_or_default()
+                );
+                stop_triggered = true;
+                break;
+            }
+        }
         let dff_dump_active = dff_dump_state
             .as_ref()
             .map_or(false, |(_, _, max)| tick < reset_edges + *max);
-        let batch = if opts.check_with_cpu && tick < cpu_check_max_edges {
+        // When input stimulus is active, force single-edge batches so that
+        // `wait`/`action`/`stop` boundaries can be honored at edge granularity.
+        let force_single_edge = input_dispatcher.is_some();
+        let batch = if force_single_edge {
+            1
+        } else if opts.check_with_cpu && tick < cpu_check_max_edges {
             1 // single tick for CPU comparison
         } else if stimulus_vcd_state.is_some() || timing_vcd_state.is_some() {
             1 // single tick for stimulus/timing VCD capture
@@ -3427,11 +3477,14 @@ pub fn run_cosim(
                 };
                 clilog::info!("UART TX: 0x{:02X} '{}'", byte, ch);
                 uart_events.push(UartEvent {
-                    timestamp: tick, // approximate tick
+                    timestamp: tick, // approximate edge
                     peripheral: "uart_0".to_string(),
                     event: "tx".to_string(),
                     payload: byte,
                 });
+                if let Some(d) = input_dispatcher.as_mut() {
+                    d.on_event("uart_0", "tx", &serde_json::json!(byte));
+                }
                 uart_read_head += 1;
             }
         }
@@ -3707,16 +3760,38 @@ pub fn run_cosim(
 
     println!();
     println!("=== GPU Simulation Results ===");
-    println!("Edges simulated: {}", max_edges);
+    let edges_actually_simulated = if stop_triggered { tick } else { max_edges };
+    if stop_triggered {
+        println!(
+            "Edges simulated: {} (stopped early via input.json `stop`)",
+            edges_actually_simulated
+        );
+    } else {
+        println!("Edges simulated: {}", edges_actually_simulated);
+    }
     println!("UART bytes received: {}", uart_events.len());
 
-    if max_edges > 0 {
-        let us_per_edge = sim_elapsed.as_micros() as f64 / max_edges as f64;
+    if edges_actually_simulated > 0 {
+        let us_per_edge = sim_elapsed.as_micros() as f64 / edges_actually_simulated as f64;
         println!(
-            "Time per tick: {:.1}μs ({:.1}s total)",
+            "Time per edge: {:.1}μs ({:.1}s total)",
             us_per_edge,
             sim_elapsed.as_secs_f64()
         );
+    }
+
+    // Warn about input commands that never fired (likely a wait that the
+    // firmware didn't satisfy within --max-clock-edges).
+    if let Some(d) = input_dispatcher.as_ref() {
+        let remaining = d.remaining();
+        if remaining > 0 && !d.stopped() {
+            clilog::warn!(
+                "{} input command(s) remain unconsumed at end of simulation \
+                 (cursor stuck at index {} — likely a wait that never matched)",
+                remaining,
+                d.cursor()
+            );
+        }
     }
 
     // Print UART output as string
@@ -3888,6 +3963,6 @@ pub fn run_cosim(
     CosimResult {
         passed: events_passed,
         uart_events,
-        edges_simulated: max_edges,
+        edges_simulated: edges_actually_simulated,
     }
 }

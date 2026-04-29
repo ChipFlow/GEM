@@ -202,6 +202,11 @@ pub struct TestbenchConfig {
     pub sram_init: Option<SramInitConfig>,
     pub output_events: Option<String>,
     pub events_reference: Option<String>,
+    /// Path to an `input.json` file containing a list of stimulus
+    /// commands (chipflow schema: `wait` / `action` / `stop`). Drives
+    /// inputs in response to firmware output events; without it, only
+    /// constant inputs are applied. See `sim::input_stim` for details.
+    pub input_commands: Option<String>,
     /// Timing simulation configuration for post-layout SDF back-annotation.
     pub timing: Option<TimingSimConfig>,
     /// Maps GPIO indices to actual port names in the netlist.
