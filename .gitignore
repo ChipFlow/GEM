@@ -15,6 +15,10 @@ __pycache__/
 # Claude Code session data
 .claude/
 
+# tldr local cache + ignore config
+.tldr/
+.tldrignore
+
 # Simulation artifacts
 *.vvp
 *.vcd
@@ -23,6 +27,11 @@ debug_trace.csv
 *_watchlist.json
 api_artifacts/
 tb_verify_sim
+
+# Binary timing IR. Commit JSON dumps (e.g. via timing-ir-diff's
+# pretty-printed output) instead — *.jtir.json is intentionally not
+# ignored so those can be checked in.
+*.jtir
 
 # Build output directories
 **/build/results/
