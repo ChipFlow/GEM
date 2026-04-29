@@ -1,2 +1,2 @@
-createSrcSidebar('[["jacquard",["",[["sim",[],["cpu_reference.rs","mod.rs","setup.rs","vcd_io.rs"]]],["aig.rs","aigpdk.rs","display.rs","event_buffer.rs","flatten.rs","lib.rs","liberty_parser.rs","pe.rs","repcut.rs","sdf_parser.rs","sky130.rs","sky130_pdk.rs","staging.rs","testbench.rs"]]]]');
-//{"start":19,"fragment_lengths":[271]}
+createSrcSidebar('[["jacquard",["",[["sim",[],["cpu_reference.rs","mod.rs","setup.rs","timing_ir_loader.rs","vcd_io.rs"]]],["aig.rs","aigpdk.rs","display.rs","event_buffer.rs","flatten.rs","lib.rs","liberty_parser.rs","pe.rs","repcut.rs","sky130.rs","sky130_pdk.rs","staging.rs","testbench.rs"]]],["jacquard",["",[["sim",[],["cpu_reference.rs","mod.rs","setup.rs","vcd_io.rs"]]],["aig.rs","aigpdk.rs","display.rs","event_buffer.rs","flatten.rs","lib.rs","liberty_parser.rs","pe.rs","repcut.rs","sdf_parser.rs","sky130.rs","sky130_pdk.rs","staging.rs","testbench.rs"]]]]');
+//{"start":19,"fragment_lengths":[277,272]}

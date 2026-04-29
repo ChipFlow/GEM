@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["cpu_reference","setup","vcd_io"]};
+window.SIDEBAR_ITEMS = {"mod":["cpu_reference","setup","timing_ir_loader","vcd_io"]};

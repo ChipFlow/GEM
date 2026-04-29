@@ -195,7 +195,7 @@
 <a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>cur_split = level_split[i];
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span>last_split = <span class="kw">match </span>i {
 <a href=#197 id=197 data-nosnippet>197</a>            <span class="number">0 </span>=&gt; <span class="number">0</span>,
-<a href=#198 id=198 data-nosnippet>198</a>            i @ <span class="kw">_ </span>=&gt; level_split[i - <span class="number">1</span>],
+<a href=#198 id=198 data-nosnippet>198</a>            i =&gt; level_split[i - <span class="number">1</span>],
 <a href=#199 id=199 data-nosnippet>199</a>        };
 <a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>staged = StagedAIG::from_split(
 <a href=#201 id=201 data-nosnippet>201</a>            aig,
@@ -206,7 +206,7 @@
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>endpt <span class="kw">in </span><span class="kw-2">&amp;</span>staged.endpoints {
 <a href=#207 id=207 data-nosnippet>207</a>            <span class="macro">assert!</span>(unrealized_orig_endpoints.swap_remove(<span class="kw-2">&amp;</span>endpt));
 <a href=#208 id=208 data-nosnippet>208</a>        }
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>primary_inputs = primary_inputs.get_or_insert_with(|| Default::default());
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>primary_inputs = primary_inputs.get_or_insert_with(Default::default);
 <a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>inp <span class="kw">in </span><span class="kw-2">&amp;</span>staged.primary_output_pins {
 <a href=#211 id=211 data-nosnippet>211</a>            primary_inputs.insert(inp);
 <a href=#212 id=212 data-nosnippet>212</a>        }
@@ -219,7 +219,7 @@
 <a href=#219 id=219 data-nosnippet>219</a>
 <a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">let </span>last_split = <span class="kw">match </span>level_split.len() {
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="number">0 </span>=&gt; <span class="number">0</span>,
-<a href=#222 id=222 data-nosnippet>222</a>        i @ <span class="kw">_ </span>=&gt; level_split[i - <span class="number">1</span>],
+<a href=#222 id=222 data-nosnippet>222</a>        i =&gt; level_split[i - <span class="number">1</span>],
 <a href=#223 id=223 data-nosnippet>223</a>    };
 <a href=#224 id=224 data-nosnippet>224</a>    ret.push((
 <a href=#225 id=225 data-nosnippet>225</a>        last_split,

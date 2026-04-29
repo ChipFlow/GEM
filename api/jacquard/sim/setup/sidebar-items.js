@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["build_timing_constraints","load_design","load_sdf"],"struct":["DesignArgs","LoadedDesign"]};
+window.SIDEBAR_ITEMS = {"fn":["build_timing_constraints","load_design","load_sdf_via_opensta_to_ir","load_timing_ir"],"struct":["DesignArgs","LoadedDesign"]};
