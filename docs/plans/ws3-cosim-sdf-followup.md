@@ -74,6 +74,49 @@ contributions are missing from timing. Returns when WS2.2 lands.
 `sdf_corner` (the fields would be silently ignored if added back;
 cosim does not consume them).
 
+## Events-reference comparison: nuances
+
+`tests/mcu_soc/events_reference.json` was wired into the sky130 cosim
+config as part of phase 3.4 verification. End-to-end pipeline result
+on a 3M-tick run:
+
+- 67 UART bytes captured; the reference's 155 UART events end at
+  timestamp 4,187,182. All 67 captured payloads match the reference's
+  leading bytes (decoded UART output: `....: nyaa~!\nSoC type:
+  CA7F100F\nFlash ID: CA7CA7FF\nQuad mode`). No payload divergence.
+- 15 non-UART entries in the reference (cxxrtl-emitted SPI `deselect`
+  events with `payload: ""`) are filtered out at parse time by the
+  tolerant deserializer in `cosim_metal.rs::run_cosim`. Without that
+  filter the comparison panicked on the first SPI entry.
+
+### `--max-cycles` is half-cycles, not clock cycles
+
+Important footgun discovered while comparing against the cxxrtl
+reference: Jacquard's cosim `--max-cycles N` (and the `num_cycles`
+config field) counts **scheduler ticks**, where one tick = one
+half-period of the GCD of all clock domains. For a single 25 MHz
+clock that's 20 ns granularity, so `--max-cycles 3000000` is 1.5 M
+clock cycles = 60 ms simulated time. Verified via
+`MultiClockScheduler::new` at `src/sim/cosim_metal.rs:1557` (comment:
+*"alternating between falling … and rising … edges"*; `lcm/gcd = 2`
+for a single domain).
+
+cxxrtl harnesses (chipflow's default `num_steps = 3,000,000`) count
+**full evaluation steps** ≈ full clock cycles, so the same numeric
+budget covers 2× more simulated time. Capturing the full 155-event
+reference sequence on this design therefore needs `--max-cycles
+≈ 6,000,000` here. Either:
+
+- Bump the budget when running the comparison, or
+- Add a CLI alias `--max-clock-cycles` that takes 2 × clock-domain
+  count and converts to ticks internally (clearer naming; defer to
+  follow-up).
+
+After accounting for the half-cycle factor, Jacquard's per-byte rate
+is within ~14 % of cxxrtl on this design — bound primarily by the
+SPI-flash model's response latency (the firmware spends ~95 % of
+cycles waiting on flash reads at this point in boot).
+
 ## Option A — restore cosim `--sdf` ergonomics
 
 When this becomes a priority, mirror the `jacquard sim` surface:
