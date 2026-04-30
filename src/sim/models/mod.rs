@@ -11,6 +11,8 @@
 //! protocol semantics so a chipflow `input.json` is portable to Jacquard.
 
 pub mod gpio;
+pub mod i2c;
+pub mod spi;
 pub mod uart;
 
 use std::collections::HashMap;
@@ -20,3 +22,13 @@ use std::collections::HashMap;
 /// these to the per-edge state_prep ops buffers so the GPU sees the
 /// driven inputs at the next dispatch.
 pub type ModelOverrides = HashMap<u32, u8>;
+
+/// An output event emitted by a peripheral model. The cosim loop forwards
+/// these to the [`crate::sim::input_stim::InputDispatcher`] so `wait`
+/// commands can synchronize on them.
+#[derive(Debug, Clone)]
+pub struct EmittedEvent {
+    pub peripheral: String,
+    pub event: String,
+    pub payload: serde_json::Value,
+}
