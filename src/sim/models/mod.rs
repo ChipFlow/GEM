@@ -11,6 +11,7 @@
 //! protocol semantics so a chipflow `input.json` is portable to Jacquard.
 
 pub mod gpio;
+pub mod uart;
 
 use std::collections::HashMap;
 

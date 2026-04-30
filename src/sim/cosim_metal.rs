@@ -2341,11 +2341,18 @@ pub fn run_cosim(
         }
     }
 
-    // Instantiate CPU-side peripheral models from config.gpios. Their
-    // driven input positions are appended as placeholder BitOps in each
-    // edge_buffer's ops list so state_prep applies them every edge; values
-    // are updated dynamically in the main loop as `set` actions fire.
+    // Build the scheduler up-front so peripheral models that need to know
+    // edges-per-cycle (e.g. UART RX driver's baud_div_edges) can be built
+    // before the per-edge ops buffers.
+    let scheduler = MultiClockScheduler::new(&clock_timings);
+    let edges_per_period = scheduler.schedule.len();
+
+    // Instantiate CPU-side peripheral models from config. Their driven
+    // input positions are appended as placeholder BitOps in each
+    // edge_buffer's ops list so state_prep applies them every edge;
+    // values are updated dynamically in the main loop as actions fire.
     let mut gpio_models: Vec<crate::sim::models::gpio::GpioModel> = Vec::new();
+    let mut uart_rx_drivers: Vec<crate::sim::models::uart::UartRxDriver> = Vec::new();
     let mut model_driven_positions: Vec<u32> = Vec::new();
     for gcfg in &config.gpios {
         match crate::sim::models::gpio::GpioModel::new(gcfg, |idx| {
@@ -2369,6 +2376,32 @@ pub fn run_cosim(
             }
         }
     }
+    if let Some(uart_cfg) = config.uart.as_ref() {
+        if let Some(&rx_pos) = gpio_map.input_bits.get(&uart_cfg.rx_gpio) {
+            // baud_div_edges = clock_hz/baud * edges_per_period.
+            // edges_per_period is the schedule length in edges per LCM
+            // period; for single-domain that's 2 (= edges per clock cycle).
+            let baud_div_edges = uart_cycles_per_bit * edges_per_period as u32;
+            let driver = crate::sim::models::uart::UartRxDriver::new(
+                "uart_0".to_string(),
+                rx_pos,
+                baud_div_edges,
+            );
+            model_driven_positions.push(driver.driven_position());
+            clilog::info!(
+                "UART RX driver `{}` registered: rx_gpio={}, baud_div_edges={}",
+                driver.name,
+                uart_cfg.rx_gpio,
+                baud_div_edges
+            );
+            uart_rx_drivers.push(driver);
+        } else {
+            clilog::warn!(
+                "UART config rx_gpio={} not in input mapping; RX driver disabled",
+                uart_cfg.rx_gpio
+            );
+        }
+    }
 
     // Build per-edge BitOp buffers from multi-clock schedule.
     //
@@ -2380,8 +2413,6 @@ pub fn run_cosim(
     // (one falling, one rising); for multi-domain, schedule_len edges per
     // LCM period at GCD granularity.
     let schedule_buffers = {
-        let scheduler = MultiClockScheduler::new(&clock_timings);
-        let edges_per_period = scheduler.schedule.len();
         let mut edge_buffers = Vec::with_capacity(edges_per_period);
         let mut edge_ops_lens = Vec::with_capacity(edges_per_period);
 
@@ -2960,22 +2991,52 @@ pub fn run_cosim(
     let mut tick: usize = 0;
     let mut stop_triggered = false;
     let mut gpio_models = gpio_models; // re-bind as mutable for the loop
+    let mut uart_rx_drivers = uart_rx_drivers;
     while tick < max_edges {
-        // Drain queued actions for each peripheral model and sync resulting
-        // input drives into the per-edge ops buffers.
-        if let Some(d) = input_dispatcher.as_mut() {
+        // Drain queued actions for each peripheral model, advance per-edge
+        // model state, and sync resulting input drives into the per-edge
+        // ops buffers.
+        if input_dispatcher.is_some() || !uart_rx_drivers.is_empty() {
             let mut overrides = crate::sim::models::ModelOverrides::new();
             let mut any_change = false;
+
+            // GPIO models: action-driven only (no per-edge state).
             for model in gpio_models.iter_mut() {
-                let actions = d.pending_actions(&model.name);
-                if !actions.is_empty() {
-                    for a in &actions {
-                        model.apply_action(a);
+                if let Some(d) = input_dispatcher.as_mut() {
+                    let actions = d.pending_actions(&model.name);
+                    if !actions.is_empty() {
+                        for a in &actions {
+                            model.apply_action(a);
+                        }
+                        any_change = true;
                     }
-                    any_change = true;
                 }
                 model.contribute_overrides(&mut overrides);
             }
+
+            // UART RX drivers: action-driven AND per-edge state machine.
+            // step_edge() runs every edge regardless of whether actions
+            // fired, since the line value depends on tx_counter.
+            for driver in uart_rx_drivers.iter_mut() {
+                if let Some(d) = input_dispatcher.as_mut() {
+                    let actions = d.pending_actions(&driver.name);
+                    if !actions.is_empty() {
+                        for a in &actions {
+                            driver.apply_action(a);
+                        }
+                        any_change = true;
+                    }
+                }
+                let prev = driver.is_active();
+                driver.step_edge();
+                // Always sync UART RX values; the line may change every edge
+                // while a byte is in flight.
+                if driver.is_active() || prev {
+                    any_change = true;
+                }
+                driver.contribute_overrides(&mut overrides);
+            }
+
             if any_change {
                 update_model_driven_in_ops(&overrides);
             }
