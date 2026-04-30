@@ -47,6 +47,41 @@ fn dump_to_ir_roundtrip_via_flatbuffers() {
 }
 
 #[test]
+fn interconnect_records_are_emitted_to_ir() {
+    let dump = "\
+# format-version: 1
+CORNER\t0\tdefault\ttt\t1.0\t25.0
+ARC\tu1\tA\tY\t0\t100.0\t120.0\t140.0\t110.0\t130.0\t150.0\t\tAsserted
+INTERCONNECT\tn1\tu1/Y\tu2/A\t0\t10.0\t15.0\t20.0\tAsserted
+INTERCONNECT\tn2\tu2/Y\tu3/A\t0\t5.5\t8.0\t12.5\tAsserted
+# end
+";
+    let doc = parse_dump(dump).expect("parses");
+    let (buf, stats) = build_ir(&doc, "0.1.0");
+    assert_eq!(stats.interconnects, 2);
+
+    let ir = root_as_timing_ir(&buf).expect("readable IR");
+    let ics = ir.interconnect_delays().expect("interconnect_delays present");
+    assert_eq!(ics.len(), 2);
+
+    let ic0 = ics.get(0);
+    assert_eq!(ic0.net(), Some("n1"));
+    assert_eq!(ic0.from_pin(), Some("u1/Y"));
+    assert_eq!(ic0.to_pin(), Some("u2/A"));
+    let d0 = ic0.delay().unwrap();
+    assert_eq!(d0.len(), 1);
+    let v0 = d0.get(0);
+    assert_eq!(v0.corner_index(), 0);
+    assert!((v0.min() - 10.0).abs() < 1e-6);
+    assert!((v0.typ() - 15.0).abs() < 1e-6);
+    assert!((v0.max() - 20.0).abs() < 1e-6);
+
+    let ic1 = ics.get(1);
+    assert_eq!(ic1.net(), Some("n2"));
+    assert!((ic1.delay().unwrap().get(0).typ() - 8.0).abs() < 1e-6);
+}
+
+#[test]
 fn empty_arc_list_produces_zero_arcs_in_ir() {
     let dump = "\
 # format-version: 1

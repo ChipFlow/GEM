@@ -3,9 +3,9 @@
 # Reads inputs, links the design, walks OpenSTA's timing graph, and
 # emits a dump in the format consumed by crates/opensta-to-ir/src/dump.rs.
 #
-# Phase 0 WS2 (Phase 2.3): single-corner CORNER + ARC + SETUP_HOLD
-# records. INTERCONNECT, multi-corner, and vendor extensions are later
-# slices. The Rust side already supports the full record set.
+# Phase 0 WS2 (2.3 + 2.2): single-corner CORNER + ARC + SETUP_HOLD +
+# INTERCONNECT records. Multi-corner and vendor extensions are later
+# slices. The Rust side supports the full record set.
 #
 # Inputs are passed via environment variables to keep the Tcl simple and
 # avoid quoting issues. See src/opensta.rs for the producer side.
@@ -84,8 +84,10 @@ if { [string length $sdc_file] > 0 } { lappend input_files $sdc_file }
 
 # arcs:   cell-internal delay arcs, keyed "cell|from|to".
 # checks: cell-internal setup/hold checks, keyed "cell|d|clk|edge".
+# wires:  net interconnect delays, keyed "net|from_pin|to_pin".
 set arcs [dict create]
 set checks [dict create]
+set wires [dict create]
 
 # Take the larger of two values when one may be empty.
 proc max_or_set { current candidate } {
@@ -119,6 +121,42 @@ while { [$vit has_next] } {
     while { [$eit has_next] } {
         set edge [$eit next]
         set role [$edge role]
+
+        # Wire delay edge — connects a driver pin on one instance to a
+        # load pin on another. Emit an INTERCONNECT record per
+        # (net, from_pin, to_pin); take the max delay across the edge's
+        # timing arcs to match the existing rise/fall pessimism.
+        if { $role eq "wire" } {
+            set ef_pin [$edge from_pin]
+            set et_pin [$edge to_pin]
+            set net [$ef_pin net]
+            if { $net eq "NULL" || $net eq "" } continue
+            set net_name [get_full_name $net]
+            set from_full [get_full_name $ef_pin]
+            set to_full [get_full_name $et_pin]
+            set d_min ""
+            set d_max ""
+            foreach arc [$edge timing_arcs] {
+                set delays [$edge arc_delays $arc]
+                set arc_min [expr {[lindex $delays 0] * $SECONDS_TO_PS}]
+                set arc_max [expr {[lindex $delays 1] * $SECONDS_TO_PS}]
+                set d_min [max_or_set $d_min $arc_min]
+                set d_max [max_or_set $d_max $arc_max]
+            }
+            if { $d_min eq "" } continue
+            set wkey "$net_name|$from_full|$to_full"
+            if { ![dict exists $wires $wkey] } {
+                dict set wires $wkey net $net_name
+                dict set wires $wkey from_pin $from_full
+                dict set wires $wkey to_pin $to_full
+                dict set wires $wkey min $d_min
+                dict set wires $wkey max $d_max
+            } else {
+                dict set wires $wkey min [max_or_set [dict get $wires $wkey min] $d_min]
+                dict set wires $wkey max [max_or_set [dict get $wires $wkey max] $d_max]
+            }
+            continue
+        }
 
         set pair [pin_pair [$edge from_pin] [$edge to_pin]]
         if { [llength $pair] == 0 } continue
@@ -249,6 +287,20 @@ dict for {key data} $checks {
         $cell_inst $d_pin $clk_pin $edge_label \
         $setup_min $setup_typ $setup_max \
         $hold_min $hold_typ $hold_max \
+        $origin]
+}
+
+dict for {key data} $wires {
+    set net_name [dict get $data net]
+    set from_pin [dict get $data from_pin]
+    set to_pin [dict get $data to_pin]
+    set d_min [dict get $data min]
+    set d_max [dict get $data max]
+    set d_typ [expr {($d_min + $d_max) / 2.0}]
+
+    puts $fh [format "INTERCONNECT\t%s\t%s\t%s\t0\t%g\t%g\t%g\t%s" \
+        $net_name $from_pin $to_pin \
+        $d_min $d_typ $d_max \
         $origin]
 }
 

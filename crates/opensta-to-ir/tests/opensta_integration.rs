@@ -28,6 +28,44 @@ module dff_test(CLK, D, Q);
 endmodule
 "#;
 
+// Two-AND chain — the wire from u1.Y to u2.A is the load-bearing
+// interconnect we want SDF back-annotation to populate.
+const CHAIN_VERILOG: &str = r#"
+module chain(A, B, C, Y);
+  input A, B, C;
+  output Y;
+  wire mid;
+  AND2_00_0 u1 (.A(A), .B(B), .Y(mid));
+  AND2_00_0 u2 (.A(mid), .B(C), .Y(Y));
+endmodule
+"#;
+
+// Minimal SDF with one INTERCONNECT entry on the wire u1/Y → u2/A.
+// Hierarchy separator matches the design's flat namespace.
+const CHAIN_SDF: &str = r#"(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "chain")
+  (DATE "Mon Jan 01 00:00:00 2024")
+  (VENDOR "test")
+  (PROGRAM "test")
+  (VERSION "0.0.0")
+  (DIVIDER /)
+  (VOLTAGE 1.800::1.800)
+  (PROCESS "typical")
+  (TEMPERATURE 25.000::25.000)
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "chain")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (INTERCONNECT u1/Y u2/A (0.040:0.050:0.060) (0.045:0.055:0.065))
+      )
+    )
+  )
+)
+"#;
+
 fn bin() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_opensta-to-ir"))
 }
@@ -162,4 +200,75 @@ fn aigpdk_dff_emits_setup_hold_records() {
     assert_eq!(setup.len(), 1, "single corner");
     let hold = c0.hold().expect("hold values");
     assert_eq!(hold.len(), 1, "single corner");
+}
+
+#[test]
+fn chain_with_sdf_emits_interconnect_delay() {
+    let Some(_sta) = find_opensta(None) else {
+        eprintln!("skipping: OpenSTA not built; run scripts/build-opensta.sh");
+        return;
+    };
+
+    let dir = TempDir::new().unwrap();
+    let v_path = dir.path().join("chain.v");
+    let sdf_path = dir.path().join("chain.sdf");
+    let out_path = dir.path().join("chain.jtir");
+    std::fs::write(&v_path, CHAIN_VERILOG).unwrap();
+    std::fs::write(&sdf_path, CHAIN_SDF).unwrap();
+
+    let lib = aigpdk_lib();
+    let output = Command::new(bin())
+        .arg("--liberty")
+        .arg(&lib)
+        .arg("--verilog")
+        .arg(&v_path)
+        .arg("--sdf")
+        .arg(&sdf_path)
+        .arg("--top")
+        .arg("chain")
+        .arg("--output")
+        .arg(&out_path)
+        .output()
+        .expect("run opensta-to-ir");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    let buf = std::fs::read(&out_path).expect("output IR written");
+    let ir = root_as_timing_ir(&buf).expect("readable IR");
+
+    let ics = ir
+        .interconnect_delays()
+        .expect("interconnect_delays vector present");
+    assert!(
+        !ics.is_empty(),
+        "expected at least one INTERCONNECT (annotated wire u1/Y → u2/A); got 0"
+    );
+
+    // Find the u1/Y → u2/A interconnect.
+    let mut found = None;
+    for i in 0..ics.len() {
+        let ic = ics.get(i);
+        if ic.from_pin() == Some("u1/Y") && ic.to_pin() == Some("u2/A") {
+            found = Some(ic);
+            break;
+        }
+    }
+    let ic = found.expect("u1/Y → u2/A interconnect missing from IR");
+    let delay = ic.delay().expect("delay vector");
+    assert_eq!(delay.len(), 1, "single corner");
+    let v = delay.get(0);
+    assert_eq!(v.corner_index(), 0);
+    // SDF entry was 0.040..0.060 ns → 40..60 ps. Allow either rise or fall
+    // group (model takes max across them = 65 ps).
+    assert!(
+        v.max() >= 40.0 && v.max() <= 70.0,
+        "interconnect max {} ps outside expected 40..70 ps from SDF",
+        v.max()
+    );
 }

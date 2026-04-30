@@ -1,14 +1,15 @@
 //! Build a timing-IR FlatBuffers document from parsed dump records.
 //!
-//! Phase 0 WS2 (Phase 2.3) wires up corners, timing arcs, and setup/hold
-//! checks. Interconnect delays and vendor extensions are present in the
-//! parser and counted here, but their IR emission lands in later slices.
+//! Phase 0 WS2 wires up corners, timing arcs, setup/hold checks, and
+//! interconnect (wire) delays. Vendor extensions are still parsed and
+//! counted here but not yet emitted.
 
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use timing_ir as ir;
 
 use crate::dump::{
-    ArcRecord, CornerRecord, DumpDocument, DumpRecord, Edge, Origin, SetupHoldRecord,
+    ArcRecord, CornerRecord, DumpDocument, DumpRecord, Edge, InterconnectRecord, Origin,
+    SetupHoldRecord,
 };
 
 /// Counts of records seen during build, useful for the WS5
@@ -58,6 +59,7 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
 
     let mut arc_offsets = Vec::new();
     let mut setup_hold_offsets = Vec::new();
+    let mut interconnect_offsets = Vec::new();
     for record in &doc.records {
         match record {
             DumpRecord::Arc(arc) => {
@@ -68,17 +70,19 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
                 setup_hold_offsets.push(build_setup_hold(&mut b, check));
                 stats.setup_hold_checks += 1;
             }
-            DumpRecord::Interconnect(_) => stats.interconnects += 1,
+            DumpRecord::Interconnect(ic) => {
+                interconnect_offsets.push(build_interconnect(&mut b, ic));
+                stats.interconnects += 1;
+            }
             DumpRecord::VendorExt(_) => stats.vendor_extensions += 1,
             DumpRecord::Corner(_) => {} // already handled
         }
     }
     let arcs_vec = b.create_vector(&arc_offsets);
     let setup_hold_vec = b.create_vector(&setup_hold_offsets);
+    let interconnect_vec = b.create_vector(&interconnect_offsets);
 
-    // Empty vectors for record kinds not yet wired. Interconnect and
-    // vendor extensions land in later slices.
-    let interconnect_vec = b.create_vector::<WIPOffset<ir::InterconnectDelay>>(&[]);
+    // Vendor extensions still pass through as count-only.
     let vendor_ext_vec = b.create_vector::<WIPOffset<ir::VendorExtension>>(&[]);
 
     let generator_tool = b.create_string(&format!("opensta-to-ir {generator_version}"));
@@ -145,6 +149,36 @@ fn build_arc<'a>(b: &mut FlatBufferBuilder<'a>, arc: &ArcRecord) -> WIPOffset<ir
             rise_delay: Some(rise_vec),
             fall_delay: Some(fall_vec),
             condition: Some(condition),
+            provenance: Some(provenance),
+        },
+    )
+}
+
+fn build_interconnect<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    ic: &InterconnectRecord,
+) -> WIPOffset<ir::InterconnectDelay<'a>> {
+    let net = b.create_string(&ic.net);
+    let from_pin = b.create_string(&ic.from_pin);
+    let to_pin = b.create_string(&ic.to_pin);
+
+    let delay = [ir::TimingValue::new(
+        ic.corner_index,
+        ic.min,
+        ic.typ,
+        ic.max,
+    )];
+    let delay_vec = b.create_vector(&delay);
+
+    let provenance = build_provenance(b, ic.origin);
+
+    ir::InterconnectDelay::create(
+        b,
+        &ir::InterconnectDelayArgs {
+            net: Some(net),
+            from_pin: Some(from_pin),
+            to_pin: Some(to_pin),
+            delay: Some(delay_vec),
             provenance: Some(provenance),
         },
     )
