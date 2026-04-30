@@ -3061,7 +3061,14 @@ pub fn run_cosim(
             .map_or(false, |(_, _, max)| tick < reset_edges + *max);
         // When input stimulus is active, force single-edge batches so that
         // `wait`/`action`/`stop` boundaries can be honored at edge granularity.
-        let force_single_edge = input_dispatcher.is_some();
+        // Skip the slowdown when the dispatcher has no remaining commands AND
+        // no peripheral driver is mid-transmission — at that point batched
+        // mode produces the same observable behavior at ~7× the throughput.
+        let dispatcher_has_work = input_dispatcher
+            .as_ref()
+            .map_or(false, |d| d.remaining() > 0);
+        let any_driver_active = uart_rx_drivers.iter().any(|d| d.is_active());
+        let force_single_edge = dispatcher_has_work || any_driver_active;
         let batch = if force_single_edge {
             1
         } else if opts.check_with_cpu && tick < cpu_check_max_edges {
