@@ -2992,6 +2992,24 @@ pub fn run_cosim(
     let mut stop_triggered = false;
     let mut gpio_models = gpio_models; // re-bind as mutable for the loop
     let mut uart_rx_drivers = uart_rx_drivers;
+
+    // Sync each model's INITIAL idle state into the per-edge ops buffers
+    // before the first GPU dispatch. Without this, model-driven positions
+    // would default to 0 — fine for GPIO inputs (0 is a sensible idle) but
+    // wrong for UART RX (idle is high, 1). The placeholder BitOps from
+    // `build_edge_ops` start at 0; this seeds them with the models'
+    // post-construction values.
+    if !gpio_models.is_empty() || !uart_rx_drivers.is_empty() {
+        let mut overrides = crate::sim::models::ModelOverrides::new();
+        for model in &gpio_models {
+            model.contribute_overrides(&mut overrides);
+        }
+        for driver in &uart_rx_drivers {
+            driver.contribute_overrides(&mut overrides);
+        }
+        update_model_driven_in_ops(&overrides);
+    }
+
     while tick < max_edges {
         // Drain queued actions for each peripheral model, advance per-edge
         // model state, and sync resulting input drives into the per-edge

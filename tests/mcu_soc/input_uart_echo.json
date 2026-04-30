@@ -1,0 +1,10 @@
+{
+    "commands": [
+        { "type": "wait", "peripheral": "uart_0", "event": "tx", "payload": 32 },
+        { "type": "action", "peripheral": "uart_0", "event": "tx", "payload": 65 },
+        { "type": "wait", "peripheral": "uart_0", "event": "tx", "payload": 65 },
+        { "type": "action", "peripheral": "uart_0", "event": "tx", "payload": 66 },
+        { "type": "wait", "peripheral": "uart_0", "event": "tx", "payload": 66 },
+        { "type": "stop", "reason": "echo confirmed" }
+    ]
+}
