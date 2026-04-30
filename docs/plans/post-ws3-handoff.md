@@ -1,7 +1,17 @@
 # Handoff — Post-WS3 (Phase 0 IR & Oracle)
 
+> **STATUS: RESOLVED 2026-04-30.** The follow-ups in this doc were
+> picked up in the next session. WS2.2 (interconnect_delays) landed in
+> `67210c0`. The cosim peripheral models, input-stimulus dispatcher,
+> edge-granularity refactor, and end-to-end mcu_soc/sky130 reference
+> match all landed too. See [`post-cosim-models-handoff.md`](post-cosim-models-handoff.md)
+> for current state and remaining open items (WS2.4, WS5, WS4 reframing,
+> peripheral wiring follow-ups). The body of this document is preserved
+> for historical context.
+
 **Created:** 2026-04-29
 **Predecessor:** [`ws3-phase-3-4-handoff.md`](ws3-phase-3-4-handoff.md) (resolved)
+**Successor:** [`post-cosim-models-handoff.md`](post-cosim-models-handoff.md)
 **Phase 0 plan:** [`phase-0-ir-and-oracle.md`](phase-0-ir-and-oracle.md)
 **Working tree:** clean. `main` is 22 commits ahead of `origin/main`; nothing pushed yet.
 
