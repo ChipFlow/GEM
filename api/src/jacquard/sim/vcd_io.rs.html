@@ -339,7 +339,7 @@
 <a href=#339 id=339 data-nosnippet>339</a>    aig: <span class="kw-2">&amp;</span>AIG,
 <a href=#340 id=340 data-nosnippet>340</a>    script: <span class="kw-2">&amp;</span>FlattenedScriptV1,
 <a href=#341 id=341 data-nosnippet>341</a>    netlistdb: <span class="kw-2">&amp;</span>NetlistDB,
-<a href=#342 id=342 data-nosnippet>342</a>    max_cycles: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#342 id=342 data-nosnippet>342</a>    max_clock_edges: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#343 id=343 data-nosnippet>343</a>) -&gt; ParsedInputVCD {
 <a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">use </span>vcd_ng::{FFValueChange, FastFlowToken};
 <a href=#345 id=345 data-nosnippet>345</a>
@@ -371,9 +371,9 @@
 <a href=#371 id=371 data-nosnippet>371</a>                            state[p <span class="kw">as </span>usize &gt;&gt; <span class="number">5</span>] &amp;= !(<span class="number">1 </span>&lt;&lt; (p &amp; <span class="number">31</span>));
 <a href=#372 id=372 data-nosnippet>372</a>                        }
 <a href=#373 id=373 data-nosnippet>373</a>                    }
-<a href=#374 id=374 data-nosnippet>374</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(max_cycles) = max_cycles {
-<a href=#375 id=375 data-nosnippet>375</a>                        <span class="kw">if </span>offsets_timestamps.len() &gt;= max_cycles {
-<a href=#376 id=376 data-nosnippet>376</a>                            <span class="macro">clilog::info!</span>(<span class="string">"reached maximum cycles, stop reading input vcd"</span>);
+<a href=#374 id=374 data-nosnippet>374</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(max_clock_edges) = max_clock_edges {
+<a href=#375 id=375 data-nosnippet>375</a>                        <span class="kw">if </span>offsets_timestamps.len() &gt;= max_clock_edges {
+<a href=#376 id=376 data-nosnippet>376</a>                            <span class="macro">clilog::info!</span>(<span class="string">"reached --max-clock-edges, stop reading input vcd"</span>);
 <a href=#377 id=377 data-nosnippet>377</a>                            <span class="kw">break</span>;
 <a href=#378 id=378 data-nosnippet>378</a>                        }
 <a href=#379 id=379 data-nosnippet>379</a>                    }
