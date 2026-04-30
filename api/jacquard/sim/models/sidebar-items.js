@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["gpio","i2c","spi","uart"],"struct":["EmittedEvent"],"type":["ModelOverrides"]};
+window.SIDEBAR_ITEMS = {"mod":["gpio","i2c","spi","uart"],"struct":["EmittedEvent"],"trait":["PeripheralModel"],"type":["ModelOverrides"]};
