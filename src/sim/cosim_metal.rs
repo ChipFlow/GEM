@@ -2351,29 +2351,30 @@ pub fn run_cosim(
     // input positions are appended as placeholder BitOps in each
     // edge_buffer's ops list so state_prep applies them every edge;
     // values are updated dynamically in the main loop as actions fire.
-    let mut gpio_models: Vec<crate::sim::models::gpio::GpioModel> = Vec::new();
-    let mut uart_rx_drivers: Vec<crate::sim::models::uart::UartRxDriver> = Vec::new();
+    use crate::sim::models::PeripheralModel;
+    let mut models: Vec<Box<dyn PeripheralModel>> = Vec::new();
     let mut model_driven_positions: Vec<u32> = Vec::new();
+    let register_model = |model: Box<dyn PeripheralModel>,
+                          models: &mut Vec<Box<dyn PeripheralModel>>,
+                          positions: &mut Vec<u32>| {
+        positions.extend_from_slice(model.driven_positions());
+        clilog::info!(
+            "Peripheral model `{}` registered: {} driven pin(s)",
+            model.name(),
+            model.driven_positions().len()
+        );
+        models.push(model);
+    };
     for gcfg in &config.gpios {
         match crate::sim::models::gpio::GpioModel::new(gcfg, |idx| {
             gpio_map.input_bits.get(&idx).copied()
         }) {
-            Some(model) => {
-                model_driven_positions.extend_from_slice(model.driven_positions());
-                clilog::info!(
-                    "GPIO model `{}` registered: {} pins",
-                    model.name,
-                    model.pin_count()
-                );
-                gpio_models.push(model);
-            }
-            None => {
-                panic!(
-                    "GPIO config `{}` references pin indices not present in input \
-                     mapping; pins={:?}",
-                    gcfg.name, gcfg.pins
-                );
-            }
+            Some(m) => register_model(Box::new(m), &mut models, &mut model_driven_positions),
+            None => panic!(
+                "GPIO config `{}` references pin indices not present in input \
+                 mapping; pins={:?}",
+                gcfg.name, gcfg.pins
+            ),
         }
     }
     if let Some(uart_cfg) = config.uart.as_ref() {
@@ -2387,14 +2388,12 @@ pub fn run_cosim(
                 rx_pos,
                 baud_div_edges,
             );
-            model_driven_positions.push(driver.driven_position());
             clilog::info!(
-                "UART RX driver `{}` registered: rx_gpio={}, baud_div_edges={}",
-                driver.name,
-                uart_cfg.rx_gpio,
-                baud_div_edges
+                "UART RX driver `uart_0` baud_div_edges={} (rx_gpio={})",
+                baud_div_edges,
+                uart_cfg.rx_gpio
             );
-            uart_rx_drivers.push(driver);
+            register_model(Box::new(driver), &mut models, &mut model_driven_positions);
         } else {
             clilog::warn!(
                 "UART config rx_gpio={} not in input mapping; RX driver disabled",
@@ -2402,6 +2401,7 @@ pub fn run_cosim(
             );
         }
     }
+    let _ = register_model;
 
     // Build per-edge BitOp buffers from multi-clock schedule.
     //
@@ -2990,8 +2990,7 @@ pub fn run_cosim(
 
     let mut tick: usize = 0;
     let mut stop_triggered = false;
-    let mut gpio_models = gpio_models; // re-bind as mutable for the loop
-    let mut uart_rx_drivers = uart_rx_drivers;
+    let mut models = models; // re-bind as mutable for the loop
 
     // Sync each model's INITIAL idle state into the per-edge ops buffers
     // before the first GPU dispatch. Without this, model-driven positions
@@ -2999,29 +2998,27 @@ pub fn run_cosim(
     // wrong for UART RX (idle is high, 1). The placeholder BitOps from
     // `build_edge_ops` start at 0; this seeds them with the models'
     // post-construction values.
-    if !gpio_models.is_empty() || !uart_rx_drivers.is_empty() {
+    if !models.is_empty() {
         let mut overrides = crate::sim::models::ModelOverrides::new();
-        for model in &gpio_models {
+        for model in &models {
             model.contribute_overrides(&mut overrides);
-        }
-        for driver in &uart_rx_drivers {
-            driver.contribute_overrides(&mut overrides);
         }
         update_model_driven_in_ops(&overrides);
     }
 
     while tick < max_edges {
-        // Drain queued actions for each peripheral model, advance per-edge
-        // model state, and sync resulting input drives into the per-edge
-        // ops buffers.
-        if input_dispatcher.is_some() || !uart_rx_drivers.is_empty() {
+        // Drain queued actions, advance per-edge state, sync overrides
+        // and forward emitted events. Active iff a dispatcher is loaded
+        // OR any model has per-edge state to advance.
+        if input_dispatcher.is_some() || !models.is_empty() {
             let mut overrides = crate::sim::models::ModelOverrides::new();
+            let mut emitted_events: Vec<crate::sim::models::EmittedEvent> = Vec::new();
             let mut any_change = false;
 
-            // GPIO models: action-driven only (no per-edge state).
-            for model in gpio_models.iter_mut() {
+            for model in models.iter_mut() {
+                let prev_active = model.is_active();
                 if let Some(d) = input_dispatcher.as_mut() {
-                    let actions = d.pending_actions(&model.name);
+                    let actions = d.pending_actions(model.name());
                     if !actions.is_empty() {
                         for a in &actions {
                             model.apply_action(a);
@@ -3029,30 +3026,28 @@ pub fn run_cosim(
                         any_change = true;
                     }
                 }
-                model.contribute_overrides(&mut overrides);
-            }
-
-            // UART RX drivers: action-driven AND per-edge state machine.
-            // step_edge() runs every edge regardless of whether actions
-            // fired, since the line value depends on tx_counter.
-            for driver in uart_rx_drivers.iter_mut() {
-                if let Some(d) = input_dispatcher.as_mut() {
-                    let actions = d.pending_actions(&driver.name);
-                    if !actions.is_empty() {
-                        for a in &actions {
-                            driver.apply_action(a);
-                        }
-                        any_change = true;
-                    }
-                }
-                let prev = driver.is_active();
-                driver.step_edge();
-                // Always sync UART RX values; the line may change every edge
-                // while a byte is in flight.
-                if driver.is_active() || prev {
+                // step_edge contributes overrides itself (default impl) and
+                // pushes any emitted events.
+                model.step_edge(
+                    // GPU output state — currently unused by GPIO/UART RX,
+                    // needed by I²C/SPI once wired. Provide an empty slice
+                    // for now (placeholder; wiring follow-up).
+                    &[],
+                    &mut overrides,
+                    &mut emitted_events,
+                );
+                if prev_active || model.is_active() {
                     any_change = true;
                 }
-                driver.contribute_overrides(&mut overrides);
+            }
+
+            // Forward emitted events to the dispatcher so `wait` commands
+            // can fire on bus transactions (e.g. i2c_0 address, user_spi_0
+            // data).
+            if let Some(d) = input_dispatcher.as_mut() {
+                for ev in &emitted_events {
+                    d.on_event(&ev.peripheral, &ev.event, &ev.payload);
+                }
             }
 
             if any_change {
@@ -3077,16 +3072,16 @@ pub fn run_cosim(
         let dff_dump_active = dff_dump_state
             .as_ref()
             .map_or(false, |(_, _, max)| tick < reset_edges + *max);
-        // When input stimulus is active, force single-edge batches so that
-        // `wait`/`action`/`stop` boundaries can be honored at edge granularity.
-        // Skip the slowdown when the dispatcher has no remaining commands AND
-        // no peripheral driver is mid-transmission — at that point batched
-        // mode produces the same observable behavior at ~7× the throughput.
-        let dispatcher_has_work = input_dispatcher
-            .as_ref()
-            .map_or(false, |d| d.remaining() > 0);
-        let any_driver_active = uart_rx_drivers.iter().any(|d| d.is_active());
-        let force_single_edge = dispatcher_has_work || any_driver_active;
+        // Force single-edge batches only when a peripheral driver is mid-
+        // transmission and bit timing depends on per-edge granularity (e.g.
+        // UART RX shifting bits onto rx_gpio). Stops fire from dispatcher
+        // state at iteration boundaries; waits match against UART events
+        // captured at end-of-batch — neither needs single-edge mode. This
+        // keeps the boot phase (long autonomous output before any action
+        // queues) at full batched-mode throughput even when input.json has
+        // pending commands.
+        let any_model_active = models.iter().any(|m| m.is_active());
+        let force_single_edge = any_model_active;
         let batch = if force_single_edge {
             1
         } else if opts.check_with_cpu && tick < cpu_check_max_edges {

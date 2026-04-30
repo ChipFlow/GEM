@@ -13,7 +13,7 @@
 //!   tracked as a follow-up.
 
 use crate::sim::input_stim::QueuedAction;
-use crate::sim::models::ModelOverrides;
+use crate::sim::models::{payload_str, warn_unhandled, ModelOverrides, PeripheralModel};
 use crate::testbench::GpioConfig;
 
 /// CPU-side state for one GPIO peripheral.
@@ -49,45 +49,32 @@ impl GpioModel {
     pub fn pin_count(&self) -> usize {
         self.pin_input_positions.len()
     }
+}
 
-    /// Apply a queued action. Currently handles `set` only; other events
-    /// log and are otherwise ignored.
-    pub fn apply_action(&mut self, action: &QueuedAction) {
+impl PeripheralModel for GpioModel {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn driven_positions(&self) -> &[u32] {
+        &self.pin_input_positions
+    }
+
+    fn apply_action(&mut self, action: &QueuedAction) {
         match action.event.as_str() {
             "set" => {
-                let payload_str = action.payload.as_str().unwrap_or_else(|| {
-                    panic!(
-                        "gpio model `{}`: `set` payload must be a string of '0'/'1'/'Z' chars, got {:?}",
-                        self.name, action.payload
-                    );
-                });
+                let payload_str = payload_str(action, &format!("gpio `{}`", self.name));
                 self.input_data = parse_set_bitstring(payload_str, self.pin_count(), &self.name);
             }
-            other => {
-                clilog::warn!(
-                    "gpio model `{}`: unhandled event `{}` (payload {:?})",
-                    self.name,
-                    other,
-                    action.payload
-                );
-            }
+            _ => warn_unhandled(&format!("gpio `{}`", self.name), action),
         }
     }
 
-    /// Contribute this model's driven bit values to the shared override
-    /// map, which the cosim loop syncs into the per-edge state_prep ops.
-    pub fn contribute_overrides(&self, overrides: &mut ModelOverrides) {
+    fn contribute_overrides(&self, overrides: &mut ModelOverrides) {
         for (bit_idx, &pos) in self.pin_input_positions.iter().enumerate() {
             let val = ((self.input_data >> bit_idx) & 1) as u8;
             overrides.insert(pos, val);
         }
-    }
-
-    /// State positions this model drives. Returned for cosim setup so
-    /// placeholder BitOps for these positions can be appended to the
-    /// per-edge ops at construction time.
-    pub fn driven_positions(&self) -> &[u32] {
-        &self.pin_input_positions
     }
 }
 

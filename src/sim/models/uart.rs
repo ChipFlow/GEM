@@ -15,7 +15,9 @@
 //! (= `clock_hz / baud_rate * edges_per_cycle`).
 
 use crate::sim::input_stim::QueuedAction;
-use crate::sim::models::ModelOverrides;
+use crate::sim::models::{
+    payload_u8, warn_unhandled, EmittedEvent, ModelOverrides, PeripheralModel,
+};
 
 /// CPU-side state for one UART peripheral (RX-driver only).
 pub struct UartRxDriver {
@@ -23,6 +25,8 @@ pub struct UartRxDriver {
     pub name: String,
     /// State-buffer position for the design's `rx` input pin.
     rx_pin_position: u32,
+    /// Used by `driven_positions()` (PeripheralModel returns `&[u32]`).
+    driven_positions_arr: [u32; 1],
     /// Edges per UART bit (= clock_hz / baud * edges_per_cycle).
     baud_div_edges: u32,
     /// Whether a byte is currently being shifted out.
@@ -48,48 +52,12 @@ impl UartRxDriver {
         Self {
             name,
             rx_pin_position,
+            driven_positions_arr: [rx_pin_position],
             baud_div_edges,
             tx_active: false,
             tx_data: 0,
             tx_counter: 0,
             rx_value: 1, // idle high
-        }
-    }
-
-    /// Apply a queued action. Currently handles `tx` only.
-    pub fn apply_action(&mut self, action: &QueuedAction) {
-        match action.event.as_str() {
-            "tx" => {
-                let byte = action
-                    .payload
-                    .as_u64()
-                    .filter(|&v| v <= 0xFF)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "uart `{}`: `tx` payload must be a u8 (0..=255), got {:?}",
-                            self.name, action.payload
-                        );
-                    }) as u8;
-                if self.tx_active {
-                    clilog::warn!(
-                        "uart `{}`: queued `tx` 0x{:02X} while previous byte still in flight; dropping new byte",
-                        self.name,
-                        byte
-                    );
-                } else {
-                    self.tx_active = true;
-                    self.tx_data = byte;
-                    self.tx_counter = 0;
-                }
-            }
-            other => {
-                clilog::warn!(
-                    "uart `{}`: unhandled event `{}` (payload {:?})",
-                    self.name,
-                    other,
-                    action.payload
-                );
-            }
         }
     }
 
@@ -115,19 +83,53 @@ impl UartRxDriver {
         };
         self.tx_counter += 1;
     }
+}
 
-    /// State position this driver controls.
-    pub fn driven_position(&self) -> u32 {
-        self.rx_pin_position
+impl PeripheralModel for UartRxDriver {
+    fn name(&self) -> &str {
+        &self.name
     }
 
-    /// Contribute the current rx line value to the shared override map.
-    pub fn contribute_overrides(&self, overrides: &mut ModelOverrides) {
+    fn driven_positions(&self) -> &[u32] {
+        &self.driven_positions_arr
+    }
+
+    fn apply_action(&mut self, action: &QueuedAction) {
+        let model = format!("uart `{}`", self.name);
+        match action.event.as_str() {
+            "tx" => {
+                let byte = payload_u8(action, &model);
+                if self.tx_active {
+                    clilog::warn!(
+                        "{}: queued `tx` 0x{:02X} while previous byte still in flight; dropping new byte",
+                        model,
+                        byte
+                    );
+                } else {
+                    self.tx_active = true;
+                    self.tx_data = byte;
+                    self.tx_counter = 0;
+                }
+            }
+            _ => warn_unhandled(&model, action),
+        }
+    }
+
+    fn step_edge(
+        &mut self,
+        _output_state: &[u32],
+        overrides: &mut ModelOverrides,
+        _emitted: &mut Vec<EmittedEvent>,
+    ) {
+        UartRxDriver::step_edge(self);
+        self.contribute_overrides(overrides);
+    }
+
+    fn contribute_overrides(&self, overrides: &mut ModelOverrides) {
         overrides.insert(self.rx_pin_position, self.rx_value);
     }
 
-    /// True if mid-byte transmission.
-    pub fn is_active(&self) -> bool {
+    fn is_active(&self) -> bool {
         self.tx_active
     }
 }
@@ -142,9 +144,6 @@ mod tests {
         for _ in 0..max_edges {
             driver.step_edge();
             out.push(driver.rx_value);
-            if !driver.tx_active && !out.is_empty() && *out.last().unwrap() == 1 {
-                // settle one extra edge after going idle
-            }
         }
         out
     }
@@ -159,8 +158,6 @@ mod tests {
             .expect("no start bit found");
         let mut byte = 0u8;
         for bit in 0..8 {
-            // Center of data bit `bit`: start_idx + (1 + bit) * baud_div + baud_div/2
-            // (start bit takes [start_idx, start_idx+baud_div); data bits follow.)
             let center =
                 start_idx + ((1 + bit) * baud_div_edges as usize) + (baud_div_edges as usize) / 2;
             byte |= (trace[center] & 1) << bit;
@@ -182,7 +179,6 @@ mod tests {
 
     #[test]
     fn tx_action_drives_serial_frame() {
-        // baud_div_edges = 4 means each bit lasts 4 edges.
         let mut d = UartRxDriver::new("uart_0".to_string(), 100, 4);
         d.apply_action(&QueuedAction {
             event: "tx".to_string(),
@@ -190,11 +186,9 @@ mod tests {
         });
         assert!(d.is_active());
 
-        // Drain a full frame (1 start + 8 data + 1 stop = 10 bits = 40 edges, plus a few idle).
         let trace = drain_until_idle(&mut d, 50);
         assert_eq!(decode_rx_trace(&trace, 4), 0x55);
         assert!(!d.is_active());
-        // After the byte, line returns to idle high.
         assert_eq!(d.rx_value, 1);
     }
 
@@ -205,12 +199,10 @@ mod tests {
             event: "tx".to_string(),
             payload: json!(0xA3),
         });
-        // Drain first byte
         let trace1 = drain_until_idle(&mut d, 50);
         assert_eq!(decode_rx_trace(&trace1, 4), 0xA3);
         assert!(!d.is_active());
 
-        // Queue and drain second byte
         d.apply_action(&QueuedAction {
             event: "tx".to_string(),
             payload: json!(0x42),
@@ -226,16 +218,13 @@ mod tests {
             event: "tx".to_string(),
             payload: json!(0xAA),
         });
-        // Step one edge so we're mid-byte.
         d.step_edge();
         assert!(d.is_active());
 
-        // Try to queue another byte mid-flight — should warn and drop.
         d.apply_action(&QueuedAction {
             event: "tx".to_string(),
             payload: json!(0x55),
         });
-        // tx_data should still be the original byte.
         assert_eq!(d.tx_data, 0xAA);
     }
 
