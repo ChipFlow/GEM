@@ -46,6 +46,9 @@ jobs:
   # Build and run Metal simulation on macOS
   metal:
     name: Metal Tests (macOS)
+    # TODO(infra): re-enable once macos-latest-xlarge runner availability is restored.
+    # Disabled 2026-05-01: runner has been unavailable across recent main runs.
+    if: ${{ false }}
     runs-on: macos-latest-xlarge
     steps:
       - uses: actions/checkout@v4
@@ -167,6 +170,9 @@ jobs:
   # Build and run CUDA simulation on NVIDIA GPU
   cuda:
     name: CUDA Tests
+    # TODO(infra): re-enable once self-hosted nvidia-runner-1 is back online.
+    # Disabled 2026-05-01: GPU runner offline; jobs queue indefinitely.
+    if: ${{ false }}
     runs-on: nvidia-runner-1
     steps:
       - uses: actions/checkout@v4
@@ -253,6 +259,9 @@ jobs:
   # When an AMD GPU runner becomes available, a native AMD job can be added.
   hip-on-nvidia:
     name: HIP Tests (NVIDIA backend)
+    # TODO(infra): re-enable once self-hosted nvidia-runner-1 is back online.
+    # Disabled 2026-05-01: GPU runner offline; jobs queue indefinitely.
+    if: ${{ false }}
     runs-on: nvidia-runner-1
     steps:
       - uses: actions/checkout@v4
@@ -447,6 +456,10 @@ jobs:
   # Run GPU simulation on macOS with pre-built post-P&R netlist
   mcu-soc-metal:
     name: MCU SoC Metal Simulation
+    # TODO(infra): re-enable once macos-latest-xlarge runner availability is restored.
+    # Disabled 2026-05-01: runner has been unavailable across recent main runs.
+    # Dependent jobs (mcu-soc-cvc, mcu-soc-comparison) auto-skip via `needs:` chain.
+    if: ${{ false }}
     runs-on: macos-latest-xlarge
     timeout-minutes: 30
     steps:
