@@ -681,7 +681,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/cvc/bin
-          key: cvc-binary-debug-v3-makefile-rename
+          key: cvc-binary-debug-v4-toplevel-makefile
 
       - name: Build CVC from source
         if: steps.cache-cvc.outputs.cache-hit != 'true'
@@ -690,15 +690,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev
           git clone --depth 1 https://github.com/cambridgehackers/open-src-cvc.git ~/cvc-src
           cd ~/cvc-src/src
-          # Upstream renamed makefile.cvc64 -> makefile.cvc and the cvc64 target
-          # now emits a binary named "cvc". See cambridgehackers/open-src-cvc 1c5e043e.
-          # Build with -O0: CVC has undefined behavior in SDF annotation code that
-          # causes segfaults under -O2 optimization (NULL deref after opening SDF file).
-          make -f makefile.cvc cvc64 -j$(nproc) \
-            OPTFLGS="" \
-            CFLAGS="-Wall -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
+          # Upstream commit 1c5e043e (2026-03-13) refactored the build:
+          #   - top-level src/Makefile is the canonical build (was makefile.cvc64),
+          #   - emits ../build64/cvc64,
+          #   - per-file rules pass -DASM_CC=... required by v_dpi.c and v_asmlnk.c,
+          #   - legacy src/makefile.cvc is stale and won't compile with modern gcc.
+          # We override CFLAGS to keep the -O0 workaround (CVC's SDF annotation code
+          # has undefined behavior that causes segfaults under -O2: NULL deref after
+          # opening SDF file). Modern-gcc warning suppressions are kept so the build
+          # actually completes.
+          make -j$(nproc) \
+            CFLAGS="-pipe -Wall -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
           mkdir -p ~/cvc/bin
-          cp cvc ~/cvc/bin/cvc64
+          cp ../build64/cvc64 ~/cvc/bin/
 
       - name: Add CVC to PATH
         run: echo "$HOME/cvc/bin" >> "$GITHUB_PATH"
