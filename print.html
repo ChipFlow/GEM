@@ -164,7 +164,10 @@
 <p>Start here if you're considering a feature contribution or want to understand Jacquard's overall direction.</p>
 <ul>
 <li><strong><a href="project-scope.html">Project Scope &amp; Guarantees</a></strong>: Top-level contract — what Jacquard is for, what it isn't, licensing and architecture constraints, stability tiers.</li>
+<li><strong><a href="why-jacquard.html">Why Jacquard</a></strong>: Honest positioning vs. STA tools and event-driven simulators; what's unique, what isn't, and what output interface would let users extract the value.</li>
 <li><strong><a href="timing-correctness.html">Timing Correctness</a></strong>: Scoped requirements for timing accuracy, validation, and the forthcoming timing IR.</li>
+<li><strong><a href="timing-model-extensions.html">Timing Model Extensions</a></strong>: Pre-spike design notes for δ(T) dynamic delay, clock-tree skew, and wire delay at scale. Formalised in ADR 0007.</li>
+<li><strong><a href="plans/post-phase-0-roadmap.html">Post-Phase-0 Roadmap</a></strong>: Sequencing of Phase 1+ work covering OpenTimer integration, structured timing output (ADR 0008), and timing model fidelity (ADR 0007).</li>
 <li><strong><a href="adr/">Architecture Decision Records</a></strong>: Design decisions and their rationale (numbered, per-decision).</li>
 <li><strong><a href="plans/">Implementation Plans</a></strong>: Phased implementation plans with entry and exit criteria.</li>
 <li><strong><a href="spikes/">Spikes</a></strong>: Time-boxed experiments and their outcomes.</li>
@@ -292,8 +295,6 @@ Multi-clock domain handling</li>
 VCD scope option detailed behavior</li>
 <li><input disabled="" type="checkbox"/>
 GPU kernel optimization internals</li>
-<li><input disabled="" type="checkbox"/>
-Comparison with other simulators (VCS, Verilator, iverilog)</li>
 </ul>
 <h2 id="related-resources"><a class="header" href="#related-resources">Related Resources</a></h2>
 <ul>
@@ -430,6 +431,150 @@ cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/
 <p>Use slash separators (<code>/</code>) for hierarchical paths, not dots. See <a href="troubleshooting-vcd.html">troubleshooting-vcd.md</a> for details.</p>
 <p>The simulated output ports value will be stored in <code>output.vcd</code>.</p>
 <p><strong>Caveat</strong>: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing <code>input.vcd</code>. You are recommended to develop your own pipeline to feed the input waveform into Jacquard's GPU kernels.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="why-jacquard--positioning-and-output-interface"><a class="header" href="#why-jacquard--positioning-and-output-interface">Why Jacquard — positioning and output interface</a></h1>
+<p><strong>Status:</strong> Honest assessment of where Jacquard fits in an EDA flow alongside dedicated STA tools (OpenTimer/OpenSTA) and event-driven simulators (Verilator, iverilog, CVC). Includes a survey of what timing information Jacquard exposes today and what would let users actually consume it.</p>
+<p>This is not a marketing document. The goal is for a contributor or user to read it and decide accurately whether Jacquard helps them — and, if it does, how to extract the answer they need.</p>
+<hr />
+<h2 id="tldr"><a class="header" href="#tldr">TL;DR</a></h2>
+<p>Jacquard's unique value is <strong>vector-driven timing analysis at GPU scale</strong>: answering "did this stimulus violate setup/hold at any DFF, on which cycle, on which signal?" for designs large enough that SDF-annotated event-driven sim is too slow to finish in useful time.</p>
+<p>Everything else Jacquard offers is offered, often better, by the standard flow:</p>
+<ul>
+<li>For functional sim: Verilator is faster on small designs.</li>
+<li>For timing: OpenTimer/OpenSTA gives more accurate answers than Jacquard, vector-independent.</li>
+<li>For glitch / metastability: event-driven sim with SDF (CVC, iverilog) sees behaviours Jacquard's lockstep kernel structurally cannot.</li>
+</ul>
+<p>Jacquard becomes the right tool when <strong>(design size × vector length)</strong> exceeds what event-driven SDF-annotated sim can handle, and you specifically want vector-driven timing answers.</p>
+<p><strong>STA is not optional even with Jacquard.</strong> Jacquard does not replace OpenTimer; it complements it. The right framing is "STA proves no bad vectors exist; Jacquard proves your real workload runs cleanly within those bounds."</p>
+<hr />
+<h2 id="whats-actually-unique"><a class="header" href="#whats-actually-unique">What's actually unique</a></h2>
+<p>The intersection where Jacquard wins is narrow but real:</p>
+<ol>
+<li>
+<p><strong>Activity-driven setup/hold sweep at scale.</strong> Run a long workload (boot trace, architectural validation, NoC congestion stimulus) on a large design at GPU speed; get a per-cycle violation report. STA can't tell you "this real workload trips violation X at cycle 12,847"; CVC can but won't finish in time on big designs.</p>
+</li>
+<li>
+<p><strong>Arrival-time distributions for power/activity analysis.</strong> Per-signal arrival histograms across millions of cycles → useful for worst-case-power analysis informed by actual switching activity. STA gives you nothing here; CVC could but slowly.</p>
+</li>
+<li>
+<p><strong>Failure forensics.</strong> When a functional test fails, answering "was this a timing issue?" without rerunning under a different simulator. Jacquard's timing-VCD output ties violations to cycle/signal/path — useful when you already have it from the same run.</p>
+</li>
+<li>
+<p><strong>Fast iteration during timing closure.</strong> Change a constraint, resynthesise, re-run a long test — Jacquard's loop time is short enough to make this practical on big designs in a way iverilog+SDF isn't.</p>
+</li>
+</ol>
+<h2 id="what-opentimer-gives-you-that-jacquard-doesnt"><a class="header" href="#what-opentimer-gives-you-that-jacquard-doesnt">What OpenTimer gives you that Jacquard doesn't</a></h2>
+<p>This list is long and you should know it:</p>
+<ul>
+<li><strong>Worst-case path enumeration.</strong> STA tells you the top-N critical paths <em>over all possible inputs</em>. Jacquard sees only what your stimulus exercises. If your testbench misses a critical path, Jacquard's "no violations" report is silent on it; OpenTimer would flag it.</li>
+<li><strong>True min-delay analysis.</strong> OpenTimer does proper min-delay path search. Jacquard's hold check is per-DFF against actual stimulus only.</li>
+<li><strong>Clock-tree skew / CRPR.</strong> OpenTimer computes per-flop clock arrival with common-path-pessimism removal. Jacquard today treats all DFFs on a clock as zero-skew (see <a href="timing-model-extensions.html"><code>timing-model-extensions.md</code></a>, Part B).</li>
+<li><strong>SDC-aware constraint handling.</strong> False paths, multi-cycle paths, generated clocks, async groups — OpenTimer reads SDC and respects it. Jacquard doesn't read SDC at the timing layer.</li>
+<li><strong>Coverage by construction.</strong> STA covers every path by definition. Dynamic sim covers only what's exercised.</li>
+<li><strong>Vector-independent confidence.</strong> "This design meets timing" is something STA can claim; Jacquard can only claim "this design met timing on these vectors."</li>
+</ul>
+<h2 id="what-event-driven-sdf-sim-cvciverilog-gives-you-that-jacquard-doesnt"><a class="header" href="#what-event-driven-sdf-sim-cvciverilog-gives-you-that-jacquard-doesnt">What event-driven SDF sim (CVC/iverilog) gives you that Jacquard doesn't</a></h2>
+<p>The honest comparison isn't "Jacquard vs. Verilator + OpenTimer." It's "Jacquard vs. iverilog/CVC-with-SDF + OpenTimer." On the timing-sim side specifically:</p>
+<ul>
+<li><strong>Glitch propagation.</strong> CVC/iverilog with inertial or transport delay see intra-cycle pulses. Jacquard's lockstep cycle-accurate kernel does not.</li>
+<li><strong>Per-pin wire delay fidelity.</strong> CVC consumes SDF interconnect records per-receiver, per-edge, with rise/fall distinction. Jacquard collapses to per-cell-max (see <a href="timing-model-extensions.html"><code>timing-model-extensions.md</code></a>, Part C).</li>
+<li><strong>Per-DFF setup/hold without per-word collapse pessimism.</strong> Jacquard collapses all DFFs in a 32-bit state word to <code>min(setup), min(hold)</code>; CVC checks each flop individually.</li>
+<li><strong>Async event handling.</strong> Real <code>$setup</code>/<code>$hold</code> checks across asynchronous control. Jacquard explicitly assumes synchronous designs.</li>
+</ul>
+<p>So today, accuracy-per-vector goes to CVC; throughput goes to Jacquard.</p>
+<h2 id="when-to-choose-what"><a class="header" href="#when-to-choose-what">When to choose what</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Your situation</th><th>Best tool</th></tr></thead><tbody>
+<tr><td>Small design, just want functional results</td><td>Verilator (free, fast, mature)</td></tr>
+<tr><td>Small design, need timing certainty</td><td>OpenTimer + Verilator (or +CVC for vector-driven)</td></tr>
+<tr><td>Large design, functional only</td><td>Verilator if it scales, else Jacquard</td></tr>
+<tr><td>Large design, vector-driven timing needed</td><td><strong>Jacquard</strong> + OpenTimer for STA backstop</td></tr>
+<tr><td>Glitch / metastability investigation</td><td>CVC or iverilog with SDF — Jacquard cannot model these structurally</td></tr>
+<tr><td>Asynchronous design / latches</td><td>Not Jacquard (synchronous-only) — use CVC/iverilog</td></tr>
+<tr><td>Sign-off STA</td><td>OpenTimer / OpenSTA / commercial — Jacquard is not a sign-off tool</td></tr>
+</tbody></table>
+</div>
+<h2 id="the-trajectory"><a class="header" href="#the-trajectory">The trajectory</a></h2>
+<p>Jacquard's timing fidelity gap with CVC is closeable. The work in <a href="timing-model-extensions.html"><code>timing-model-extensions.md</code></a> — δ(T), clock-tree skew, per-receiver wire delay — closes much of it while preserving GPU throughput. The further along that path the project goes, the more "Jacquard" looks like "GPU-accelerated SDF-annotated event-driven sim, with the inherent limits the cycle-accurate kernel imposes (no glitches, lockstep cycles)" — i.e. CVC's report quality at Verilator's speed, on designs where neither alone suffices.</p>
+<hr />
+<h2 id="output-interface--what-jacquard-exposes-today"><a class="header" href="#output-interface--what-jacquard-exposes-today">Output interface — what Jacquard exposes today</a></h2>
+<p>Jacquard's unique value depends on getting the timing information <em>out</em> of a run in a form users can act on. Today the surface area is functional but limited.</p>
+<h3 id="timed-vcd---timing-vcd"><a class="header" href="#timed-vcd---timing-vcd">Timed VCD (<code>--timing-vcd</code>)</a></h3>
+<p>Annotates the output VCD with per-signal arrival times. Largest, most detailed output; suitable for waveform-level inspection.</p>
+<ul>
+<li><strong>What you get:</strong> per-signal arrival ps at each writeout cycle.</li>
+<li><strong>What's missing:</strong> the VCD doesn't carry slack relative to the clock edge — you compute it yourself.</li>
+<li><strong>Cost:</strong> doubles VCD size. Not appropriate for long workloads on large designs.</li>
+</ul>
+<h3 id="stderr-violation-messages"><a class="header" href="#stderr-violation-messages">Stderr violation messages</a></h3>
+<p>The kernel writes setup/hold violation events to a per-block event buffer (<code>csrc/kernel_v1.metal:554-576</code>). The host drains the buffer each cycle (<code>src/event_buffer.rs:305-338</code>) and emits human-readable warnings:</p>
+<pre><code>[cycle 12847] SETUP VIOLATION: word 412 arrival=2150ps setup=80ps slack=-30ps
+[cycle 12847] HOLD VIOLATION: word 412 arrival=12ps hold=20ps slack=-8ps
+</code></pre>
+<ul>
+<li><strong>What you get:</strong> every violation, in real time, tagged with cycle and state-word.</li>
+<li><strong>What's missing:</strong> the message identifies a <em>state-word index</em>, not a signal name. Mapping back to "which DFF, which path" is currently a manual exercise. Volume on a violating design can be enormous (one warning per word per cycle per type).</li>
+</ul>
+<h3 id="simstats-aggregate-counts-in-process"><a class="header" href="#simstats-aggregate-counts-in-process"><code>SimStats</code> aggregate counts (in-process)</a></h3>
+<p><code>SimStats { setup_violations, hold_violations, ... }</code> is available to in-process consumers (<code>src/event_buffer.rs:218-231</code>). Only counts; no detail.</p>
+<h3 id="the-event-buffer-raw"><a class="header" href="#the-event-buffer-raw">The event buffer (raw)</a></h3>
+<p>Each violation event in the buffer carries <code>cycle</code>, <code>data[0]</code> = state-word, <code>data[1]</code> = signed slack ps, <code>data[2]</code> = arrival ps, <code>data[3]</code> = constraint ps (<code>src/event_buffer.rs:305-338</code>). This is the most structured violation data Jacquard produces, but it's only consumed by the logging path — there's no public dump-to-file mechanism today.</p>
+<h3 id="whats-missing--the-gap-between-data-jacquard-has-and-answers-users-want"><a class="header" href="#whats-missing--the-gap-between-data-jacquard-has-and-answers-users-want">What's missing — the gap between "data Jacquard has" and "answers users want"</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>User question</th><th>Today</th><th>What's needed</th></tr></thead><tbody>
+<tr><td>"Did my workload trip any violations?"</td><td><code>SimStats</code> counts</td><td>Already available in-process; needs CLI exposure</td></tr>
+<tr><td>"Which DFFs nearly missed timing?"</td><td>Not extractable without parsing stderr</td><td>Per-DFF worst-slack ranking written at end-of-run</td></tr>
+<tr><td>"Show me arrival distribution per signal"</td><td>Reconstructable from --timing-vcd via post-processing</td><td>Native histogram output, opt-in per signal pattern</td></tr>
+<tr><td>"Which DFF was that violation on?"</td><td>State-word index + manual lookup</td><td>Symbolic mapping in violation reports (signal name, hierarchical path)</td></tr>
+<tr><td>"What path caused the worst arrival?"</td><td>Not available</td><td>Path-back-trace from worst-arrival DFF through max-of-fanin chain to source</td></tr>
+<tr><td>"What activity factor did each signal see?"</td><td>Not available</td><td>Per-signal transition-count alongside arrival data</td></tr>
+<tr><td>"Did my stimulus exercise these critical paths from STA?"</td><td>Not available</td><td>Coverage report: cross-reference STA's critical-path list vs. observed arrival peaks</td></tr>
+<tr><td>"Run this in CI and fail if any violation"</td><td>Possible via stderr grep</td><td>Structured exit-code semantics + machine-readable summary</td></tr>
+</tbody></table>
+</div>
+<h2 id="proposed-output-interface"><a class="header" href="#proposed-output-interface">Proposed output interface</a></h2>
+<p>What follows is design intent, not implementation. It belongs in <a href="timing-model-extensions.html"><code>timing-model-extensions.md</code></a> once scoped, but is captured here as the "what's the user-visible win" framing.</p>
+<h3 id="structured-timing-report---timing-report-pathjson"><a class="header" href="#structured-timing-report---timing-report-pathjson">Structured timing report (<code>--timing-report path.json</code>)</a></h3>
+<p>Write a JSON document at end-of-run with:</p>
+<ul>
+<li>Per-DFF worst arrival, worst slack, violation count over the run (top-N or all).</li>
+<li>Per-cycle violation list (cycle, signal name, hierarchical path, arrival, constraint, slack).</li>
+<li>Aggregate stats: total violations, distribution buckets, peak arrival per clock domain.</li>
+<li>Activity per signal: transition count, average/max arrival, idle cycles.</li>
+<li>Run metadata: clock period, SDF/IR file, design hash, vector source.</li>
+</ul>
+<p>Machine-readable, CI-friendly, post-processable. The single most useful addition for actually using Jacquard's timing output.</p>
+<h3 id="timing-summary---timing-summary"><a class="header" href="#timing-summary---timing-summary">Timing summary (<code>--timing-summary</code>)</a></h3>
+<p>Fast text summary, no VCD. Designed for scripts and dashboards:</p>
+<pre><code>Jacquard timing summary
+  design: nvdla_post_pnr     vectors: 100000 cycles
+  clock:  1.2 ns             SDF corner: typ
+  violations:  setup=0  hold=0
+  worst slack:  setup=+213ps (DFF nvdla/conv/regs[42])
+                hold=+18ps   (DFF nvdla/dma/state[3])
+  peak arrival per writeout: 987ps  (clock budget 1200ps, 17.7% margin)
+</code></pre>
+<h3 id="symbolic-violation-messages"><a class="header" href="#symbolic-violation-messages">Symbolic violation messages</a></h3>
+<p>Replace state-word indices with hierarchical signal names (<code>nvdla/conv/regs[42]</code>) in stderr violation messages. Pure UX improvement; the mapping data already exists in the netlistdb.</p>
+<h3 id="arrival-histogram-output---arrival-histogram"><a class="header" href="#arrival-histogram-output---arrival-histogram">Arrival histogram output (<code>--arrival-histogram</code>)</a></h3>
+<p>Optional per-signal arrival histogram dump. For a flagged signal pattern, write a CSV/JSON of arrival distribution across the run. Foundation for activity-based power analysis and "is my actual timing margin healthy" reporting.</p>
+<h3 id="optional-sta-cross-reference---sta-cross-reference-pathtxt"><a class="header" href="#optional-sta-cross-reference---sta-cross-reference-pathtxt">Optional: STA cross-reference (<code>--sta-cross-reference path.txt</code>)</a></h3>
+<p>Read OpenTimer's critical-path report and produce a coverage-style output: which of STA's worst-N paths were actually exercised by the stimulus, and what was their observed worst arrival. Closes the loop between vector-driven and static analysis.</p>
+<h2 id="priority"><a class="header" href="#priority">Priority</a></h2>
+<p>For a user trying to actually extract Jacquard's unique value today, the gap is biggest at:</p>
+<ol>
+<li><strong>Symbolic violation messages.</strong> Cheapest fix, biggest UX win. Without this, every violation requires manual investigation.</li>
+<li><strong><code>--timing-report</code> JSON.</strong> Required for CI integration and for any downstream tooling.</li>
+<li><strong><code>--timing-summary</code> text.</strong> Required for human inspection of long runs.</li>
+<li><strong>Per-DFF worst-slack ranking.</strong> Required for "where am I close to the edge" analysis.</li>
+</ol>
+<p>The other items (histograms, path-back-trace, STA cross-reference) are higher-value but lower-priority — they make Jacquard a <em>better</em> timing-analysis tool, while the first four make Jacquard <em>useful at all</em> for non-expert users running it in a real flow.</p>
+<hr />
+<h2 id="related-artefacts"><a class="header" href="#related-artefacts">Related artefacts</a></h2>
+<ul>
+<li><a href="project-scope.html"><code>project-scope.md</code></a> — what Jacquard is for and not for; the formal contract this doc operates inside.</li>
+<li><a href="timing-correctness.html"><code>timing-correctness.md</code></a> — forward-looking validation requirements.</li>
+<li><a href="timing-violations.html"><code>timing-violations.md</code></a> — current GPU-side violation detection mechanics.</li>
+<li><a href="timing-validation.html"><code>timing-validation.md</code></a> — how Jacquard's timing output is validated against CVC/iverilog.</li>
+<li><a href="timing-model-extensions.html"><code>timing-model-extensions.md</code></a> — proposed accuracy improvements (δ(T), clock-tree skew, wire delay).</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="gem-simulation-architecture"><a class="header" href="#gem-simulation-architecture">GEM Simulation Architecture</a></h1>
 <p>This document describes GEM's internal simulation architecture based on investigation and testing.</p>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
@@ -1350,6 +1495,289 @@ cvc64 +typdelays tb.v design.v
 <p><strong>Setup violation on a single word</strong>: A critical path through one specific logic cone. Use <code>netlist_graph drivers</code> to trace the path and identify the bottleneck.</p>
 <p><strong>Hold violation</strong>: Rare with SKY130 process (negative hold times clamp to 0 in the SDF). If seen, the design likely has minimum-delay paths that are too short. Check for direct connections between DFF outputs and nearby DFF inputs with minimal combinational logic.</p>
 <p><strong>Violations only on first cycle</strong>: The <code>arrival &gt; 0</code> guard in the GPU kernel skips setup checks when arrival is zero (meaning no data has propagated through combinational logic yet). If you see violations on cycle 0, they are hold violations — setup violations on cycle 0 are suppressed by design.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="timing-model-extensions--design-notes"><a class="header" href="#timing-model-extensions--design-notes">Timing-model extensions — design notes</a></h1>
+<p><strong>Status:</strong> Idea / pre-spike. Not scheduled. Captured here so the architecture sketch survives the next session-clear.</p>
+<p><strong>Scope:</strong> Three related extensions to Jacquard's timing model, all aimed at making setup/hold reporting more honest without abandoning the cycle-accurate boomerang kernel.</p>
+<ol>
+<li><strong>Dynamic delay</strong> — per-gate δ(T) inspired by the Involution Delay Model (Maier 2021, <a href="https://arxiv.org/abs/2107.06814">arXiv:2107.06814</a>). Captures pulse-width-dependent delay degradation that fixed δ∞ misses on near-threshold paths.</li>
+<li><strong>Clock-tree skew</strong> — per-DFF clock arrival accounting. Today every DFF on a clock is treated as if it captures simultaneously; SDF clock-buffer arcs and clock-net interconnect are silently dropped during AIG construction.</li>
+<li><strong>Wire delay at scale</strong> — per-receiver interconnect delay applied to the right edge in the AIG, and explicit modelling of inter-partition wires. Today wire delay is collapsed to a max-per-destination-cell scalar — fine for sky130 short routes, increasingly wrong as we move to faster clocks, finer processes, and large many-core/NoC designs.</li>
+</ol>
+<p>All three share the same insight: the data the model needs is already in the TimingIR. The work is at the consumer layer (<code>flatten.rs</code>, <code>aig.rs</code>, the kernel arrival math), not the IR or the partitioner.</p>
+<hr />
+<h2 id="background--what-the-timing-pipeline-does-today"><a class="header" href="#background--what-the-timing-pipeline-does-today">Background — what the timing pipeline does today</a></h2>
+<pre><code>.sdf  ─┬─► opensta-to-ir ──► TimingIR (.jtir, FlatBuffers)
+.jtir ─┘                          │
+                                  ▼
+              flatten.rs::load_timing_from_ir   (per-cell arc → AIG-pin delay)
+                                  │
+                                  ▼
+                       gate_delays: Vec&lt;PackedDelay&gt;     (rise/fall ps per AIG pin)
+                       dff_constraints: Vec&lt;DFFConstraint&gt;  (setup/hold ps per DFF)
+                                  │
+                                  ▼
+              flatten.rs::inject_timing_to_script   (bake max ps into u16 script slot)
+                                  │
+                                  ▼
+                       kernel_v1.metal at runtime:
+                       per-AND:    new_arr = max(arr_a, arr_b) + gate_delay
+                       per-DFF:    check arrival vs setup/hold per word
+</code></pre>
+<p>Reference points:</p>
+<ul>
+<li>IR schema: <code>crates/timing-ir/schemas/timing_ir.fbs</code></li>
+<li>IR consumer: <code>src/flatten.rs:1768</code> (<code>load_timing_from_ir</code>), <code>src/flatten.rs:1686</code> (<code>inject_timing_to_script</code>)</li>
+<li>Setup/hold buffer: <code>src/flatten.rs:1732</code> (<code>build_timing_constraint_buffer</code>)</li>
+<li>GPU arrival math: <code>csrc/kernel_v1.metal:220-255</code> (AND gates), <code>csrc/kernel_v1.metal:547-580</code> (setup/hold)</li>
+</ul>
+<p>Per-AIG-pin arrival is a single <code>ushort</code> accumulated by <code>max</code> through the boomerang reduction. There is no event scheduling — arrival is a scalar that rides alongside the Boolean evaluation in lockstep with cycle ticks.</p>
+<hr />
+<h2 id="part-a--dynamic-delay-idm-style-δt"><a class="header" href="#part-a--dynamic-delay-idm-style-δt">Part A — Dynamic delay (IDM-style δ(T))</a></h2>
+<h3 id="what-idm-is-briefly"><a class="header" href="#what-idm-is-briefly">What IDM is, briefly</a></h3>
+<p>A per-gate dynamic delay model that makes δ a function of <code>T</code> (time since the gate's last output transition). The distinguishing property: input pulses with Δᵢ → 0 have diminishing effect on the output. The model handles pulse-width degradation faithfully and is the only model proven to solve the short-pulse-filtration problem. The paper notes ~80–590% CPU overhead vs. inertial delay on a CPU event-driven simulator.</p>
+<h3 id="the-architectural-wall"><a class="header" href="#the-architectural-wall">The architectural wall</a></h3>
+<p>True IDM needs event scheduling and intra-cycle pulse observability — neither is available in Jacquard's lockstep cycle-accurate kernel. We <strong>cannot</strong> model glitch suppression or metastability oscillation traces without either sub-cycle ticks or a different kernel architecture.</p>
+<p>What we <strong>can</strong> do is enrich the per-gate delay used in arrival propagation so setup/hold reporting reflects realistic pulse degradation on marginal paths.</p>
+<h3 id="five-hook-points"><a class="header" href="#five-hook-points">Five hook points</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Hook</th><th>File</th><th>Today</th><th>With δ(T)</th></tr></thead><tbody>
+<tr><td><strong>A</strong> Schema</td><td><code>crates/timing-ir/schemas/timing_ir.fbs</code></td><td>rise/fall per arc</td><td>+ per-cell-type <code>DynamicDelayParams</code> (exp-channel params or piecewise-linear LUT)</td></tr>
+<tr><td><strong>B</strong> IR load</td><td><code>src/flatten.rs:1768</code></td><td>one <code>PackedDelay</code> per AIG pin</td><td>+ parallel <code>gate_dyn_delays</code> keyed by originating cell-type via <code>aigpin_cell_origins</code></td></tr>
+<tr><td><strong>C</strong> Bake</td><td><code>src/flatten.rs:1686</code></td><td>one u16 ps per thread slot</td><td>static-IDM: bake worst-case δ(T) into same slot. dynamic-IDM: reserve second u32</td></tr>
+<tr><td><strong>D</strong> Kernel arrival</td><td><code>csrc/kernel_v1.metal:220-255</code></td><td><code>max(arr_a, arr_b) + gate_delay</code></td><td><code>+ eval_idm(dyn_params, T, edge)</code> via small LUT</td></tr>
+<tr><td><strong>E</strong> Setup/hold</td><td><code>csrc/kernel_v1.metal:547-580</code></td><td>unchanged math, dumber inputs</td><td>unchanged math, smarter inputs</td></tr>
+</tbody></table>
+</div>
+<p>For dynamic-IDM the kernel needs two new persistent buffers:</p>
+<ul>
+<li><code>last_transition_ps[aig_pin]</code> — when the gate's output last switched (absolute ps).</li>
+<li><code>last_value[aig_pin]</code> — to detect transitions across cycles.</li>
+</ul>
+<p>Memory cost ~4 bytes per AIG pin per partition. For NVDLA-scale designs (~hundreds of thousands of pins) this is MB-scale — fine.</p>
+<h3 id="eval_idm-on-gpu"><a class="header" href="#eval_idm-on-gpu"><code>eval_idm</code> on GPU</a></h3>
+<p>The paper uses exp/log per gate. On GPU replace with a 16-entry LUT indexed by quantised <code>T</code>. Cheap, branch-free, smooth enough.</p>
+<h3 id="characterisation"><a class="header" href="#characterisation">Characterisation</a></h3>
+<p>The δ(T) parameters have to come from per-cell SPICE characterisation. For sky130 we'd characterise each <code>sky130_fd_sc_hd__*_*</code> cell once, check the result into the repo, and ship it as a sidecar table consumed by the IR builder. This is the expensive one-off — the paper flags characterisation cost as the unsolved part of making IDM "truly competitive."</p>
+<h3 id="staged-plan"><a class="header" href="#staged-plan">Staged plan</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Stage</th><th>What</th><th>Touches</th><th>Kernel</th><th>Effort</th><th>Win</th></tr></thead><tbody>
+<tr><td><strong>1</strong> Static IDM</td><td>Bake worst-case δ(T) into existing u16 slot using STA pulse-width estimates</td><td>A, B, C</td><td>None</td><td>1–2 days</td><td>Better setup/hold on marginal paths</td></tr>
+<tr><td><strong>2</strong> Dynamic δ(T)</td><td>Add <code>last_transition_ps</code> buffer + LUT eval</td><td>All</td><td>Lines 220–255</td><td>1–2 weeks</td><td>Pulse-degradation-aware arrivals end-to-end</td></tr>
+<tr><td><strong>3</strong> Sub-cycle ticks</td><td>Multiple arrival propagations per logical cycle</td><td>Whole kernel</td><td>Major</td><td>Months</td><td>True IDM glitch behaviour. <strong>Probably not worth it</strong> for Jacquard's positioning.</td></tr>
+</tbody></table>
+</div>
+<p>Stage 1 is a 1–2 day spike with no kernel risk. Stage 2 is the honest implementation. Stage 3 is a different simulator.</p>
+<h3 id="what-we-get--dont-get-from-dynamic-δt"><a class="header" href="#what-we-get--dont-get-from-dynamic-δt">What we get / don't get from dynamic δ(T)</a></h3>
+<p><strong>Achievable</strong></p>
+<ul>
+<li>Per-corner δ(T) propagating through arrival → setup/hold reports that distinguish "just meets timing under δ∞" from "fails under realistic pulse degradation".</li>
+<li>Stays inside cycle-accurate boomerang. ~1.5–2× memory growth on arrival data, ~10–20% kernel slowdown (estimate).</li>
+</ul>
+<p><strong>Not achievable</strong></p>
+<ul>
+<li>Glitch suppression (Δᵢ → 0 → no transition).</li>
+<li>Metastable oscillation traces.</li>
+<li>Combinational-loop behaviours (loops are forbidden in the AIG anyway).</li>
+</ul>
+<h3 id="why-sky130-is-the-right-vehicle"><a class="header" href="#why-sky130-is-the-right-vehicle">Why sky130 is the right vehicle</a></h3>
+<p><code>sky130_pdk.rs</code> decomposes vendor functional Verilog into AIG nodes while preserving cell identity through <code>aigpin_cell_origins</code>. We can attach δ(T) at the <strong>original sky130 cell</strong> granularity even after AIG flattening — that structural property is what makes any of this tractable. Cells from a hand-coded library without origin tracking would be much harder.</p>
+<hr />
+<h2 id="part-b--clock-tree-skew"><a class="header" href="#part-b--clock-tree-skew">Part B — Clock-tree skew</a></h2>
+<h3 id="where-the-information-is--and-where-we-drop-it"><a class="header" href="#where-the-information-is--and-where-we-drop-it">Where the information is — and where we drop it</a></h3>
+<p>Clocks in Jacquard are walked back from each DFF through buffers/inverters/clock-gates, terminating at an <code>InputClockFlag(pinid, is_negedge)</code> (<code>src/aig.rs:441</code>, <code>:477</code>, <code>:495-560</code>). Recognised cells: <code>INV/BUF/CKLNQD</code> and the sky130 equivalents <code>inv*</code>, <code>clkinv*</code>, <code>buf*</code>, <code>clkbuf*</code>, <code>clkdlybuf*</code>, <code>lpflow_*</code>.</p>
+<p>Two consequences:</p>
+<ol>
+<li><strong>Clock-tree cells produce no AIG pin.</strong> They collapse into a polarity flag on the DFF. Since <code>aigpin_cell_origins</code> only lists cells that produced AIG pins, the timing-IR arcs on those cells (<code>IOPATH</code> records on <code>clkbuf_8</code>, etc.) match no AIG pin in <code>load_timing_from_ir</code> and are silently discarded.</li>
+<li><strong>Clock-net interconnect is dropped the same way.</strong> <code>interconnect_delays</code> records keyed by net endpoints have no destination cell to attach to, so they fall on the floor.</li>
+</ol>
+<p>Net effect: every DFF on a given clock domain is treated as having <strong>identical clock arrival</strong>, i.e. perfect skew. The current setup/hold check is honest about combinational-path delay but blind to clock-tree topology.</p>
+<p>For a sky130 MCU SoC at ~25 ns clock period this is fine functionally; for any timing claim near the period boundary it's misleading. Intra-domain clock-tree skew on sky130 is typically O(50–200 ps) — small relative to a 25 ns period, but exactly the order of magnitude that determines whether a path "barely meets" or "barely fails" setup.</p>
+<h3 id="do-we-have-the-information"><a class="header" href="#do-we-have-the-information">Do we have the information?</a></h3>
+<p>Yes, in three places, in increasing fidelity:</p>
+<ol>
+<li>
+<p><strong>TimingIR arcs on clock cells</strong> (<code>.jtir</code> already contains them; we just don't consume them).</p>
+</li>
+<li>
+<p><strong>The AIG clock walk</strong> in <code>aig.rs:495–560</code> already iterates the clock-side cells of each DFF in order. It just doesn't accumulate their delays. Adding a <code>dff_clock_origins: Vec&lt;Vec&lt;cellid&gt;&gt;</code> parallel structure costs O(num_dffs × clock_depth) memory — negligible.</p>
+</li>
+<li>
+<p><strong>OpenTimer / OpenSTA</strong> can compute per-DFF clock arrival end-to-end, including common-path-pessimism removal (CRPR), which manual accumulation misses. ADR 0003 already nominates OpenTimer as primary STA. The cleanest version of this is a new IR table:</p>
+<pre><code class="language-fbs">table ClockArrival {
+    cell_instance: string;     // DFF instance path
+    clk_pin: string;           // local pin name
+    arrival: [TimingValue];    // per-corner clock arrival ps
+    provenance: Provenance;
+}
+</code></pre>
+<p>Populated by <code>opensta-to-ir</code> (or whichever STA we standardise on) during IR generation. Consumer code never touches the netlist — it just looks up each DFF's clock arrival.</p>
+</li>
+</ol>
+<h3 id="consumer-change"><a class="header" href="#consumer-change">Consumer change</a></h3>
+<p><code>DFFConstraint</code> (<code>src/flatten.rs:75-86</code>) today:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct DFFConstraint {
+    pub setup_ps: u16,
+    pub hold_ps: u16,
+    pub data_state_pos: u32,
+    pub cell_id: u32,
+}
+<span class="boring">}</span></code></pre></pre>
+<p>Add <code>clock_arrival_ps: i16</code> (signed — capture-side arrival relative to a reference). The setup/hold check in <code>build_timing_constraint_buffer</code> (<code>src/flatten.rs:1732</code>) becomes the standard inter-DFF skew formula:</p>
+<ul>
+<li><strong>Setup margin</strong> = <code>(clock_period + clock_arr_capture - clock_arr_launch) - data_arrival - setup</code></li>
+<li><strong>Hold margin</strong> = <code>data_arrival - (clock_arr_capture - clock_arr_launch + hold)</code></li>
+</ul>
+<p>Per-launch/per-capture pairing is awkward in the current per-word-collapsed constraint buffer; the simplest first step is to <strong>fold the capture-side clock arrival into the per-DFF setup/hold values themselves</strong> before packing:</p>
+<ul>
+<li>effective_setup = <code>setup - clock_arrival_capture</code> (so positive arrival eats setup margin)</li>
+<li>effective_hold = <code>hold + clock_arrival_capture</code></li>
+</ul>
+<p>Then the existing GPU check works unchanged. This treats launch arrival as zero (ref) — pessimistic for paths that span domains with very different launch arrivals, but correct as a first cut.</p>
+<h3 id="partitioning-question"><a class="header" href="#partitioning-question">Partitioning question</a></h3>
+<blockquote>
+<p>"could we partition a design effectively to do this somewhat accurately without sacrificing too much?"</p>
+</blockquote>
+<p>Today partitioning (<code>src/repcut.rs</code>) is hypergraph-cut on logic connectivity. DFFs co-located by logic affinity may have very different clock arrivals.</p>
+<p>The pessimism cost: <code>build_timing_constraint_buffer</code> collapses all DFFs in a 32-bit state word to <code>min(setup)</code> and <code>min(hold)</code>. If a word holds DFFs with clock arrival 50 ps and 200 ps, the per-word effective setup is the worst of both — i.e. we report timing as if every DFF in that word saw the worst skew in the word. That's a 150 ps pessimism for the lucky DFF.</p>
+<p>Three options, ranked:</p>
+<ol>
+<li>
+<p><strong>Do nothing.</strong> For typical sky130 SoCs at ≥10 ns clock periods, intra-word skew (≤200 ps worst-case) vs. period (10 000+ ps) is ≤2%. Worth-it threshold for the optimisation: when designs run close enough to the period that 2% pessimism flips genuine passes into reported violations. Likely never for sky130. Plausibly relevant for designs running at ≥1 GHz on a more aggressive PDK.</p>
+</li>
+<li>
+<p><strong>Skew-bucket the DFF constraint packing, not the partitioning.</strong> Group DFFs into clock-arrival buckets <em>after</em> partitioning, and emit one constraint word per bucket-within-partition rather than collapsing everything in the word. Increases constraint-buffer size by O(num_buckets) but doesn't disturb the partitioner. <strong>Probably the right answer if we ever need to.</strong></p>
+</li>
+<li>
+<p><strong>Skew-aware partitioning.</strong> Add a soft objective to <code>repcut.rs</code> that prefers grouping DFFs by clock arrival. Degrades cut quality (more inter-partition logic edges → more state shuffling). Almost certainly worse than option 2 for the same accuracy gain.</p>
+</li>
+</ol>
+<p>So: yes we have the info, no we probably don't need to repartition, and the constraint-collapsing pessimism is the real lever — either accept it (option 1) or break it bucket-wise (option 2).</p>
+<h3 id="staged-plan-for-clock-tree"><a class="header" href="#staged-plan-for-clock-tree">Staged plan for clock tree</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Stage</th><th>What</th><th>Touches</th><th>Kernel</th><th>Effort</th></tr></thead><tbody>
+<tr><td><strong>1</strong> Capture clock-tree delay</td><td>Add <code>ClockArrival</code> IR table; populate from opensta-to-ir</td><td>IR schema, <code>opensta-to-ir/builder</code></td><td>None</td><td>2–3 days</td></tr>
+<tr><td><strong>2</strong> Apply to setup/hold</td><td>Fold capture-side arrival into <code>DFFConstraint</code>; existing kernel check now skew-aware</td><td><code>src/flatten.rs:75-86</code>, <code>:1732</code></td><td>None</td><td>1–2 days</td></tr>
+<tr><td><strong>3</strong> (if needed) Bucketed packing</td><td>Per-bucket constraint words; kernel reads the right bucket per DFF</td><td><code>src/flatten.rs:1722-1761</code>, kernel constraint indexing</td><td>Minor</td><td>3–5 days</td></tr>
+</tbody></table>
+</div>
+<p>Stage 1+2 covers the realistic accuracy win. Stage 3 only if measurement shows the per-word collapse is materially over-reporting violations.</p>
+<hr />
+<h2 id="part-c--wire-delay-at-scale"><a class="header" href="#part-c--wire-delay-at-scale">Part C — Wire delay at scale</a></h2>
+<h3 id="why-this-gets-more-important-as-designs-grow"><a class="header" href="#why-this-gets-more-important-as-designs-grow">Why this gets more important as designs grow</a></h3>
+<p>In sky130 at 25 ns clock periods, wire delay is a small perturbation on gate delay and the lumped model is fine. The picture changes in two regimes:</p>
+<ul>
+<li><strong>Faster clocks.</strong> Wire delay is a fixed physical quantity (RC-dominated); period shrinks; wire fraction of the budget grows.</li>
+<li><strong>Finer processes (e.g. 22nm and below).</strong> Gate delays scale down with feature size; wire RC scales <strong>unfavourably</strong> (resistance per square goes up, capacitance per length stays roughly flat). The classic "reverse scaling" inflection: gates get faster, long wires don't. Typical 22nm: inverter delay 5–15 ps, local short wires 5–20 ps, global routes 50–500 ps, multi-mm wires 1+ ns without repeaters.</li>
+<li><strong>Large many-core/NoC SoCs.</strong> Inter-tile mesh links can span multiple millimetres; chip-level signals have wire delays comparable to or larger than entire combinational stages.</li>
+</ul>
+<p>For a many-small-core NoC at 22nm, wire delay on inter-core links is typically <strong>the</strong> dominant timing factor. Any model that can't represent it accurately will misreport the critical paths.</p>
+<h3 id="what-jacquard-does-today"><a class="header" href="#what-jacquard-does-today">What Jacquard does today</a></h3>
+<p>The IR side is already in shape. <code>crates/timing-ir/schemas/timing_ir.fbs</code> carries <code>InterconnectDelay { net, from_pin, to_pin, delay[corner] }</code> per receiver, and <code>opensta-to-ir</code> populates it from SDF.</p>
+<p>The lossy step is the <strong>consumer</strong> in <code>src/flatten.rs:1850-1872</code>:</p>
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>let mut wire_delays_per_cell: HashMap&lt;usize, (u64, u64)&gt; = HashMap::new();
+// ... for each InterconnectDelay record:
+let entry = wire_delays_per_cell.entry(dest_cellid).or_insert((0, 0));
+entry.0 = entry.0.max(d);   // rise
+entry.1 = entry.1.max(d);   // fall (same value!)
+<span class="boring">}</span></code></pre></pre>
+<p>Three layers of pessimism stacked here:</p>
+<ol>
+<li><strong>Keyed by destination cell, not destination pin.</strong> A cell with two inputs from very different routes loses per-pin fidelity.</li>
+<li><strong>Max across inputs of the same cell.</strong> Worst-case incoming wire is applied to every output of the cell.</li>
+<li><strong>No rise/fall distinction on wire delay.</strong> SDF carries both; we collapse to one number.</li>
+</ol>
+<p>Then in arrival propagation (<code>csrc/kernel_v1.metal:220-255</code>):</p>
+<pre><code class="language-c">new_arr = max(arr_a, arr_b) + gate_delay
+</code></pre>
+<p>where <code>gate_delay = intrinsic + max_wire_into_cell</code>. The mathematically correct propagation is:</p>
+<pre><code class="language-c">new_arr = max(arr_a + wire_a, arr_b + wire_b) + intrinsic
+</code></pre>
+<p>These are equivalent <strong>only when the input with the worst arrival also has the worst wire</strong>. When they don't coincide — common on a NoC node where one input comes from a long mesh hop and another from local logic — the current model over-reports by <code>max_wire − actual_wire_on_critical_input</code>.</p>
+<p>For sky130 small designs this gap is in the noise. For 22nm with 10× variation between local and global wire delays, it's the difference between "this path meets timing" and "STA reports a violation that doesn't exist."</p>
+<h3 id="inter-partition-wires--the-architectural-wrinkle"><a class="header" href="#inter-partition-wires--the-architectural-wrinkle">Inter-partition wires — the architectural wrinkle</a></h3>
+<p>A NoC tile naturally maps to one (or a few) partition(s). The inter-tile links — the long, wire-dominated, timing-critical ones — are precisely the partition-crossing signals. Today wire delay sits on the destination cell's <code>gate_delays</code> slot, evaluated inside the destination partition's boomerang reduction. The wire is a property of the <strong>crossing</strong>, not the destination cell, and should ideally be modelled at the partition I/O boundary, where <code>src/sim/cosim_metal.rs</code> already shuffles state between partitions.</p>
+<p>This is the inverse alignment of the clock-tree case. There partitioning didn't help with skew accounting. Here partitioning is <em>load-bearing</em>: tile-aligned partitions naturally expose the small set of edges that deserve careful wire-delay modelling, and let intra-partition logic stay on the fast lumped path.</p>
+<h3 id="three-fidelity-tiers"><a class="header" href="#three-fidelity-tiers">Three fidelity tiers</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Tier</th><th>Model</th><th>Where wire delay lives</th><th>When it's enough</th></tr></thead><tbody>
+<tr><td><strong>0</strong> (current)</td><td>One scalar per destination cell, max-collapsed</td><td>Folded into <code>gate_delays[output_pin]</code> of dest cell</td><td>sky130 + ≥10 ns periods + small designs</td></tr>
+<tr><td><strong>1</strong> Per-receiver</td><td>One scalar per <code>(from_pin, to_pin)</code> edge in the AIG</td><td>Folded into the <strong>source</strong> AIG pin's gate_delay, with one entry per fanout target</td><td>Local wires in faster designs; intra-tile NoC logic</td></tr>
+<tr><td><strong>2</strong> Per-edge with inter-partition arcs</td><td>Tier 1 + explicit wire delay on partition-crossing signals</td><td>Tier 1 + new arrival-bump applied during <code>cosim_metal.rs</code> state shuffle</td><td>Long routes + many-core/NoC + 22nm-scale processes</td></tr>
+</tbody></table>
+</div>
+<p>Tier 1 is mostly a <code>flatten.rs</code> rewrite. Tier 2 needs <code>cosim_metal.rs</code> extension and a new field in the inter-partition transfer format.</p>
+<h3 id="information-availability"><a class="header" href="#information-availability">Information availability</a></h3>
+<p>Yes, it's there:</p>
+<ul>
+<li><code>InterconnectDelay</code> records exist per receiver. SDF carries them. opensta-to-ir emits them.</li>
+<li>Per-input-pin granularity is in the IR (<code>to_pin</code> includes the local pin name). The consumer just discards it via <code>to_pin.rfind('/')</code> to derive <code>dest_inst</code>.</li>
+<li>Rise/fall distinction is in the schema (<code>delay: [TimingValue]</code> per corner; rise/fall could be on top via the same pattern as <code>TimingArc</code>). For SDF-back-annotated flows the rise/fall split usually comes from the SDF; we'd need to confirm opensta-to-ir preserves both edges.</li>
+</ul>
+<p>What's missing today:</p>
+<ul>
+<li>Tier-1 plumbing: AIG-pin-level wire delay per fanout. Current <code>gate_delays: Vec&lt;PackedDelay&gt;</code> is keyed by AIG pin (the output side); to do per-input-edge correctly we want delay attached to the <em>edge</em>, not the node. Either add a parallel <code>wire_delays: HashMap&lt;(src_aigpin, dst_aigpin), PackedDelay&gt;</code> or refactor toward an edge-attributed AIG.</li>
+<li>Tier-2 plumbing: a "partition-crossing arc" concept in <code>cosim_metal.rs</code>. Currently inter-partition state shuffle moves bits with no associated arrival bump. Adding a per-edge ps adjustment is straightforward in principle; finding the right place in the shuffle pipeline matters.</li>
+</ul>
+<h3 id="ir-scale"><a class="header" href="#ir-scale">IR scale</a></h3>
+<p>The IR-size concern bites here. <code>InterconnectDelay</code> is roughly 100–200 bytes per record; a 22nm SoC with 10⁶–10⁷ nets is a .jtir file in the hundreds-of-MB to multi-GB range.</p>
+<p>Mitigations:</p>
+<ul>
+<li>Streaming load: today <code>TimingIrFile::from_path</code> reads the whole buffer. Could mmap and lazy-decode, since FlatBuffers is offset-based.</li>
+<li>Sharding: split IR per partition or per top-level module. Adds a build-time step but bounds memory per process.</li>
+<li>Drop intra-cell wires from IR generation: SDF often has microscopic interconnect records that lump into the destination's own pin-cap. Filter these out at the opensta-to-ir builder. Loss is genuinely negligible.</li>
+</ul>
+<p>Worth measuring before committing to mitigations — sky130 NVDLA-scale today is fine; the question is what 22nm + N-tile mesh looks like.</p>
+<h3 id="partitioning-question--the-other-direction"><a class="header" href="#partitioning-question--the-other-direction">Partitioning question — the other direction</a></h3>
+<p>For NoC designs partitioning becomes a positive lever (unlike the clock-tree case where it was neutral). Two specific levers:</p>
+<ol>
+<li><strong>Tile-aligned partitions.</strong> If <code>repcut.rs</code> finds tile-aligned cuts naturally (likely, given typical tile-to-tile connectivity sparsity), inter-partition arcs are a small, well-defined set of NoC links. Worth verifying with a representative design — a partitioning report keyed by signal name pattern (<code>*_link_*</code>, <code>noc_*</code>, configurable) would expose whether the partitioner's logic-affinity score is already aligned with tile boundaries or whether we need to bias it.</li>
+<li><strong>NoC-link partitioning hint.</strong> Add a soft bias to repcut that prefers cutting nets matching a configured regex. Same partitioning machinery, configurable input. Cost: degrades cut quality if the hint conflicts with logic affinity. Likely worth it for explicitly tile-decomposed designs where the user knows the tile boundaries; not worth it for flat designs.</li>
+</ol>
+<p>The point of any of this is to make Tier-2 cheap: if the inter-partition arc set is small, per-edge wire delay on those crossings costs almost nothing.</p>
+<h3 id="crosstalk-and-ocv"><a class="header" href="#crosstalk-and-ocv">Crosstalk and OCV</a></h3>
+<p>These are upstream concerns. SDF from a crosstalk-aware STA flow already carries pessimistic delays; OCV (on-chip variation) is similarly baked into the chosen corner. Jacquard consumes whatever the IR was generated against. Worth a one-line note in the user-facing docs that the timing report's accuracy is bounded by the SDF/STA flow it was built from — Jacquard does not invent crosstalk pessimism.</p>
+<h3 id="staged-plan-for-wire-delay"><a class="header" href="#staged-plan-for-wire-delay">Staged plan for wire delay</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Stage</th><th>What</th><th>Touches</th><th>Kernel</th><th>Effort</th></tr></thead><tbody>
+<tr><td><strong>1</strong> Per-receiver consumption</td><td>Key wire delay by <code>(src_aigpin, dst_aigpin)</code> edge; fold into source AIG pin's gate_delay per fanout</td><td><code>src/flatten.rs:1850-1872</code>, possibly <code>src/aig.rs</code> for fanout tracking</td><td>None</td><td>3–5 days</td></tr>
+<tr><td><strong>2</strong> Rise/fall distinction</td><td>Preserve per-edge rise/fall through the consumer; honour both in <code>PackedDelay</code> accumulation</td><td><code>src/flatten.rs:1850-1914</code></td><td>None</td><td>1–2 days</td></tr>
+<tr><td><strong>3</strong> Inter-partition arc delay</td><td>New per-crossing wire-delay table; arrival bump applied during inter-partition state transfer</td><td><code>src/sim/cosim_metal.rs</code> shuffle path; <code>src/flatten.rs</code> partition-boundary metadata</td><td>Yes (transfer path)</td><td>2–3 weeks</td></tr>
+<tr><td><strong>4</strong> IR scale plumbing</td><td>Streaming/mmap load; opensta-to-ir filtering of microscopic records</td><td><code>src/sim/timing_ir_loader.rs</code>, <code>opensta-to-ir/builder</code></td><td>None</td><td>1 week (gated on measurement)</td></tr>
+<tr><td><strong>5</strong> NoC-aware partitioning</td><td>Soft bias in repcut for cutting flagged nets; partition report by tile</td><td><code>src/repcut.rs</code> and CLI flags</td><td>None</td><td>1–2 weeks</td></tr>
+</tbody></table>
+</div>
+<p>For a sky130 use case Stage 1+2 likely covers everything you'd notice. For 22nm NoC, Stages 1–3 are the meaningful set; Stage 5 is the optimisation that makes Stage 3 cheap.</p>
+<h3 id="what-we-get--dont-get"><a class="header" href="#what-we-get--dont-get">What we get / don't get</a></h3>
+<p><strong>Achievable</strong></p>
+<ul>
+<li>Setup/hold accuracy on long routes that today gets clobbered by max-collapse pessimism.</li>
+<li>Honest reporting on NoC inter-tile links — the paths that actually matter for many-core SoC timing closure.</li>
+<li>All of the above without changing Jacquard's cycle-accurate kernel architecture.</li>
+</ul>
+<p><strong>Not achievable from this work alone</strong></p>
+<ul>
+<li>Crosstalk-driven delay uncertainty (handled upstream in STA).</li>
+<li>Variation-aware (statistical) timing — would need OCV-corner sweeping or SSTA, neither of which is on the roadmap.</li>
+<li>Process variation modelling beyond the corners the SDF/IR was generated against.</li>
+</ul>
+<hr />
+<h2 id="open-questions"><a class="header" href="#open-questions">Open questions</a></h2>
+<ol>
+<li><strong>δ(T) characterisation cost.</strong> One-off SPICE per cell-type per corner. Cheaper if we lean on existing ECSM/CCSM data already in vendor Liberty rather than re-running SPICE. Worth investigating before committing to Stage 2.</li>
+<li><strong>Whose clock arrival is authoritative?</strong> Manual accumulation in <code>aig.rs</code> is simple but misses CRPR. STA-tool arrivals (OpenTimer) are correct but couple us to that tool's output format. ADR 0003 leans toward OpenTimer; reuse that decision.</li>
+<li><strong>Interaction.</strong> Does δ(T) on clock-tree buffers matter? Probably not enough to model — clock buffers are sized for fast edges and operate far from their pulse-degradation regime. But the framework should be able to express "ignore δ(T) on clock domain" cleanly.</li>
+<li><strong>Validation oracle.</strong> CVC and Icarus already serve as functional oracles; for skew-aware and wire-aware reporting we'd want OpenTimer's slack report as the ground truth for unit tests. ADR 0003 again.</li>
+<li><strong>IR size at 22nm scale.</strong> Open question whether <code>.jtir</code> for a representative many-core NoC fits in available memory under the current eager-load model. Needs measurement before committing to streaming mitigations.</li>
+<li><strong>Edge-attributed AIG.</strong> Per-receiver wire delay wants delay attached to AIG <em>edges</em>, not nodes. Today the AIG is node-attributed (<code>gate_delays: Vec&lt;PackedDelay&gt;</code> indexed by aigpin). A clean Tier-1 implementation may push toward edge attribution, with downstream effects on the boomerang reduction script layout. Worth a small spike before the main implementation.</li>
+<li><strong>Partition-crossing format.</strong> Adding per-edge wire delay to <code>cosim_metal.rs</code> inter-partition transfers needs a precise place in the existing pipeline. Currently the shuffle moves Boolean state words without arrival; the natural place is alongside the writeout-arrival path that already exists for setup/hold checking, but the alignment isn't 1:1 because partition crossings happen at logic boundaries, not capture-DFF boundaries.</li>
+</ol>
+<h2 id="related-artefacts-1"><a class="header" href="#related-artefacts-1">Related artefacts</a></h2>
+<ul>
+<li><code>docs/timing-correctness.md</code> — forward-looking validation contract; this doc extends rather than replaces.</li>
+<li><code>docs/timing-simulation.md</code> — boomerang architecture; the kernel-side context.</li>
+<li><code>docs/timing-validation.md</code> — current ±5% acceptance criteria; would tighten under δ(T).</li>
+<li><code>docs/adr/0002-timing-ir.md</code> — IR design rationale; schema additions here follow the "lossless extension" principle.</li>
+<li><code>docs/adr/0003-opentimer-primary-sta.md</code> — STA tool decision; relevant to clock-arrival sourcing.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="adding-a-new-pdk-for-post-layout-simulation"><a class="header" href="#adding-a-new-pdk-for-post-layout-simulation">Adding a New PDK for Post-Layout Simulation</a></h1>
 <p>This guide documents the process of enabling a new process design kit (PDK) for
 gate-level simulation in Jacquard. It is based on the SKY130 enablement and captures
