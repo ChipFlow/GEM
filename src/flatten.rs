@@ -2338,6 +2338,7 @@ mod ir_delay_tests {
                 timing_arcs: Some(arcs_vec),
                 interconnect_delays: Some(ic_vec),
                 setup_hold_checks: Some(sh_vec),
+                clock_arrivals: None,
                 vendor_extensions: Some(ve_vec),
                 generator_tool: Some(gt),
                 generator_version: Some(gv),

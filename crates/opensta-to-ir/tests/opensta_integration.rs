@@ -40,6 +40,10 @@ module chain(A, B, C, Y);
 endmodule
 "#;
 
+// Minimal SDC defining a 10 ns clock on `CLK`. Required for OpenSTA to
+// propagate clock arrivals into the timing graph.
+const DFF_SDC: &str = "create_clock -name clk -period 10.0 [get_ports CLK]\n";
+
 // Minimal SDF with one INTERCONNECT entry on the wire u1/Y → u2/A.
 // Hierarchy separator matches the design's flat namespace.
 const CHAIN_SDF: &str = r#"(DELAYFILE
@@ -269,6 +273,76 @@ fn chain_with_sdf_emits_interconnect_delay() {
     assert!(
         v.max() >= 40.0 && v.max() <= 70.0,
         "interconnect max {} ps outside expected 40..70 ps from SDF",
+        v.max()
+    );
+}
+
+#[test]
+fn dff_with_sdc_clock_emits_clock_arrival() {
+    let Some(_sta) = find_opensta(None) else {
+        eprintln!("skipping: OpenSTA not built; run scripts/build-opensta.sh");
+        return;
+    };
+
+    let dir = TempDir::new().unwrap();
+    let v_path = dir.path().join("dff.v");
+    let sdc_path = dir.path().join("dff.sdc");
+    let out_path = dir.path().join("dff.jtir");
+    std::fs::write(&v_path, DFF_VERILOG).unwrap();
+    std::fs::write(&sdc_path, DFF_SDC).unwrap();
+
+    let lib = aigpdk_lib();
+    let output = Command::new(bin())
+        .arg("--liberty")
+        .arg(&lib)
+        .arg("--verilog")
+        .arg(&v_path)
+        .arg("--sdc")
+        .arg(&sdc_path)
+        .arg("--top")
+        .arg("dff_test")
+        .arg("--output")
+        .arg(&out_path)
+        .output()
+        .expect("run opensta-to-ir");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    let buf = std::fs::read(&out_path).expect("output IR written");
+    let ir = root_as_timing_ir(&buf).expect("readable IR");
+
+    let cas = ir.clock_arrivals().expect("clock_arrivals vector present");
+    assert!(
+        !cas.is_empty(),
+        "expected at least one CLOCK_ARRIVAL for d1/CLK; got 0"
+    );
+
+    let mut found = None;
+    for i in 0..cas.len() {
+        let ca = cas.get(i);
+        if ca.cell_instance() == Some("d1") && ca.clk_pin() == Some("CLK") {
+            found = Some(ca);
+            break;
+        }
+    }
+    let ca = found.expect("d1/CLK clock arrival missing from IR");
+    let arr = ca.arrival().expect("arrival values present");
+    assert_eq!(arr.len(), 1, "single corner");
+    let v = arr.get(0);
+    assert_eq!(v.corner_index(), 0);
+    // For a single-DFF design with the clock applied directly to a top-level
+    // port, propagated clock arrival is small but nonzero (clock pin
+    // capacitive load adds ~ps). Max should be finite and non-negative;
+    // exact value depends on Liberty/parasitics, so don't pin it.
+    assert!(
+        v.max().is_finite() && v.max() >= 0.0 && v.max() < 100_000.0,
+        "clock arrival max {} ps outside sane finite range",
         v.max()
     );
 }

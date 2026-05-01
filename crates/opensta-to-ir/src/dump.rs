@@ -110,6 +110,17 @@ pub struct SetupHoldRecord {
 }
 
 #[derive(Clone, Debug)]
+pub struct ClockArrivalRecord {
+    pub cell_instance: String,
+    pub clk_pin: String,
+    pub corner_index: u32,
+    pub min: f64,
+    pub typ: f64,
+    pub max: f64,
+    pub origin: Origin,
+}
+
+#[derive(Clone, Debug)]
 pub struct VendorExtRecord {
     pub source: String,
     pub source_tool: String,
@@ -123,6 +134,7 @@ pub enum DumpRecord {
     Arc(ArcRecord),
     Interconnect(InterconnectRecord),
     SetupHold(SetupHoldRecord),
+    ClockArrival(ClockArrivalRecord),
     VendorExt(VendorExtRecord),
 }
 
@@ -249,6 +261,7 @@ fn parse_record(kind: &str, fields: &[&str], lineno: usize) -> Result<DumpRecord
         "ARC" => parse_arc(fields, lineno).map(DumpRecord::Arc),
         "INTERCONNECT" => parse_interconnect(fields, lineno).map(DumpRecord::Interconnect),
         "SETUP_HOLD" => parse_setup_hold(fields, lineno).map(DumpRecord::SetupHold),
+        "CLOCK_ARRIVAL" => parse_clock_arrival(fields, lineno).map(DumpRecord::ClockArrival),
         "VENDOR_EXT" => parse_vendor_ext(fields, lineno).map(DumpRecord::VendorExt),
         other => Err(err(lineno, format!("unknown record kind {other:?}"))),
     }
@@ -315,6 +328,20 @@ fn parse_setup_hold(fields: &[&str], lineno: usize) -> Result<SetupHoldRecord, P
         hold_typ: parse_field(hold_typ, "hold_typ", lineno)?,
         hold_max: parse_field(hold_max, "hold_max", lineno)?,
         condition: condition.to_string(),
+        origin: parse_field(origin, "origin", lineno)?,
+    })
+}
+
+fn parse_clock_arrival(fields: &[&str], lineno: usize) -> Result<ClockArrivalRecord, ParseError> {
+    let [cell_instance, clk_pin, corner_index, min, typ, max, origin] =
+        field_array::<7>(fields, "CLOCK_ARRIVAL", lineno)?;
+    Ok(ClockArrivalRecord {
+        cell_instance: cell_instance.to_string(),
+        clk_pin: clk_pin.to_string(),
+        corner_index: parse_field(corner_index, "corner_index", lineno)?,
+        min: parse_field(min, "min", lineno)?,
+        typ: parse_field(typ, "typ", lineno)?,
+        max: parse_field(max, "max", lineno)?,
         origin: parse_field(origin, "origin", lineno)?,
     })
 }

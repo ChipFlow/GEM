@@ -81,6 +81,7 @@ fn build_ir_with_arcs(arcs: &[(&str, &str, f64, f64)]) -> Vec<u8> {
             timing_arcs: Some(arcs_vec),
             interconnect_delays: None,
             setup_hold_checks: None,
+            clock_arrivals: None,
             vendor_extensions: None,
             generator_tool: Some(gen_tool),
             generator_version: Some(gen_version),

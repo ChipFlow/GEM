@@ -1798,6 +1798,201 @@ pub mod jacquard {
                 ds.finish()
             }
         }
+        pub enum ClockArrivalOffset {}
+        #[derive(Copy, Clone, PartialEq)]
+
+        pub struct ClockArrival<'a> {
+            pub _tab: ::flatbuffers::Table<'a>,
+        }
+
+        impl<'a> ::flatbuffers::Follow<'a> for ClockArrival<'a> {
+            type Inner = ClockArrival<'a>;
+            #[inline]
+            unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+                Self {
+                    _tab: unsafe { ::flatbuffers::Table::new(buf, loc) },
+                }
+            }
+        }
+
+        impl<'a> ClockArrival<'a> {
+            pub const VT_CELL_INSTANCE: ::flatbuffers::VOffsetT = 4;
+            pub const VT_CLK_PIN: ::flatbuffers::VOffsetT = 6;
+            pub const VT_ARRIVAL: ::flatbuffers::VOffsetT = 8;
+            pub const VT_PROVENANCE: ::flatbuffers::VOffsetT = 10;
+
+            #[inline]
+            pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+                ClockArrival { _tab: table }
+            }
+            #[allow(unused_mut)]
+            pub fn create<
+                'bldr: 'args,
+                'args: 'mut_bldr,
+                'mut_bldr,
+                A: ::flatbuffers::Allocator + 'bldr,
+            >(
+                _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+                args: &'args ClockArrivalArgs<'args>,
+            ) -> ::flatbuffers::WIPOffset<ClockArrival<'bldr>> {
+                let mut builder = ClockArrivalBuilder::new(_fbb);
+                if let Some(x) = args.provenance {
+                    builder.add_provenance(x);
+                }
+                if let Some(x) = args.arrival {
+                    builder.add_arrival(x);
+                }
+                if let Some(x) = args.clk_pin {
+                    builder.add_clk_pin(x);
+                }
+                if let Some(x) = args.cell_instance {
+                    builder.add_cell_instance(x);
+                }
+                builder.finish()
+            }
+
+            #[inline]
+            pub fn cell_instance(&self) -> Option<&'a str> {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(
+                        ClockArrival::VT_CELL_INSTANCE,
+                        None,
+                    )
+                }
+            }
+            #[inline]
+            pub fn clk_pin(&self) -> Option<&'a str> {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab
+                        .get::<::flatbuffers::ForwardsUOffset<&str>>(ClockArrival::VT_CLK_PIN, None)
+                }
+            }
+            #[inline]
+            pub fn arrival(&self) -> Option<::flatbuffers::Vector<'a, TimingValue>> {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, TimingValue>>>(ClockArrival::VT_ARRIVAL, None)
+                }
+            }
+            #[inline]
+            pub fn provenance(&self) -> Option<Provenance<'a>> {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<::flatbuffers::ForwardsUOffset<Provenance>>(
+                        ClockArrival::VT_PROVENANCE,
+                        None,
+                    )
+                }
+            }
+        }
+
+        impl ::flatbuffers::Verifiable for ClockArrival<'_> {
+            #[inline]
+            fn run_verifier(
+                v: &mut ::flatbuffers::Verifier,
+                pos: usize,
+            ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+                v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("cell_instance", Self::VT_CELL_INSTANCE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("clk_pin", Self::VT_CLK_PIN, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, TimingValue>>>("arrival", Self::VT_ARRIVAL, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Provenance>>("provenance", Self::VT_PROVENANCE, false)?
+     .finish();
+                Ok(())
+            }
+        }
+        pub struct ClockArrivalArgs<'a> {
+            pub cell_instance: Option<::flatbuffers::WIPOffset<&'a str>>,
+            pub clk_pin: Option<::flatbuffers::WIPOffset<&'a str>>,
+            pub arrival: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, TimingValue>>>,
+            pub provenance: Option<::flatbuffers::WIPOffset<Provenance<'a>>>,
+        }
+        impl<'a> Default for ClockArrivalArgs<'a> {
+            #[inline]
+            fn default() -> Self {
+                ClockArrivalArgs {
+                    cell_instance: None,
+                    clk_pin: None,
+                    arrival: None,
+                    provenance: None,
+                }
+            }
+        }
+
+        pub struct ClockArrivalBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+            fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+        }
+        impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ClockArrivalBuilder<'a, 'b, A> {
+            #[inline]
+            pub fn add_cell_instance(&mut self, cell_instance: ::flatbuffers::WIPOffset<&'b str>) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    ClockArrival::VT_CELL_INSTANCE,
+                    cell_instance,
+                );
+            }
+            #[inline]
+            pub fn add_clk_pin(&mut self, clk_pin: ::flatbuffers::WIPOffset<&'b str>) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    ClockArrival::VT_CLK_PIN,
+                    clk_pin,
+                );
+            }
+            #[inline]
+            pub fn add_arrival(
+                &mut self,
+                arrival: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b, TimingValue>>,
+            ) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    ClockArrival::VT_ARRIVAL,
+                    arrival,
+                );
+            }
+            #[inline]
+            pub fn add_provenance(&mut self, provenance: ::flatbuffers::WIPOffset<Provenance<'b>>) {
+                self.fbb_
+                    .push_slot_always::<::flatbuffers::WIPOffset<Provenance>>(
+                        ClockArrival::VT_PROVENANCE,
+                        provenance,
+                    );
+            }
+            #[inline]
+            pub fn new(
+                _fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+            ) -> ClockArrivalBuilder<'a, 'b, A> {
+                let start = _fbb.start_table();
+                ClockArrivalBuilder {
+                    fbb_: _fbb,
+                    start_: start,
+                }
+            }
+            #[inline]
+            pub fn finish(self) -> ::flatbuffers::WIPOffset<ClockArrival<'a>> {
+                let o = self.fbb_.end_table(self.start_);
+                ::flatbuffers::WIPOffset::new(o.value())
+            }
+        }
+
+        impl ::core::fmt::Debug for ClockArrival<'_> {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                let mut ds = f.debug_struct("ClockArrival");
+                ds.field("cell_instance", &self.cell_instance());
+                ds.field("clk_pin", &self.clk_pin());
+                ds.field("arrival", &self.arrival());
+                ds.field("provenance", &self.provenance());
+                ds.finish()
+            }
+        }
         pub enum VendorExtensionOffset {}
         #[derive(Copy, Clone, PartialEq)]
 
@@ -2032,10 +2227,11 @@ pub mod jacquard {
             pub const VT_TIMING_ARCS: ::flatbuffers::VOffsetT = 8;
             pub const VT_INTERCONNECT_DELAYS: ::flatbuffers::VOffsetT = 10;
             pub const VT_SETUP_HOLD_CHECKS: ::flatbuffers::VOffsetT = 12;
-            pub const VT_VENDOR_EXTENSIONS: ::flatbuffers::VOffsetT = 14;
-            pub const VT_GENERATOR_TOOL: ::flatbuffers::VOffsetT = 16;
-            pub const VT_GENERATOR_VERSION: ::flatbuffers::VOffsetT = 18;
-            pub const VT_INPUT_FILES: ::flatbuffers::VOffsetT = 20;
+            pub const VT_CLOCK_ARRIVALS: ::flatbuffers::VOffsetT = 14;
+            pub const VT_VENDOR_EXTENSIONS: ::flatbuffers::VOffsetT = 16;
+            pub const VT_GENERATOR_TOOL: ::flatbuffers::VOffsetT = 18;
+            pub const VT_GENERATOR_VERSION: ::flatbuffers::VOffsetT = 20;
+            pub const VT_INPUT_FILES: ::flatbuffers::VOffsetT = 22;
 
             #[inline]
             pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
@@ -2063,6 +2259,9 @@ pub mod jacquard {
                 }
                 if let Some(x) = args.vendor_extensions {
                     builder.add_vendor_extensions(x);
+                }
+                if let Some(x) = args.clock_arrivals {
+                    builder.add_clock_arrivals(x);
                 }
                 if let Some(x) = args.setup_hold_checks {
                     builder.add_setup_hold_checks(x);
@@ -2153,6 +2352,20 @@ pub mod jacquard {
                 }
             }
             #[inline]
+            pub fn clock_arrivals(
+                &self,
+            ) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClockArrival<'a>>>>
+            {
+                // Safety:
+                // Created from valid Table for this object
+                // which contains a valid value in this slot
+                unsafe {
+                    self._tab.get::<::flatbuffers::ForwardsUOffset<
+                        ::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClockArrival>>,
+                    >>(TimingIR::VT_CLOCK_ARRIVALS, None)
+                }
+            }
+            #[inline]
             pub fn vendor_extensions(
                 &self,
             ) -> Option<
@@ -2233,6 +2446,9 @@ pub mod jacquard {
                         ::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<SetupHoldCheck>>,
                     >>("setup_hold_checks", Self::VT_SETUP_HOLD_CHECKS, false)?
                     .visit_field::<::flatbuffers::ForwardsUOffset<
+                        ::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ClockArrival>>,
+                    >>("clock_arrivals", Self::VT_CLOCK_ARRIVALS, false)?
+                    .visit_field::<::flatbuffers::ForwardsUOffset<
                         ::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<VendorExtension>>,
                     >>("vendor_extensions", Self::VT_VENDOR_EXTENSIONS, false)?
                     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>(
@@ -2277,6 +2493,11 @@ pub mod jacquard {
                     ::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<SetupHoldCheck<'a>>>,
                 >,
             >,
+            pub clock_arrivals: Option<
+                ::flatbuffers::WIPOffset<
+                    ::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ClockArrival<'a>>>,
+                >,
+            >,
             pub vendor_extensions: Option<
                 ::flatbuffers::WIPOffset<
                     ::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<VendorExtension<'a>>>,
@@ -2299,6 +2520,7 @@ pub mod jacquard {
                     timing_arcs: None,
                     interconnect_delays: None,
                     setup_hold_checks: None,
+                    clock_arrivals: None,
                     vendor_extensions: None,
                     generator_tool: None,
                     generator_version: None,
@@ -2366,6 +2588,18 @@ pub mod jacquard {
                 self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
                     TimingIR::VT_SETUP_HOLD_CHECKS,
                     setup_hold_checks,
+                );
+            }
+            #[inline]
+            pub fn add_clock_arrivals(
+                &mut self,
+                clock_arrivals: ::flatbuffers::WIPOffset<
+                    ::flatbuffers::Vector<'b, ::flatbuffers::ForwardsUOffset<ClockArrival<'b>>>,
+                >,
+            ) {
+                self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(
+                    TimingIR::VT_CLOCK_ARRIVALS,
+                    clock_arrivals,
                 );
             }
             #[inline]
@@ -2437,6 +2671,7 @@ pub mod jacquard {
                 ds.field("timing_arcs", &self.timing_arcs());
                 ds.field("interconnect_delays", &self.interconnect_delays());
                 ds.field("setup_hold_checks", &self.setup_hold_checks());
+                ds.field("clock_arrivals", &self.clock_arrivals());
                 ds.field("vendor_extensions", &self.vendor_extensions());
                 ds.field("generator_tool", &self.generator_tool());
                 ds.field("generator_version", &self.generator_version());

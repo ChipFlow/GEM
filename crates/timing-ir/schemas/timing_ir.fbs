@@ -128,6 +128,27 @@ table SetupHoldCheck {
     provenance: Provenance;
 }
 
+// Per-DFF clock arrival — the propagation delay from the clock root to a
+// sequential cell's clock pin, including the clock-tree network that AIG
+// construction collapses to a polarity flag.
+//
+// Used by consumers to model intra-domain clock skew in setup/hold checks
+// without re-walking the netlist (see docs/timing-model-extensions.md
+// Pillar B Stage 1+2).
+//
+// CRPR (common-path-pessimism removal) is fundamentally a per-(launch,
+// capture)-pair credit, not a per-DFF property; what is emitted here is
+// the per-DFF capture-side arrival without per-pair CRPR adjustment.
+// Consumers treat the launch-side arrival as the reference (== 0). The
+// remaining pessimism is small relative to the skew this table captures
+// and is typically O(10 ps) on intra-domain paths.
+table ClockArrival {
+    cell_instance: string;     // The sequential cell's instance path
+    clk_pin: string;           // Clock pin name (local to cell)
+    arrival: [TimingValue];    // Per-corner arrival in picoseconds
+    provenance: Provenance;
+}
+
 // -----------------------------------------------------------------------------
 // Vendor extensions — typed passthrough for dialect-specific data
 // -----------------------------------------------------------------------------
@@ -168,6 +189,7 @@ table TimingIR {
     timing_arcs: [TimingArc];
     interconnect_delays: [InterconnectDelay];
     setup_hold_checks: [SetupHoldCheck];
+    clock_arrivals: [ClockArrival];
 
     // Vendor-specific annotations preserved as passthrough.
     vendor_extensions: [VendorExtension];

@@ -3,9 +3,10 @@
 # Reads inputs, links the design, walks OpenSTA's timing graph, and
 # emits a dump in the format consumed by crates/opensta-to-ir/src/dump.rs.
 #
-# Phase 0 WS2 (2.3 + 2.2): single-corner CORNER + ARC + SETUP_HOLD +
-# INTERCONNECT records. Multi-corner and vendor extensions are later
-# slices. The Rust side supports the full record set.
+# Phase 0 WS2 (2.3 + 2.2) + Pillar B Stage 1: single-corner CORNER + ARC +
+# SETUP_HOLD + INTERCONNECT + CLOCK_ARRIVAL records. Multi-corner and
+# vendor extensions are later slices. The Rust side supports the full
+# record set.
 #
 # Inputs are passed via environment variables to keep the Tcl simple and
 # avoid quoting issues. See src/opensta.rs for the producer side.
@@ -82,12 +83,14 @@ if { [string length $sdc_file] > 0 } { lappend input_files $sdc_file }
 # detail is a richer feature for a future phase.
 # ---------------------------------------------------------------------------
 
-# arcs:   cell-internal delay arcs, keyed "cell|from|to".
-# checks: cell-internal setup/hold checks, keyed "cell|d|clk|edge".
-# wires:  net interconnect delays, keyed "net|from_pin|to_pin".
+# arcs:      cell-internal delay arcs, keyed "cell|from|to".
+# checks:    cell-internal setup/hold checks, keyed "cell|d|clk|edge".
+# wires:     net interconnect delays, keyed "net|from_pin|to_pin".
+# arrivals:  per-DFF clock arrivals, keyed "cell|clk_pin".
 set arcs [dict create]
 set checks [dict create]
 set wires [dict create]
+set arrivals [dict create]
 
 # Take the larger of two values when one may be empty.
 proc max_or_set { current candidate } {
@@ -232,6 +235,56 @@ while { [$vit has_next] } {
 $vit finish
 
 # ---------------------------------------------------------------------------
+# Per-DFF clock arrival (Pillar B Stage 1).
+#
+# For each register's clock pin, walk the worst-case clock path and emit
+# its arrival time in picoseconds. Origin is always `Computed` because
+# arrival is always derived by the STA tool from the timing graph — SDF
+# back-annotation feeds per-arc delays, not per-pin arrival.
+#
+# Per-pair CRPR is not captured here (it is a launch/capture credit, not a
+# per-DFF property). Consumers treat the launch-side arrival as the
+# reference (== 0). See `crates/timing-ir/schemas/timing_ir.fbs` and
+# `docs/timing-model-extensions.md` Pillar B for the contract.
+# ---------------------------------------------------------------------------
+
+# Force the timing graph to be up to date before querying arrivals.
+# `find_timing_cmd` is OpenSTA's SWIG-exposed timing-update primitive.
+::sta::find_timing_cmd 1
+
+foreach clk_pin [all_registers -clock_pins] {
+    set pin_vertices [$clk_pin vertices]
+    set vertex [lindex $pin_vertices 0]
+    if { $vertex eq "" || $vertex eq "NULL" } continue
+
+    set pin_full [get_full_name $clk_pin]
+    set last_slash [string last "/" $pin_full]
+    if { $last_slash < 0 } continue
+    set cell_inst [string range $pin_full 0 [expr {$last_slash - 1}]]
+    set local_pin [string range $pin_full [expr {$last_slash + 1}] end]
+
+    set arr_min ""
+    set arr_max ""
+    if { ![catch { set path_min [::sta::vertex_worst_arrival_path $vertex "min"] } ] \
+            && $path_min ne "" && $path_min ne "NULL" } {
+        set arr_min [expr {[$path_min arrival] * $SECONDS_TO_PS}]
+    }
+    if { ![catch { set path_max [::sta::vertex_worst_arrival_path $vertex "max"] } ] \
+            && $path_max ne "" && $path_max ne "NULL" } {
+        set arr_max [expr {[$path_max arrival] * $SECONDS_TO_PS}]
+    }
+    if { $arr_min eq "" && $arr_max eq "" } continue
+    if { $arr_min eq "" } { set arr_min $arr_max }
+    if { $arr_max eq "" } { set arr_max $arr_min }
+
+    set akey "$cell_inst|$local_pin"
+    dict set arrivals $akey cell_inst $cell_inst
+    dict set arrivals $akey clk_pin $local_pin
+    dict set arrivals $akey min $arr_min
+    dict set arrivals $akey max $arr_max
+}
+
+# ---------------------------------------------------------------------------
 # Emit the dump file.
 # ---------------------------------------------------------------------------
 
@@ -302,6 +355,19 @@ dict for {key data} $wires {
         $net_name $from_pin $to_pin \
         $d_min $d_typ $d_max \
         $origin]
+}
+
+dict for {key data} $arrivals {
+    set cell_inst [dict get $data cell_inst]
+    set clk_pin [dict get $data clk_pin]
+    set d_min [dict get $data min]
+    set d_max [dict get $data max]
+    set d_typ [expr {($d_min + $d_max) / 2.0}]
+
+    # Origin is always Computed for clock arrivals — see header comment.
+    puts $fh [format "CLOCK_ARRIVAL\t%s\t%s\t0\t%g\t%g\t%g\tComputed" \
+        $cell_inst $clk_pin \
+        $d_min $d_typ $d_max]
 }
 
 puts $fh "# end"

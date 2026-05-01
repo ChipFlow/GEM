@@ -8,8 +8,8 @@ use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use timing_ir as ir;
 
 use crate::dump::{
-    ArcRecord, CornerRecord, DumpDocument, DumpRecord, Edge, InterconnectRecord, Origin,
-    SetupHoldRecord,
+    ArcRecord, ClockArrivalRecord, CornerRecord, DumpDocument, DumpRecord, Edge,
+    InterconnectRecord, Origin, SetupHoldRecord,
 };
 
 /// Counts of records seen during build, useful for the WS5
@@ -20,6 +20,7 @@ pub struct BuildStats {
     pub arcs: usize,
     pub interconnects: usize,
     pub setup_hold_checks: usize,
+    pub clock_arrivals: usize,
     pub vendor_extensions: usize,
 }
 
@@ -60,6 +61,7 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
     let mut arc_offsets = Vec::new();
     let mut setup_hold_offsets = Vec::new();
     let mut interconnect_offsets = Vec::new();
+    let mut clock_arrival_offsets = Vec::new();
     for record in &doc.records {
         match record {
             DumpRecord::Arc(arc) => {
@@ -74,6 +76,10 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
                 interconnect_offsets.push(build_interconnect(&mut b, ic));
                 stats.interconnects += 1;
             }
+            DumpRecord::ClockArrival(ca) => {
+                clock_arrival_offsets.push(build_clock_arrival(&mut b, ca));
+                stats.clock_arrivals += 1;
+            }
             DumpRecord::VendorExt(_) => stats.vendor_extensions += 1,
             DumpRecord::Corner(_) => {} // already handled
         }
@@ -81,6 +87,7 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
     let arcs_vec = b.create_vector(&arc_offsets);
     let setup_hold_vec = b.create_vector(&setup_hold_offsets);
     let interconnect_vec = b.create_vector(&interconnect_offsets);
+    let clock_arrivals_vec = b.create_vector(&clock_arrival_offsets);
 
     // Vendor extensions still pass through as count-only.
     let vendor_ext_vec = b.create_vector::<WIPOffset<ir::VendorExtension>>(&[]);
@@ -106,6 +113,7 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
             timing_arcs: Some(arcs_vec),
             interconnect_delays: Some(interconnect_vec),
             setup_hold_checks: Some(setup_hold_vec),
+            clock_arrivals: Some(clock_arrivals_vec),
             vendor_extensions: Some(vendor_ext_vec),
             generator_tool: Some(generator_tool),
             generator_version: Some(generator_version_str),
@@ -179,6 +187,34 @@ fn build_interconnect<'a>(
             from_pin: Some(from_pin),
             to_pin: Some(to_pin),
             delay: Some(delay_vec),
+            provenance: Some(provenance),
+        },
+    )
+}
+
+fn build_clock_arrival<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    ca: &ClockArrivalRecord,
+) -> WIPOffset<ir::ClockArrival<'a>> {
+    let cell_instance = b.create_string(&ca.cell_instance);
+    let clk_pin = b.create_string(&ca.clk_pin);
+
+    let arrival = [ir::TimingValue::new(
+        ca.corner_index,
+        ca.min,
+        ca.typ,
+        ca.max,
+    )];
+    let arrival_vec = b.create_vector(&arrival);
+
+    let provenance = build_provenance(b, ca.origin);
+
+    ir::ClockArrival::create(
+        b,
+        &ir::ClockArrivalArgs {
+            cell_instance: Some(cell_instance),
+            clk_pin: Some(clk_pin),
+            arrival: Some(arrival_vec),
             provenance: Some(provenance),
         },
     )

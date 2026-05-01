@@ -61,7 +61,9 @@ INTERCONNECT\tn2\tu2/Y\tu3/A\t0\t5.5\t8.0\t12.5\tAsserted
     assert_eq!(stats.interconnects, 2);
 
     let ir = root_as_timing_ir(&buf).expect("readable IR");
-    let ics = ir.interconnect_delays().expect("interconnect_delays present");
+    let ics = ir
+        .interconnect_delays()
+        .expect("interconnect_delays present");
     assert_eq!(ics.len(), 2);
 
     let ic0 = ics.get(0);
@@ -79,6 +81,39 @@ INTERCONNECT\tn2\tu2/Y\tu3/A\t0\t5.5\t8.0\t12.5\tAsserted
     let ic1 = ics.get(1);
     assert_eq!(ic1.net(), Some("n2"));
     assert!((ic1.delay().unwrap().get(0).typ() - 8.0).abs() < 1e-6);
+}
+
+#[test]
+fn clock_arrival_records_are_emitted_to_ir() {
+    let dump = "\
+# format-version: 1
+CORNER\t0\tdefault\ttt\t1.0\t25.0
+CLOCK_ARRIVAL\tu_dff_0\tCLK\t0\t180.0\t195.0\t210.0\tComputed
+CLOCK_ARRIVAL\tu_dff_1\tCLK\t0\t220.5\t240.0\t260.0\tComputed
+# end
+";
+    let doc = parse_dump(dump).expect("parses");
+    let (buf, stats) = build_ir(&doc, "0.1.0");
+    assert_eq!(stats.clock_arrivals, 2);
+
+    let ir = root_as_timing_ir(&buf).expect("readable IR");
+    let cas = ir.clock_arrivals().expect("clock_arrivals present");
+    assert_eq!(cas.len(), 2);
+
+    let ca0 = cas.get(0);
+    assert_eq!(ca0.cell_instance(), Some("u_dff_0"));
+    assert_eq!(ca0.clk_pin(), Some("CLK"));
+    let arr0 = ca0.arrival().unwrap();
+    assert_eq!(arr0.len(), 1);
+    let v0 = arr0.get(0);
+    assert_eq!(v0.corner_index(), 0);
+    assert!((v0.min() - 180.0).abs() < 1e-6);
+    assert!((v0.typ() - 195.0).abs() < 1e-6);
+    assert!((v0.max() - 210.0).abs() < 1e-6);
+
+    let ca1 = cas.get(1);
+    assert_eq!(ca1.cell_instance(), Some("u_dff_1"));
+    assert!((ca1.arrival().unwrap().get(0).max() - 260.0).abs() < 1e-6);
 }
 
 #[test]

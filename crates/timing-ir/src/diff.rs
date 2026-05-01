@@ -129,6 +129,19 @@ pub struct SetupHoldKey {
     pub condition: String,
 }
 
+/// Key for matching per-DFF clock arrivals across IRs.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct ClockArrivalKey {
+    pub cell_instance: String,
+    pub clk_pin: String,
+}
+
+impl std::fmt::Display for ClockArrivalKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.cell_instance, self.clk_pin)
+    }
+}
+
 impl std::fmt::Display for SetupHoldKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -228,6 +241,7 @@ pub struct DiffReport {
     pub timing_arcs: CategoryDiff<ArcKey>,
     pub interconnect_delays: CategoryDiff<InterconnectKey>,
     pub setup_hold_checks: CategoryDiff<SetupHoldKey>,
+    pub clock_arrivals: CategoryDiff<ClockArrivalKey>,
     pub vendor_extension_counts: (usize, usize),
     pub options: DiffOptionsReport,
 }
@@ -244,6 +258,7 @@ impl DiffReport {
             && self.timing_arcs.is_clean()
             && self.interconnect_delays.is_clean()
             && self.setup_hold_checks.is_clean()
+            && self.clock_arrivals.is_clean()
     }
 }
 
@@ -271,6 +286,13 @@ fn setup_hold_key(c: &ir::SetupHoldCheck) -> SetupHoldKey {
         clk_pin: c.clk_pin().unwrap_or("").to_string(),
         edge: c.edge().into(),
         condition: c.condition().unwrap_or("").to_string(),
+    }
+}
+
+fn clock_arrival_key(a: &ir::ClockArrival) -> ClockArrivalKey {
+    ClockArrivalKey {
+        cell_instance: a.cell_instance().unwrap_or("").to_string(),
+        clk_pin: a.clk_pin().unwrap_or("").to_string(),
     }
 }
 
@@ -408,6 +430,7 @@ pub fn diff_irs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> DiffR
     let timing_arcs = diff_arcs(a, b, opts);
     let interconnect_delays = diff_interconnects(a, b, opts);
     let setup_hold_checks = diff_setup_hold(a, b, opts);
+    let clock_arrivals = diff_clock_arrivals(a, b, opts);
 
     let a_ext_count = a.vendor_extensions().map(|v| v.len()).unwrap_or(0);
     let b_ext_count = b.vendor_extensions().map(|v| v.len()).unwrap_or(0);
@@ -418,6 +441,7 @@ pub fn diff_irs(a: &ir::TimingIR, b: &ir::TimingIR, opts: &DiffOptions) -> DiffR
         timing_arcs,
         interconnect_delays,
         setup_hold_checks,
+        clock_arrivals,
         vendor_extension_counts: (a_ext_count, b_ext_count),
         options: (*opts).into(),
     }
@@ -469,6 +493,20 @@ fn diff_setup_hold(
     })
 }
 
+fn diff_clock_arrivals(
+    a: &ir::TimingIR,
+    b: &ir::TimingIR,
+    opts: &DiffOptions,
+) -> CategoryDiff<ClockArrivalKey> {
+    let a_map = build_clock_arrival_map(a);
+    let b_map = build_clock_arrival_map(b);
+    finalize_diff(&a_map, &b_map, |a_a, b_a| {
+        let a_v = collect_timing_values(a_a.arrival());
+        let b_v = collect_timing_values(b_a.arrival());
+        compare_value_lists("arrival", &a_v, &b_v, opts)
+    })
+}
+
 fn build_arc_map<'a>(ir: &'a ir::TimingIR) -> BTreeMap<ArcKey, ir::TimingArc<'a>> {
     let mut map = BTreeMap::new();
     if let Some(arcs) = ir.timing_arcs() {
@@ -506,6 +544,19 @@ fn build_setup_hold_map<'a>(
     map
 }
 
+fn build_clock_arrival_map<'a>(
+    ir: &'a ir::TimingIR,
+) -> BTreeMap<ClockArrivalKey, ir::ClockArrival<'a>> {
+    let mut map = BTreeMap::new();
+    if let Some(v) = ir.clock_arrivals() {
+        for i in 0..v.len() {
+            let a = v.get(i);
+            map.insert(clock_arrival_key(&a), a);
+        }
+    }
+    map
+}
+
 impl std::fmt::Display for DiffReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(
@@ -527,6 +578,7 @@ impl std::fmt::Display for DiffReport {
         write_category(f, "timing arcs", &self.timing_arcs)?;
         write_category(f, "interconnect delays", &self.interconnect_delays)?;
         write_category(f, "setup/hold checks", &self.setup_hold_checks)?;
+        write_category(f, "clock arrivals", &self.clock_arrivals)?;
         writeln!(
             f,
             "  vendor extensions: a={}, b={}",

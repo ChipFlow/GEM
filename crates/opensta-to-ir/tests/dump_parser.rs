@@ -136,6 +136,40 @@ SETUP_HOLD\tu3\tD\tCLK\tPosedge\t0\t80.0\t80.0\t80.0\t20.0\t20.0\t20.0\t\tAssert
 }
 
 #[test]
+fn clock_arrival_record_parses() {
+    let dump = "\
+# format-version: 1
+CORNER\t0\tdefault\ttt\t1.0\t25.0
+CLOCK_ARRIVAL\tu_dff_0\tCLK\t0\t180.0\t195.0\t210.0\tComputed
+# end
+";
+    let doc = parse_dump(dump).expect("parses");
+    assert_eq!(doc.records.len(), 2);
+
+    let DumpRecord::ClockArrival(ca) = &doc.records[1] else {
+        panic!("expected CLOCK_ARRIVAL");
+    };
+    assert_eq!(ca.cell_instance, "u_dff_0");
+    assert_eq!(ca.clk_pin, "CLK");
+    assert_eq!(ca.corner_index, 0);
+    assert!((ca.min - 180.0).abs() < 1e-6);
+    assert!((ca.max - 210.0).abs() < 1e-6);
+    assert_eq!(ca.origin, Origin::Computed);
+}
+
+#[test]
+fn clock_arrival_wrong_field_count_fails() {
+    // CLOCK_ARRIVAL requires 7 fields after the kind; supply 6.
+    let dump = "\
+# format-version: 1
+CLOCK_ARRIVAL\tu_dff_0\tCLK\t0\t180.0\t195.0\tComputed
+# end
+";
+    let err = parse_dump(dump).expect_err("wrong field count");
+    assert!(err.message.contains("expected 7"), "got: {err}");
+}
+
+#[test]
 fn empty_input_files_list_is_empty_vec() {
     let dump = "\
 # format-version: 1

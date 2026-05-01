@@ -39,7 +39,7 @@ pub mod diff;
 /// - `PATCH` — incremented for editorial fixes that do not change the wire format.
 pub const SCHEMA_MAJOR: u16 = 0;
 /// See [`SCHEMA_MAJOR`].
-pub const SCHEMA_MINOR: u16 = 1;
+pub const SCHEMA_MINOR: u16 = 2;
 /// See [`SCHEMA_MAJOR`].
 pub const SCHEMA_PATCH: u16 = 0;
 

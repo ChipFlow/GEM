@@ -73,6 +73,7 @@ fn roundtrip_minimal_ir() {
             timing_arcs: Some(arcs_vec),
             interconnect_delays: None,
             setup_hold_checks: None,
+            clock_arrivals: None,
             vendor_extensions: None,
             generator_tool: Some(generator_tool),
             generator_version: Some(generator_version),
