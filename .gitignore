@@ -37,3 +37,6 @@ uv.lock
 
 # IP fetched via cf-ipm at build time
 /ip/
+
+# Spike scratch artefacts (not source — reproducible from Jacquard-depends/)
+spike-out/
