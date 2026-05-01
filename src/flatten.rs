@@ -79,6 +79,15 @@ pub struct DFFConstraint {
     pub setup_ps: u16,
     /// Hold time in picoseconds
     pub hold_ps: u16,
+    /// Per-DFF clock arrival in picoseconds, capture-side, signed so the
+    /// field admits negative values for future use. Populated from the
+    /// IR's `ClockArrival` table (Pillar B Stage 1, see
+    /// `docs/timing-model-extensions.md`); 0 when no clock-tree timing
+    /// data is available — the existing zero-skew behaviour.
+    ///
+    /// Folded into the effective setup/hold values inside
+    /// [`build_timing_constraint_buffer`] so the GPU side stays unchanged.
+    pub clock_arrival_ps: i16,
     /// Position of D input data arrival in state
     pub data_state_pos: u32,
     /// DFF cell ID (for error reporting)
@@ -89,9 +98,27 @@ impl DFFConstraint {
     /// Pack into two u32s for GPU transfer.
     /// Returns (timing_word, position_word).
     pub fn to_u32_pair(&self) -> (u32, u32) {
-        let timing = ((self.setup_ps as u32) << 16) | (self.hold_ps as u32);
+        let (eff_setup, eff_hold) = self.effective_setup_hold();
+        let timing = ((eff_setup as u32) << 16) | (eff_hold as u32);
         let position = self.data_state_pos;
         (timing, position)
+    }
+
+    /// Effective per-DFF (setup, hold) after folding capture-side clock
+    /// arrival into the constraint values, treating the launch-side
+    /// reference as 0 (Pillar B Stage 2, design in
+    /// `docs/timing-model-extensions.md`).
+    ///
+    /// Positive arrival relaxes setup (clock arrives later → more time
+    /// for data) and tightens hold by the same amount; the sign convention
+    /// here mirrors the reasoning in the design doc.
+    pub fn effective_setup_hold(&self) -> (u16, u16) {
+        let setup_i32 = self.setup_ps as i32 - self.clock_arrival_ps as i32;
+        let hold_i32 = self.hold_ps as i32 + self.clock_arrival_ps as i32;
+        (
+            setup_i32.clamp(0, u16::MAX as i32) as u16,
+            hold_i32.clamp(0, u16::MAX as i32) as u16,
+        )
     }
 }
 
@@ -1640,6 +1667,7 @@ impl FlattenedScriptV1 {
             self.dff_constraints.push(DFFConstraint {
                 setup_ps: setup_time,
                 hold_ps: hold_time,
+                clock_arrival_ps: 0,
                 data_state_pos,
                 cell_id: cell_id as u32,
             });
@@ -1740,19 +1768,23 @@ impl FlattenedScriptV1 {
             if word_idx >= num_words {
                 continue;
             }
+            // Fold per-DFF capture clock arrival into setup/hold (Pillar B
+            // Stage 2). With no `ClockArrival` data the field defaults to
+            // 0 and the values pass through unchanged.
+            let (eff_setup, eff_hold) = c.effective_setup_hold();
             let existing = constraints[word_idx];
             let old_setup = (existing >> 16) as u16;
             let old_hold = (existing & 0xFFFF) as u16;
             // Most restrictive (min) constraint per word, treating 0 as "not yet set"
             let new_setup = if old_setup == 0 {
-                c.setup_ps
+                eff_setup
             } else {
-                old_setup.min(c.setup_ps)
+                old_setup.min(eff_setup)
             };
             let new_hold = if old_hold == 0 {
-                c.hold_ps
+                eff_hold
             } else {
-                old_hold.min(c.hold_ps)
+                old_hold.min(eff_hold)
             };
             constraints[word_idx] = ((new_setup as u32) << 16) | (new_hold as u32);
         }
@@ -1802,6 +1834,21 @@ impl FlattenedScriptV1 {
                 let check = checks.get(i);
                 if let Some(name) = check.cell_instance() {
                     checks_by_cell.entry(name).or_default().push(check);
+                }
+            }
+        }
+        // Per-DFF clock arrival (Pillar B Stage 1 IR; consumer Stage 2).
+        // Indexed by cell_instance — multiple records per cell are folded
+        // by taking the max picosecond value, mirroring the worst-case
+        // pessimism convention used elsewhere in this loader.
+        let mut arrivals_by_cell: HashMap<&str, u64> = HashMap::new();
+        if let Some(arrivals) = ir.clock_arrivals() {
+            for i in 0..arrivals.len() {
+                let ca = arrivals.get(i);
+                if let Some(name) = ca.cell_instance() {
+                    let arr = ir_corner0_max(ca.arrival());
+                    let entry = arrivals_by_cell.entry(name).or_insert(0);
+                    *entry = (*entry).max(arr);
                 }
             }
         }
@@ -1972,10 +2019,12 @@ impl FlattenedScriptV1 {
         let lib_setup = lib_dff_timing.as_ref().map(|t| t.max_setup()).unwrap_or(0) as u16;
         let lib_hold = lib_dff_timing.as_ref().map(|t| t.max_hold()).unwrap_or(0) as u16;
 
+        let mut arrivals_matched = 0usize;
         for (&cell_id, dff) in &aig.dffs {
             let data_state_pos = self.output_map.get(&dff.d_iv).copied().unwrap_or(u32::MAX);
-            let (setup_ps, hold_ps) = if let Some(ir_path) = cellid_to_ir_path.get(&cell_id) {
-                if let Some(checks) = checks_by_cell.get(ir_path.as_str()) {
+            let ir_path = cellid_to_ir_path.get(&cell_id);
+            let (setup_ps, hold_ps) = if let Some(path) = ir_path {
+                if let Some(checks) = checks_by_cell.get(path.as_str()) {
                     if let Some(check) = checks.first() {
                         let setup = ir_corner0_max(check.setup());
                         let hold = ir_corner0_max(check.hold());
@@ -1992,9 +2041,22 @@ impl FlattenedScriptV1 {
                 (lib_setup, lib_hold)
             };
 
+            // Capture-side clock arrival: clamp into i16 picoseconds; values
+            // beyond ±32 ns are saturated (warn-worthy but not fatal —
+            // exotic, and the kernel's u16 effective setup/hold is the
+            // hard ceiling anyway).
+            let clock_arrival_ps = ir_path
+                .and_then(|p| arrivals_by_cell.get(p.as_str()).copied())
+                .map(|arr| {
+                    arrivals_matched += 1;
+                    arr.min(i16::MAX as u64) as i16
+                })
+                .unwrap_or(0);
+
             self.dff_constraints.push(DFFConstraint {
                 setup_ps,
                 hold_ps,
+                clock_arrival_ps,
                 data_state_pos,
                 cell_id: cell_id as u32,
             });
@@ -2004,8 +2066,15 @@ impl FlattenedScriptV1 {
         self.timing_enabled = true;
 
         clilog::info!(
-            "Loaded IR timing: {} matched, {} unmatched ({} Liberty fallback), {} wire delays, {} DFF constraints, clock={}ps",
-            matched, unmatched, fallback_count, num_wire_delays, self.dff_constraints.len(), clock_period_ps
+            "Loaded IR timing: {} matched, {} unmatched ({} Liberty fallback), {} wire delays, \
+             {} DFF constraints ({} with per-DFF clock arrival), clock={}ps",
+            matched,
+            unmatched,
+            fallback_count,
+            num_wire_delays,
+            self.dff_constraints.len(),
+            arrivals_matched,
+            clock_period_ps
         );
 
         if debug && !unmatched_instances.is_empty() {
@@ -2131,6 +2200,12 @@ mod ir_delay_tests {
     /// - `ir_corner0_max` reads the `max` slot of the corner-0 timing
     ///   value, so we put delay magnitudes there.
     fn build_inv_chain_ir() -> Vec<u8> {
+        build_inv_chain_ir_with_arrivals(&[])
+    }
+
+    /// Same as `build_inv_chain_ir`, with optional `ClockArrival` records
+    /// for testing the Pillar B Stage 2 fold-in path.
+    fn build_inv_chain_ir_with_arrivals(clock_arrivals: &[(&str, f64)]) -> Vec<u8> {
         // SDF typ values per inverter, picosecond IOPATH (rise, fall):
         // index → (rise_typ_ps, fall_typ_ps)
         let inv_iopath: [(f64, f64); 16] = [
@@ -2323,6 +2398,24 @@ mod ir_delay_tests {
         }
         let sh_vec = b.create_vector(&sh_offsets);
 
+        // Optional ClockArrival records for Pillar B Stage 2 testing.
+        let mut ca_offsets = Vec::new();
+        for (cell, arr_ps) in clock_arrivals {
+            let ci = b.create_string(cell);
+            let cp = b.create_string("CLK");
+            let av = tv_vec!(b, *arr_ps);
+            ca_offsets.push(ClockArrival::create(
+                &mut b,
+                &ClockArrivalArgs {
+                    cell_instance: Some(ci),
+                    clk_pin: Some(cp),
+                    arrival: Some(av),
+                    provenance: Some(prov),
+                },
+            ));
+        }
+        let ca_vec = b.create_vector(&ca_offsets);
+
         let ve_vec = b.create_vector::<flatbuffers::WIPOffset<VendorExtension>>(&[]);
 
         let gt = b.create_string("inv_chain test fixture");
@@ -2338,7 +2431,7 @@ mod ir_delay_tests {
                 timing_arcs: Some(arcs_vec),
                 interconnect_delays: Some(ic_vec),
                 setup_hold_checks: Some(sh_vec),
-                clock_arrivals: None,
+                clock_arrivals: Some(ca_vec),
                 vendor_extensions: Some(ve_vec),
                 generator_tool: Some(gt),
                 generator_version: Some(gv),
@@ -2493,6 +2586,51 @@ mod ir_delay_tests {
         // data_state_pos is u32::MAX because make_minimal_script has empty output_map.
         assert_eq!(dff_in.1.data_state_pos, u32::MAX);
         assert_eq!(dff_out.1.data_state_pos, u32::MAX);
+
+        // Pillar B Stage 1 — IR contained no ClockArrival records, so the
+        // consumer-side field stays at the legacy zero-skew default.
+        assert_eq!(
+            dff_in.1.clock_arrival_ps, 0,
+            "no ClockArrival records → clock_arrival_ps stays 0"
+        );
+        assert_eq!(dff_out.1.clock_arrival_ps, 0);
+    }
+
+    /// Pillar B Stage 1 IR + Stage 2 consumer plumbing — ClockArrival
+    /// records in the IR populate `DFFConstraint.clock_arrival_ps`,
+    /// matched to the right DFF instance.
+    #[test]
+    fn test_clock_arrivals_loaded_from_ir() {
+        let (netlistdb, aig) = load_inv_chain();
+        let ir_buf = build_inv_chain_ir_with_arrivals(&[("dff_in", 100.0), ("dff_out", 230.0)]);
+        let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
+
+        let mut script = make_minimal_script(&aig);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, false);
+
+        let cellid_to_ir_path = build_cellid_to_ir_path(&netlistdb);
+        let by_name: HashMap<&str, &DFFConstraint> = script
+            .dff_constraints
+            .iter()
+            .map(|c| {
+                let name = cellid_to_ir_path
+                    .get(&(c.cell_id as usize))
+                    .map(|s| s.as_str())
+                    .unwrap_or("unknown");
+                (name, c)
+            })
+            .collect();
+
+        let dff_in = by_name.get("dff_in").expect("dff_in DFFConstraint");
+        let dff_out = by_name.get("dff_out").expect("dff_out DFFConstraint");
+        assert_eq!(dff_in.clock_arrival_ps, 100);
+        assert_eq!(dff_out.clock_arrival_ps, 230);
+
+        // And the effective values reflect the fold-in:
+        // dff_in: setup 80 - 100 = -20 → clamps to 0; hold 0 + 100 = 100.
+        // dff_out: setup 85 - 230 = -145 → clamps to 0; hold 0 + 230 = 230.
+        assert_eq!(dff_in.effective_setup_hold(), (0, 100));
+        assert_eq!(dff_out.effective_setup_hold(), (0, 230));
     }
 
     // === Test 4: GPU delay injection quantization ===
@@ -2652,6 +2790,7 @@ mod constraint_buffer_tests {
             vec![DFFConstraint {
                 setup_ps: 200,
                 hold_ps: 50,
+                clock_arrival_ps: 0,
                 data_state_pos: 35,
                 cell_id: 1,
             }],
@@ -2674,12 +2813,14 @@ mod constraint_buffer_tests {
                 DFFConstraint {
                     setup_ps: 300,
                     hold_ps: 100,
+                    clock_arrival_ps: 0,
                     data_state_pos: 5,
                     cell_id: 1,
                 },
                 DFFConstraint {
                     setup_ps: 150,
                     hold_ps: 200,
+                    clock_arrival_ps: 0,
                     data_state_pos: 10,
                     cell_id: 2,
                 },
@@ -2698,6 +2839,7 @@ mod constraint_buffer_tests {
             vec![DFFConstraint {
                 setup_ps: 200,
                 hold_ps: 50,
+                clock_arrival_ps: 0,
                 data_state_pos: u32::MAX,
                 cell_id: 1,
             }],
@@ -2714,6 +2856,7 @@ mod constraint_buffer_tests {
             vec![DFFConstraint {
                 setup_ps: 200,
                 hold_ps: 50,
+                clock_arrival_ps: 0,
                 data_state_pos: 100,
                 cell_id: 1,
             }],
@@ -2851,6 +2994,7 @@ mod constraint_buffer_tests {
             vec![DFFConstraint {
                 setup_ps: 200,
                 hold_ps: 50,
+                clock_arrival_ps: 0,
                 data_state_pos: 160,
                 cell_id: 1,
             }],
@@ -2946,6 +3090,87 @@ mod constraint_buffer_tests {
             result.is_none(),
             "u16::MAX + u16::MAX = 131070 <= 131070 → no violation"
         );
+    }
+
+    /// Pillar B Stage 2 — capture-side clock arrival relaxes effective
+    /// setup and tightens effective hold by the same amount.
+    #[test]
+    fn clock_arrival_folds_into_effective_setup_hold() {
+        let c = DFFConstraint {
+            setup_ps: 200,
+            hold_ps: 50,
+            clock_arrival_ps: 80,
+            data_state_pos: 0,
+            cell_id: 1,
+        };
+        let (eff_setup, eff_hold) = c.effective_setup_hold();
+        assert_eq!(eff_setup, 120, "setup eased by clock arrival");
+        assert_eq!(eff_hold, 130, "hold tightened by clock arrival");
+    }
+
+    /// A clock arrival larger than the raw setup must clamp to 0 rather
+    /// than wrap. Likewise a giant arrival must not panic the hold add.
+    #[test]
+    fn effective_setup_hold_clamps_at_zero_and_u16_max() {
+        let c = DFFConstraint {
+            setup_ps: 100,
+            hold_ps: u16::MAX - 10,
+            clock_arrival_ps: 500,
+            data_state_pos: 0,
+            cell_id: 1,
+        };
+        let (eff_setup, eff_hold) = c.effective_setup_hold();
+        assert_eq!(eff_setup, 0, "setup clamps at 0 instead of wrapping");
+        assert_eq!(
+            eff_hold,
+            u16::MAX,
+            "hold clamps at u16::MAX instead of overflow"
+        );
+    }
+
+    /// build_timing_constraint_buffer must apply the per-DFF arrival
+    /// fold-in before collapsing across the per-word min, otherwise the
+    /// effective values lose their per-DFF offset.
+    #[test]
+    fn constraint_buffer_applies_clock_arrival_fold() {
+        let script = make_script_with_constraints(
+            2,
+            10000,
+            vec![DFFConstraint {
+                setup_ps: 200,
+                hold_ps: 50,
+                clock_arrival_ps: 80,
+                data_state_pos: 0, // word 0
+                cell_id: 1,
+            }],
+        );
+        let (_clock_ps, buf) = script.build_timing_constraint_buffer();
+        let setup = (buf[0] >> 16) as u16;
+        let hold = (buf[0] & 0xFFFF) as u16;
+        assert_eq!(setup, 120, "buffer setup reflects 200 - 80 arrival");
+        assert_eq!(hold, 130, "buffer hold reflects 50 + 80 arrival");
+    }
+
+    /// With clock_arrival_ps = 0 (the default), build_timing_constraint_buffer
+    /// must produce the exact same words as before the Stage 2 change —
+    /// pre-existing tests already cover this, but we add an explicit
+    /// regression so a future refactor can't silently re-introduce skew
+    /// for designs without ClockArrival data.
+    #[test]
+    fn zero_clock_arrival_preserves_legacy_behaviour() {
+        let script = make_script_with_constraints(
+            1,
+            10000,
+            vec![DFFConstraint {
+                setup_ps: 1234,
+                hold_ps: 567,
+                clock_arrival_ps: 0,
+                data_state_pos: 0,
+                cell_id: 1,
+            }],
+        );
+        let (_clock_ps, buf) = script.build_timing_constraint_buffer();
+        assert_eq!(buf[0], (1234u32 << 16) | 567u32);
     }
 }
 
