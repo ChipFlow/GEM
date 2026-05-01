@@ -11,7 +11,10 @@ Use the sidebar to navigate between topics, or start with the [Getting Started](
 Start here if you're considering a feature contribution or want to understand Jacquard's overall direction.
 
 - **[Project Scope & Guarantees](project-scope.md)**: Top-level contract — what Jacquard is for, what it isn't, licensing and architecture constraints, stability tiers.
+- **[Why Jacquard](why-jacquard.md)**: Honest positioning vs. STA tools and event-driven simulators; what's unique, what isn't, and what output interface would let users extract the value.
 - **[Timing Correctness](timing-correctness.md)**: Scoped requirements for timing accuracy, validation, and the forthcoming timing IR.
+- **[Timing Model Extensions](timing-model-extensions.md)**: Pre-spike design notes for δ(T) dynamic delay, clock-tree skew, and wire delay at scale. Formalised in ADR 0007.
+- **[Post-Phase-0 Roadmap](plans/post-phase-0-roadmap.md)**: Sequencing of Phase 1+ work covering OpenTimer integration, structured timing output (ADR 0008), and timing model fidelity (ADR 0007).
 - **[Architecture Decision Records](adr/)**: Design decisions and their rationale (numbered, per-decision).
 - **[Implementation Plans](plans/)**: Phased implementation plans with entry and exit criteria.
 - **[Spikes](spikes/)**: Time-boxed experiments and their outcomes.
@@ -127,7 +130,6 @@ When adding documentation:
 - [ ] Multi-clock domain handling
 - [ ] VCD scope option detailed behavior
 - [ ] GPU kernel optimization internals
-- [ ] Comparison with other simulators (VCS, Verilator, iverilog)
 
 ## Related Resources
 
