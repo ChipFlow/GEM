@@ -631,6 +631,32 @@ jobs:
       - name: Build mdbook
         run: mdbook build
 
+      - name: Check for broken intra-doc links
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          docs = Path('docs')
+          errors = []
+          for md in docs.rglob('*.md'):
+              text = md.read_text()
+              for m in re.finditer(r'\]\(([^)]+\.md(?:#[^)]*)?)\)', text):
+                  target = m.group(1).split('#')[0]
+                  if target.startswith(('http://', 'https://', 'mailto:')):
+                      continue
+                  resolved = (md.parent / target).resolve()
+                  if not resolved.exists():
+                      errors.append(f'{md}: broken link -> {target}')
+
+          if errors:
+              print(f'{len(errors)} broken markdown link(s) in docs/:', file=sys.stderr)
+              for e in errors:
+                  print('  ' + e, file=sys.stderr)
+              sys.exit(1)
+          print('All intra-doc markdown links resolved.')
+          PY
+
       - name: Prepare Pages site
         run: |
           cp -r target/doc book/api
