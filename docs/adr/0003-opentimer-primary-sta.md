@@ -1,6 +1,6 @@
 # ADR 0003 — OpenTimer as in-process reference STA
 
-**Status:** Pending Spike. Confirmation depends on the outcome of `../spikes/opentimer-sky130.md`.
+**Status:** Superseded (2026-05-01). Spike (`../spikes/opentimer-sky130.md`) failed Q2 — OpenTimer's input pipeline cannot handle real OpenROAD-flow `.v`/`.spef` for SKY130 designs with bus ports. Fallback is OpenSTA subprocess validation only (ADR 0001); a future ADR may revisit libreda-sta or an in-house walker if an in-process reference is wanted later.
 
 ## Context
 
