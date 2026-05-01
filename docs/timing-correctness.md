@@ -48,11 +48,11 @@ A canonical intermediate representation (IR) for SDF-equivalent timing annotatio
 
 Details: `docs/adr/0002-timing-ir.md`.
 
-### R2 — In-process reference STA
+### R2 — In-process reference STA — *deferred*
 
-An in-process STA engine computes per-endpoint arrival/slack from Liberty + SPEF, independently of any SDF-derived path. It is linked directly (subject to the permissive-license constraint in `project-scope.md`). Its results cross-check Jacquard's SDF-derived timing at load time and on demand during sim.
+The original requirement was an in-process STA engine that computes per-endpoint arrival/slack from Liberty + SPEF, linked directly (subject to the permissive-license constraint in `project-scope.md`), cross-checking Jacquard's SDF-derived timing at load time and on demand during sim.
 
-Preferred implementation: OpenTimer. Confirmation is pending the SKY130 spike (`docs/spikes/opentimer-sky130.md`); see `docs/adr/0003-opentimer-primary-sta.md`.
+Preferred implementation was OpenTimer; the SKY130 spike (`docs/spikes/opentimer-sky130.md`) found OpenTimer's input pipeline unfit for OpenROAD-flow outputs, and ADR 0003 was Superseded (commit `d002bde`). The cross-check role is now performed out of process by OpenSTA via `opensta-to-ir` (ADR 0001 — sole STA path); the in-process variant is parked until a fit-for-purpose permissive option appears (libreda-sta or in-house walker, both behind a future ADR).
 
 ### R3 — Oracle-backed CI
 
@@ -104,7 +104,7 @@ Phases 1 and beyond are planned at the start of each phase, not all up front.
 Items not settled by this document; they resolve in ADRs, spike outcomes, or phase plans:
 
 - Exact IR schema format (FlatBuffers / Cap'n Proto / other). Tracked in ADR 0002.
-- Whether OpenTimer handles SKY130 and GF130 Liberty robustly. Tracked in the OpenTimer-on-SKY130 spike.
+- ~~Whether OpenTimer handles SKY130 and GF130 Liberty robustly.~~ Resolved: spike failed Q2 on SKY130; ADR 0003 Superseded.
 - Whether SPEF gets its own IR or is embedded in the timing IR. Deferred; likely separate.
 - Whether the IR is Jacquard-local or shared across a broader tooling ecosystem. External decision; answer affects investment level and schema stability requirements.
 

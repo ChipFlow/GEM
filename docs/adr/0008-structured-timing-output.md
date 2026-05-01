@@ -56,7 +56,7 @@ The following are higher-value-but-lower-priority. They land after the four requ
 
 5. **`--arrival-histogram <pattern>`.** Per-signal arrival histogram dump for matched signal patterns, as JSON or CSV. Foundation for activity-based power analysis.
 
-6. **`--sta-cross-reference <opentimer-paths.txt>`.** Cross-reference OpenTimer's critical-path report against observed worst arrivals. Closes the loop between vector-driven and static analysis. Coverage-style "of the top-N STA paths, which were exercised, and at what observed arrival."
+6. **`--sta-cross-reference <opensta-paths.txt>`.** Cross-reference OpenSTA's critical-path report against observed worst arrivals. Closes the loop between vector-driven and static analysis. Coverage-style "of the top-N STA paths, which were exercised, and at what observed arrival." (Originally framed against OpenTimer; ADR 0003 was Superseded — OpenSTA is the only STA tool Jacquard interoperates with now.)
 
 7. **Path-back-trace from worst-arrival DFF.** Given a flagged DFF, walk the max-of-fanin chain backward to the source AIG pin / primary input, emitting the path with per-edge contribution. Most expensive item on this list; only useful once the cheaper items are in place.
 

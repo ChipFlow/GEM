@@ -108,6 +108,14 @@ Stage 1 is a 1–2 day spike with no kernel risk. Stage 2 is the honest implemen
 
 ## Part B — Clock-tree skew
 
+> **Status: Stages 1 + 2 implemented (2026-05-01).** Per-DFF clock arrival
+> is carried through the IR (`ClockArrival` table) and folded into
+> per-DFF setup/hold via `DFFConstraint::effective_setup_hold` before
+> the per-word collapse. Producer landed in `c403cc8`; consumer
+> fold-in in `6767c3e`. The narrative below describes the original
+> motivation; the **Staged plan** at the end of this part records what
+> shipped and what remains (Stage 3, conditional).
+
 ### Where the information is — and where we drop it
 
 Clocks in Jacquard are walked back from each DFF through buffers/inverters/clock-gates, terminating at an `InputClockFlag(pinid, is_negedge)` (`src/aig.rs:441`, `:477`, `:495-560`). Recognised cells: `INV/BUF/CKLNQD` and the sky130 equivalents `inv*`, `clkinv*`, `buf*`, `clkbuf*`, `clkdlybuf*`, `lpflow_*`.
@@ -127,7 +135,7 @@ Yes, in three places, in increasing fidelity:
 
 1. **TimingIR arcs on clock cells** (`.jtir` already contains them; we just don't consume them).
 2. **The AIG clock walk** in `aig.rs:495–560` already iterates the clock-side cells of each DFF in order. It just doesn't accumulate their delays. Adding a `dff_clock_origins: Vec<Vec<cellid>>` parallel structure costs O(num_dffs × clock_depth) memory — negligible.
-3. **OpenTimer / OpenSTA** can compute per-DFF clock arrival end-to-end, including common-path-pessimism removal (CRPR), which manual accumulation misses. ADR 0003 already nominates OpenTimer as primary STA. The cleanest version of this is a new IR table:
+3. **OpenSTA** can compute per-DFF clock arrival end-to-end. (OpenTimer was the original primary STA candidate per ADR 0003 but the spike Superseded it; ADR 0001 makes OpenSTA the sole STA path, called out of process via `opensta-to-ir`.) Per-pair common-path-pessimism removal (CRPR) is fundamentally a launch/capture credit, not a per-DFF property — so what shipped is per-DFF capture-side arrival, treating launch as a 0-reference. This is the form in the IR today:
 
    ```fbs
    table ClockArrival {
@@ -138,32 +146,33 @@ Yes, in three places, in increasing fidelity:
    }
    ```
 
-   Populated by `opensta-to-ir` (or whichever STA we standardise on) during IR generation. Consumer code never touches the netlist — it just looks up each DFF's clock arrival.
+   Populated by `opensta-to-ir`'s Tcl driver via `[all_registers -clock_pins]` + `[::sta::vertex_worst_arrival_path]`. Consumer code never touches the netlist — it just looks up each DFF's clock arrival.
 
-### Consumer change
+### Consumer change (shipped)
 
-`DFFConstraint` (`src/flatten.rs:75-86`) today:
+`DFFConstraint` carries the field now:
 
 ```rust
 pub struct DFFConstraint {
     pub setup_ps: u16,
     pub hold_ps: u16,
+    pub clock_arrival_ps: i16,   // signed — capture-side arrival, launch ref = 0
     pub data_state_pos: u32,
     pub cell_id: u32,
 }
 ```
 
-Add `clock_arrival_ps: i16` (signed — capture-side arrival relative to a reference). The setup/hold check in `build_timing_constraint_buffer` (`src/flatten.rs:1732`) becomes the standard inter-DFF skew formula:
+The setup/hold formula for per-pair skew is:
 
 - **Setup margin** = `(clock_period + clock_arr_capture - clock_arr_launch) - data_arrival - setup`
 - **Hold margin** = `data_arrival - (clock_arr_capture - clock_arr_launch + hold)`
 
-Per-launch/per-capture pairing is awkward in the current per-word-collapsed constraint buffer; the simplest first step is to **fold the capture-side clock arrival into the per-DFF setup/hold values themselves** before packing:
+Per-launch/per-capture pairing is awkward in the current per-word-collapsed constraint buffer, so the implementation **folds the capture-side clock arrival into the per-DFF effective setup/hold** before packing, via `DFFConstraint::effective_setup_hold`:
 
-- effective_setup = `setup - clock_arrival_capture` (so positive arrival eats setup margin)
-- effective_hold = `hold + clock_arrival_capture`
+- effective_setup = `setup - clock_arrival_capture` (clamped to [0, u16::MAX])
+- effective_hold = `hold + clock_arrival_capture` (clamped to [0, u16::MAX])
 
-Then the existing GPU check works unchanged. This treats launch arrival as zero (ref) — pessimistic for paths that span domains with very different launch arrivals, but correct as a first cut.
+The GPU kernel runs unchanged — the same packed `(setup<<16)|hold` word it already consumes now carries skew-aware values. Launch arrival is treated as zero (ref) — pessimistic for paths whose launch DFF also has a long clock path, but a clean first cut. Stage 3 below addresses that pessimism if measurement justifies it.
 
 ### Partitioning question
 
@@ -185,13 +194,11 @@ So: yes we have the info, no we probably don't need to repartition, and the cons
 
 ### Staged plan for clock tree
 
-| Stage | What | Touches | Kernel | Effort |
+| Stage | What | Touches | Kernel | Status |
 |---|---|---|---|---|
-| **1** Capture clock-tree delay | Add `ClockArrival` IR table; populate from opensta-to-ir | IR schema, `opensta-to-ir/builder` | None | 2–3 days |
-| **2** Apply to setup/hold | Fold capture-side arrival into `DFFConstraint`; existing kernel check now skew-aware | `src/flatten.rs:75-86`, `:1732` | None | 1–2 days |
-| **3** (if needed) Bucketed packing | Per-bucket constraint words; kernel reads the right bucket per DFF | `src/flatten.rs:1722-1761`, kernel constraint indexing | Minor | 3–5 days |
-
-Stage 1+2 covers the realistic accuracy win. Stage 3 only if measurement shows the per-word collapse is materially over-reporting violations.
+| **1** Capture clock-tree delay | Add `ClockArrival` IR table; populate from opensta-to-ir | IR schema, `opensta-to-ir/builder` + Tcl | None | **Shipped — `c403cc8`** |
+| **2** Apply to setup/hold | Fold capture-side arrival into `DFFConstraint`; existing kernel check now skew-aware | `src/flatten.rs` `DFFConstraint`, `effective_setup_hold`, `build_timing_constraint_buffer` | None | **Shipped — `6767c3e`** |
+| **3** (conditional) Bucketed packing | Per-bucket constraint words to remove the per-word `min(setup, hold)` collapse pessimism; kernel reads the right bucket per DFF | `src/flatten.rs:1722-1761`, kernel constraint indexing | Minor | Open — land only if measurement shows the per-word collapse materially over-reports violations |
 
 ---
 
@@ -323,9 +330,9 @@ For a sky130 use case Stage 1+2 likely covers everything you'd notice. For 22nm 
 ## Open questions
 
 1. **δ(T) characterisation cost.** One-off SPICE per cell-type per corner. Cheaper if we lean on existing ECSM/CCSM data already in vendor Liberty rather than re-running SPICE. Worth investigating before committing to Stage 2.
-2. **Whose clock arrival is authoritative?** Manual accumulation in `aig.rs` is simple but misses CRPR. STA-tool arrivals (OpenTimer) are correct but couple us to that tool's output format. ADR 0003 leans toward OpenTimer; reuse that decision.
+2. **Whose clock arrival is authoritative?** Resolved by Pillar B Stage 1+2: OpenSTA-computed per-DFF arrival via `opensta-to-ir`, treating launch as 0-reference. Per-pair CRPR credit is intentionally not modelled at this stage (see Stage 3 in the staged plan above).
 3. **Interaction.** Does δ(T) on clock-tree buffers matter? Probably not enough to model — clock buffers are sized for fast edges and operate far from their pulse-degradation regime. But the framework should be able to express "ignore δ(T) on clock domain" cleanly.
-4. **Validation oracle.** CVC and Icarus already serve as functional oracles; for skew-aware and wire-aware reporting we'd want OpenTimer's slack report as the ground truth for unit tests. ADR 0003 again.
+4. **Validation oracle.** CVC and Icarus already serve as functional oracles; for skew-aware and wire-aware reporting OpenSTA's slack report (via `opensta-to-ir` / direct subprocess) is the ground truth for unit tests. (ADR 0003 originally nominated OpenTimer for this role; superseded by the spike outcome — OpenSTA carries the role end-to-end now.)
 5. **IR size at 22nm scale.** Open question whether `.jtir` for a representative many-core NoC fits in available memory under the current eager-load model. Needs measurement before committing to streaming mitigations.
 6. **Edge-attributed AIG.** Per-receiver wire delay wants delay attached to AIG *edges*, not nodes. Today the AIG is node-attributed (`gate_delays: Vec<PackedDelay>` indexed by aigpin). A clean Tier-1 implementation may push toward edge attribution, with downstream effects on the boomerang reduction script layout. Worth a small spike before the main implementation.
 7. **Partition-crossing format.** Adding per-edge wire delay to `cosim_metal.rs` inter-partition transfers needs a precise place in the existing pipeline. Currently the shuffle moves Boolean state words without arrival; the natural place is alongside the writeout-arrival path that already exists for setup/hold checking, but the alignment isn't 1:1 because partition crossings happen at logic boundaries, not capture-DFF boundaries.
@@ -336,4 +343,5 @@ For a sky130 use case Stage 1+2 likely covers everything you'd notice. For 22nm 
 - `docs/timing-simulation.md` — boomerang architecture; the kernel-side context.
 - `docs/timing-validation.md` — current ±5% acceptance criteria; would tighten under δ(T).
 - `docs/adr/0002-timing-ir.md` — IR design rationale; schema additions here follow the "lossless extension" principle.
-- `docs/adr/0003-opentimer-primary-sta.md` — STA tool decision; relevant to clock-arrival sourcing.
+- `docs/adr/0001-opensta-as-oracle.md` — STA path; OpenSTA out of process is committed (post-supersedure of ADR 0003).
+- `docs/adr/0003-opentimer-primary-sta.md` — **Superseded.** Original in-process STA proposal; spike Q2 fail moved Jacquard to OpenSTA-only. See `docs/spikes/opentimer-sky130.md`.

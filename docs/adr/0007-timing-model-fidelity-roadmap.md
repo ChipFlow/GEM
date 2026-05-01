@@ -4,7 +4,7 @@
 
 ## Context
 
-Jacquard's timing model today consumes SDF-equivalent annotations via the timing IR (ADR 0002), validated against OpenSTA (ADR 0001) and OpenTimer (ADR 0003). The accuracy contract at present is "±5% on arrival times against CVC reference" per `timing-validation.md`. This is acceptable for sky130-class designs at ≥10 ns clock periods.
+Jacquard's timing model today consumes SDF-equivalent annotations via the timing IR (ADR 0002), produced and validated by OpenSTA called out of process (ADR 0001 — sole STA path; ADR 0003's in-process OpenTimer alternative was Superseded by the spike). The accuracy contract at present is "±5% on arrival times against CVC reference" per `timing-validation.md`. This is acceptable for sky130-class designs at ≥10 ns clock periods.
 
 Three structural simplifications in the current implementation become accuracy bottlenecks at scale:
 
@@ -28,7 +28,7 @@ Per-gate dynamic delay parameterised on T (time since last output transition). T
 
 ### Pillar B — Clock-tree skew
 
-Per-DFF clock arrival accounting via TimingIR extension (`ClockArrival` table) populated by the chosen STA tool (OpenTimer per ADR 0003), with CRPR. Consumed by extending `DFFConstraint` with a `clock_arrival_ps: i16` field, folded into the existing per-word setup/hold check in `src/flatten.rs:1732`. No kernel change for the baseline case; bucketed packing is an option if pessimism becomes material.
+Per-DFF clock arrival accounting via TimingIR extension (`ClockArrival` table) populated by OpenSTA via `opensta-to-ir` (ADR 0001 — ADR 0003's OpenTimer alternative is Superseded). Per-pair CRPR is intentionally not modelled at this stage; per-DFF capture-side arrival is, treating launch as the 0-reference. Consumed by extending `DFFConstraint` with a `clock_arrival_ps: i16` field, folded into the existing per-word setup/hold check in `src/flatten.rs` via `DFFConstraint::effective_setup_hold`. No kernel change for the baseline case; bucketed packing is an option if pessimism becomes material. **Stages 1+2 landed: commits `c403cc8` (producer) and `6767c3e` (consumer).**
 
 ### Pillar C — Wire delay at scale
 
@@ -40,8 +40,8 @@ Three fidelity tiers:
 
 ### Sequencing constraint
 
-- **Pillar B Stage 1+2** is the cheapest accuracy improvement and is gated on Phase 1 OpenTimer integration (ADR 0003). Lands first.
-- **Pillar C Tier 1** is independent of OpenTimer and can proceed in parallel.
+- **Pillar B Stage 1+2** is the cheapest accuracy improvement. Originally gated on the (now Superseded) OpenTimer integration; landed early on top of the OpenSTA-out-of-process path instead. See commits `c403cc8`/`6767c3e`.
+- **Pillar C Tier 1** is independent of which STA tool feeds the IR and can proceed any time.
 - **Pillar A Stage 1 (Static IDM)** is the cheapest δ(T) entry point, gated on per-cell SPICE characterisation effort. Schedule this only after Pillars B and C land — δ(T) compounds on top of correct wire/skew baseline; doing it earlier risks chasing characterisation noise that's actually wire-delay error.
 - **Pillar C Tier 2** lands when a real many-core/NoC use case appears in the test corpus and Tier 1 measurement shows it's needed.
 - **Pillar A Stage 2 (Dynamic δ(T))** is a substantial implementation; schedule only when Stage 1 reports indicate the value is real, *and* a contributor with the analog-characterisation domain expertise is willing to lead it.
@@ -49,7 +49,7 @@ Three fidelity tiers:
 
 ### Validation contract
 
-- Each pillar lands with regression coverage extending `timing-validation.md`'s ±5% tolerance. Tighter tolerances may apply per pillar (Pillar B should achieve ≤±2% on skew-aware paths once OpenTimer is integrated; Pillar C Tier 1 should achieve ≤±3% on long-wire paths).
+- Each pillar lands with regression coverage extending `timing-validation.md`'s ±5% tolerance. Tighter tolerances may apply per pillar (Pillar B should achieve ≤±2% on skew-aware paths with OpenSTA-fed per-DFF arrival as currently implemented; Pillar C Tier 1 should achieve ≤±3% on long-wire paths).
 - Each pillar must demonstrate no regression on the existing primary corpus before merge.
 - The IR schema may be extended (additive only) per ADR 0002 to carry pillar-specific data. Extensions require a minor schema bump and a documented consumer-version compatibility note.
 
@@ -65,12 +65,13 @@ Three fidelity tiers:
 
 - **If a pillar's measurement shows the accuracy gain is smaller than expected**, descope it. Each pillar's first stage is sized to deliver measurable improvement; if it doesn't, later stages of that pillar are deferred or abandoned.
 - **If the IR schema extensions cause downstream tooling friction**, fall back to vendor-extension passthrough (`VendorExtension` in `timing_ir.fbs`) until the typed schema stabilises. Already supported.
-- **If OpenTimer integration stalls** (per ADR 0003 spike outcome), Pillar B falls back to manual clock-tree accumulation in `src/aig.rs`. Lower fidelity (no CRPR), but unblocks the rest of the roadmap.
+- **OpenTimer integration was retired** (ADR 0003 Superseded by the spike outcome). Pillar B did not need the documented fallback to manual clock-tree accumulation in `src/aig.rs` — OpenSTA's per-pin arrival via `opensta-to-ir` covers the same ground without the per-pair CRPR credit (deferred to Stage 3 if measurement justifies it).
 
 ## Links
 
 - `../timing-model-extensions.md` — full technical analysis underlying this ADR.
 - `../why-jacquard.md` — positioning context: where this fidelity work fits in the user value story.
-- `../adr/0001-opensta-as-oracle.md`, `../adr/0002-timing-ir.md`, `../adr/0003-opentimer-primary-sta.md` — preceding decisions this ADR builds on.
+- `../adr/0001-opensta-as-oracle.md`, `../adr/0002-timing-ir.md` — preceding decisions this ADR builds on.
+- `../adr/0003-opentimer-primary-sta.md` — **Superseded** by the spike outcome (`../spikes/opentimer-sky130.md`); referenced here for historical context.
 - `../timing-validation.md` — validation tolerance contract that each pillar updates.
 - `../project-scope.md` — synchronous-only / cycle-accurate constraints that bound what this ADR can pursue.

@@ -13,12 +13,12 @@ Jacquard's unique value is **vector-driven timing analysis at GPU scale**: answe
 Everything else Jacquard offers is offered, often better, by the standard flow:
 
 - For functional sim: Verilator is faster on small designs.
-- For timing: OpenTimer/OpenSTA gives more accurate answers than Jacquard, vector-independent.
+- For timing: OpenSTA gives more accurate answers than Jacquard, vector-independent.
 - For glitch / metastability: event-driven sim with SDF (CVC, iverilog) sees behaviours Jacquard's lockstep kernel structurally cannot.
 
 Jacquard becomes the right tool when **(design size × vector length)** exceeds what event-driven SDF-annotated sim can handle, and you specifically want vector-driven timing answers.
 
-**STA is not optional even with Jacquard.** Jacquard does not replace OpenTimer; it complements it. The right framing is "STA proves no bad vectors exist; Jacquard proves your real workload runs cleanly within those bounds."
+**STA is not optional even with Jacquard.** Jacquard does not replace OpenSTA; it complements it. The right framing is "STA proves no bad vectors exist; Jacquard proves your real workload runs cleanly within those bounds." OpenSTA is also a hard runtime dependency for any timing-aware Jacquard flow — the timing IR is produced by `opensta-to-ir`, which subprocesses OpenSTA. See ADR 0001.
 
 ---
 
@@ -34,14 +34,14 @@ The intersection where Jacquard wins is narrow but real:
 
 4. **Fast iteration during timing closure.** Change a constraint, resynthesise, re-run a long test — Jacquard's loop time is short enough to make this practical on big designs in a way iverilog+SDF isn't.
 
-## What OpenTimer gives you that Jacquard doesn't
+## What dedicated STA (OpenSTA) gives you that Jacquard doesn't
 
 This list is long and you should know it:
 
-- **Worst-case path enumeration.** STA tells you the top-N critical paths *over all possible inputs*. Jacquard sees only what your stimulus exercises. If your testbench misses a critical path, Jacquard's "no violations" report is silent on it; OpenTimer would flag it.
-- **True min-delay analysis.** OpenTimer does proper min-delay path search. Jacquard's hold check is per-DFF against actual stimulus only.
-- **Clock-tree skew / CRPR.** OpenTimer computes per-flop clock arrival with common-path-pessimism removal. Jacquard today treats all DFFs on a clock as zero-skew (see [`timing-model-extensions.md`](timing-model-extensions.md), Part B).
-- **SDC-aware constraint handling.** False paths, multi-cycle paths, generated clocks, async groups — OpenTimer reads SDC and respects it. Jacquard doesn't read SDC at the timing layer.
+- **Worst-case path enumeration.** STA tells you the top-N critical paths *over all possible inputs*. Jacquard sees only what your stimulus exercises. If your testbench misses a critical path, Jacquard's "no violations" report is silent on it; OpenSTA would flag it.
+- **True min-delay analysis.** OpenSTA does proper min-delay path search. Jacquard's hold check is per-DFF against actual stimulus only.
+- **Per-pair CRPR.** OpenSTA applies common-path-pessimism removal as a launch/capture credit on each path. Jacquard consumes per-DFF clock arrival from `opensta-to-ir` and folds it into setup/hold (see [`timing-model-extensions.md`](timing-model-extensions.md), Part B Stages 1+2 — landed), but treats the launch reference as 0 — i.e. the per-pair CRPR credit is intentionally not modelled at this stage. Stage 3 in the same doc is the lever if Stage 1+2 pessimism turns out to matter on a real design.
+- **SDC-aware constraint handling.** False paths, multi-cycle paths, generated clocks, async groups — OpenSTA reads SDC and respects it. Jacquard doesn't read SDC at the timing layer.
 - **Coverage by construction.** STA covers every path by definition. Dynamic sim covers only what's exercised.
 - **Vector-independent confidence.** "This design meets timing" is something STA can claim; Jacquard can only claim "this design met timing on these vectors."
 
@@ -61,12 +61,12 @@ So today, accuracy-per-vector goes to CVC; throughput goes to Jacquard.
 | Your situation | Best tool |
 |---|---|
 | Small design, just want functional results | Verilator (free, fast, mature) |
-| Small design, need timing certainty | OpenTimer + Verilator (or +CVC for vector-driven) |
+| Small design, need timing certainty | OpenSTA + Verilator (or +CVC for vector-driven) |
 | Large design, functional only | Verilator if it scales, else Jacquard |
-| Large design, vector-driven timing needed | **Jacquard** + OpenTimer for STA backstop |
+| Large design, vector-driven timing needed | **Jacquard** + OpenSTA for STA backstop |
 | Glitch / metastability investigation | CVC or iverilog with SDF — Jacquard cannot model these structurally |
 | Asynchronous design / latches | Not Jacquard (synchronous-only) — use CVC/iverilog |
-| Sign-off STA | OpenTimer / OpenSTA / commercial — Jacquard is not a sign-off tool |
+| Sign-off STA | OpenSTA / commercial — Jacquard is not a sign-off tool |
 
 ## The trajectory
 
@@ -150,7 +150,7 @@ Replace state-word indices with hierarchical signal names (`nvdla/conv/regs[42]`
 Optional per-signal arrival histogram dump. For a flagged signal pattern, write a CSV/JSON of arrival distribution across the run. Foundation for activity-based power analysis and "is my actual timing margin healthy" reporting.
 
 ### Optional: STA cross-reference (`--sta-cross-reference path.txt`)
-Read OpenTimer's critical-path report and produce a coverage-style output: which of STA's worst-N paths were actually exercised by the stimulus, and what was their observed worst arrival. Closes the loop between vector-driven and static analysis.
+Read OpenSTA's critical-path report and produce a coverage-style output: which of STA's worst-N paths were actually exercised by the stimulus, and what was their observed worst arrival. Closes the loop between vector-driven and static analysis.
 
 ## Priority
 

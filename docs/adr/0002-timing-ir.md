@@ -43,5 +43,5 @@ Introduce a timing intermediate representation (timing IR) for SDF-equivalent an
 - `../project-scope.md` — validation and permissive-license constraints.
 - `../timing-correctness.md` — requirement R1, principle P5 (multi-corner).
 - ADR 0001 — OpenSTA oracle (IR is the diff format).
-- ADR 0003 — OpenTimer (reference STA that emits IR).
+- ADR 0003 — **Superseded.** OpenTimer was the proposed in-process reference STA; spike Q2 fail moved Jacquard to OpenSTA-only via `opensta-to-ir`. See `../spikes/opentimer-sky130.md`.
 - ADR 0004 — private PDK testing (IR enables portable fixtures without leaking PDK data).
