@@ -681,7 +681,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/cvc/bin
-          key: cvc-binary-debug-v2
+          key: cvc-binary-debug-v3-makefile-rename
 
       - name: Build CVC from source
         if: steps.cache-cvc.outputs.cache-hit != 'true'
@@ -690,13 +690,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev
           git clone --depth 1 https://github.com/cambridgehackers/open-src-cvc.git ~/cvc-src
           cd ~/cvc-src/src
+          # Upstream renamed makefile.cvc64 -> makefile.cvc and the cvc64 target
+          # now emits a binary named "cvc". See cambridgehackers/open-src-cvc 1c5e043e.
           # Build with -O0: CVC has undefined behavior in SDF annotation code that
           # causes segfaults under -O2 optimization (NULL deref after opening SDF file).
-          make -f makefile.cvc64 -j$(nproc) \
+          make -f makefile.cvc cvc64 -j$(nproc) \
             OPTFLGS="" \
             CFLAGS="-Wall -I../pli_incs -D__RHEL6X__ -fno-pie -no-pie -O0"
           mkdir -p ~/cvc/bin
-          cp cvc64 ~/cvc/bin/
+          cp cvc ~/cvc/bin/cvc64
 
       - name: Add CVC to PATH
         run: echo "$HOME/cvc/bin" >> "$GITHUB_PATH"
