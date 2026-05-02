@@ -38,7 +38,7 @@ impl FromStr for Origin {
 }
 
 /// Edge label as emitted by the Tcl driver.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Edge {
     Posedge,
     Negedge,

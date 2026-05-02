@@ -58,32 +58,85 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
     }
     let corners_vec = b.create_vector(&corner_offsets);
 
-    let mut arc_offsets = Vec::new();
-    let mut setup_hold_offsets = Vec::new();
-    let mut interconnect_offsets = Vec::new();
-    let mut clock_arrival_offsets = Vec::new();
+    // Group records by their identity key. Multi-corner producers emit
+    // one record per (key, corner) combination; the builder dedupes
+    // them into a single IR record carrying a per-corner `[TimingValue]`
+    // vector. Single-corner producers emit one record per key, which
+    // collapses to a one-entry vector — same shape, no special case.
+    use indexmap::IndexMap;
+    let mut arcs_by_key: IndexMap<(String, String, String, String), Vec<&ArcRecord>> =
+        IndexMap::new();
+    let mut interconnects_by_key: IndexMap<(String, String, String), Vec<&InterconnectRecord>> =
+        IndexMap::new();
+    let mut setup_hold_by_key: IndexMap<
+        (String, String, String, Edge, String),
+        Vec<&SetupHoldRecord>,
+    > = IndexMap::new();
+    let mut clock_arrivals_by_key: IndexMap<(String, String), Vec<&ClockArrivalRecord>> =
+        IndexMap::new();
+
     for record in &doc.records {
         match record {
             DumpRecord::Arc(arc) => {
-                arc_offsets.push(build_arc(&mut b, arc));
-                stats.arcs += 1;
+                arcs_by_key
+                    .entry((
+                        arc.cell_instance.clone(),
+                        arc.driver_pin.clone(),
+                        arc.load_pin.clone(),
+                        arc.condition.clone(),
+                    ))
+                    .or_default()
+                    .push(arc);
             }
             DumpRecord::SetupHold(check) => {
-                setup_hold_offsets.push(build_setup_hold(&mut b, check));
-                stats.setup_hold_checks += 1;
+                setup_hold_by_key
+                    .entry((
+                        check.cell_instance.clone(),
+                        check.d_pin.clone(),
+                        check.clk_pin.clone(),
+                        check.edge,
+                        check.condition.clone(),
+                    ))
+                    .or_default()
+                    .push(check);
             }
             DumpRecord::Interconnect(ic) => {
-                interconnect_offsets.push(build_interconnect(&mut b, ic));
-                stats.interconnects += 1;
+                interconnects_by_key
+                    .entry((ic.net.clone(), ic.from_pin.clone(), ic.to_pin.clone()))
+                    .or_default()
+                    .push(ic);
             }
             DumpRecord::ClockArrival(ca) => {
-                clock_arrival_offsets.push(build_clock_arrival(&mut b, ca));
-                stats.clock_arrivals += 1;
+                clock_arrivals_by_key
+                    .entry((ca.cell_instance.clone(), ca.clk_pin.clone()))
+                    .or_default()
+                    .push(ca);
             }
             DumpRecord::VendorExt(_) => stats.vendor_extensions += 1,
             DumpRecord::Corner(_) => {} // already handled
         }
     }
+    stats.arcs = arcs_by_key.len();
+    stats.setup_hold_checks = setup_hold_by_key.len();
+    stats.interconnects = interconnects_by_key.len();
+    stats.clock_arrivals = clock_arrivals_by_key.len();
+
+    let arc_offsets: Vec<_> = arcs_by_key
+        .values()
+        .map(|arcs| build_arc(&mut b, arcs))
+        .collect();
+    let setup_hold_offsets: Vec<_> = setup_hold_by_key
+        .values()
+        .map(|checks| build_setup_hold(&mut b, checks))
+        .collect();
+    let interconnect_offsets: Vec<_> = interconnects_by_key
+        .values()
+        .map(|ics| build_interconnect(&mut b, ics))
+        .collect();
+    let clock_arrival_offsets: Vec<_> = clock_arrivals_by_key
+        .values()
+        .map(|cas| build_clock_arrival(&mut b, cas))
+        .collect();
     let arcs_vec = b.create_vector(&arc_offsets);
     let setup_hold_vec = b.create_vector(&setup_hold_offsets);
     let interconnect_vec = b.create_vector(&interconnect_offsets);
@@ -125,28 +178,28 @@ pub fn build_ir(doc: &DumpDocument, generator_version: &str) -> (Vec<u8>, BuildS
     (b.finished_data().to_vec(), stats)
 }
 
-fn build_arc<'a>(b: &mut FlatBufferBuilder<'a>, arc: &ArcRecord) -> WIPOffset<ir::TimingArc<'a>> {
-    let cell_instance = b.create_string(&arc.cell_instance);
-    let driver_pin = b.create_string(&arc.driver_pin);
-    let load_pin = b.create_string(&arc.load_pin);
-    let condition = b.create_string(&arc.condition);
+fn build_arc<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    arcs: &[&ArcRecord],
+) -> WIPOffset<ir::TimingArc<'a>> {
+    let head = arcs[0];
+    let cell_instance = b.create_string(&head.cell_instance);
+    let driver_pin = b.create_string(&head.driver_pin);
+    let load_pin = b.create_string(&head.load_pin);
+    let condition = b.create_string(&head.condition);
 
-    let rise = [ir::TimingValue::new(
-        arc.corner_index,
-        arc.rise_min,
-        arc.rise_typ,
-        arc.rise_max,
-    )];
-    let fall = [ir::TimingValue::new(
-        arc.corner_index,
-        arc.fall_min,
-        arc.fall_typ,
-        arc.fall_max,
-    )];
+    let rise: Vec<_> = arcs
+        .iter()
+        .map(|a| ir::TimingValue::new(a.corner_index, a.rise_min, a.rise_typ, a.rise_max))
+        .collect();
+    let fall: Vec<_> = arcs
+        .iter()
+        .map(|a| ir::TimingValue::new(a.corner_index, a.fall_min, a.fall_typ, a.fall_max))
+        .collect();
     let rise_vec = b.create_vector(&rise);
     let fall_vec = b.create_vector(&fall);
 
-    let provenance = build_provenance(b, arc.origin);
+    let provenance = build_provenance(b, head.origin);
 
     ir::TimingArc::create(
         b,
@@ -164,21 +217,20 @@ fn build_arc<'a>(b: &mut FlatBufferBuilder<'a>, arc: &ArcRecord) -> WIPOffset<ir
 
 fn build_interconnect<'a>(
     b: &mut FlatBufferBuilder<'a>,
-    ic: &InterconnectRecord,
+    ics: &[&InterconnectRecord],
 ) -> WIPOffset<ir::InterconnectDelay<'a>> {
-    let net = b.create_string(&ic.net);
-    let from_pin = b.create_string(&ic.from_pin);
-    let to_pin = b.create_string(&ic.to_pin);
+    let head = ics[0];
+    let net = b.create_string(&head.net);
+    let from_pin = b.create_string(&head.from_pin);
+    let to_pin = b.create_string(&head.to_pin);
 
-    let delay = [ir::TimingValue::new(
-        ic.corner_index,
-        ic.min,
-        ic.typ,
-        ic.max,
-    )];
+    let delay: Vec<_> = ics
+        .iter()
+        .map(|ic| ir::TimingValue::new(ic.corner_index, ic.min, ic.typ, ic.max))
+        .collect();
     let delay_vec = b.create_vector(&delay);
 
-    let provenance = build_provenance(b, ic.origin);
+    let provenance = build_provenance(b, head.origin);
 
     ir::InterconnectDelay::create(
         b,
@@ -194,20 +246,19 @@ fn build_interconnect<'a>(
 
 fn build_clock_arrival<'a>(
     b: &mut FlatBufferBuilder<'a>,
-    ca: &ClockArrivalRecord,
+    cas: &[&ClockArrivalRecord],
 ) -> WIPOffset<ir::ClockArrival<'a>> {
-    let cell_instance = b.create_string(&ca.cell_instance);
-    let clk_pin = b.create_string(&ca.clk_pin);
+    let head = cas[0];
+    let cell_instance = b.create_string(&head.cell_instance);
+    let clk_pin = b.create_string(&head.clk_pin);
 
-    let arrival = [ir::TimingValue::new(
-        ca.corner_index,
-        ca.min,
-        ca.typ,
-        ca.max,
-    )];
+    let arrival: Vec<_> = cas
+        .iter()
+        .map(|ca| ir::TimingValue::new(ca.corner_index, ca.min, ca.typ, ca.max))
+        .collect();
     let arrival_vec = b.create_vector(&arrival);
 
-    let provenance = build_provenance(b, ca.origin);
+    let provenance = build_provenance(b, head.origin);
 
     ir::ClockArrival::create(
         b,
@@ -222,31 +273,30 @@ fn build_clock_arrival<'a>(
 
 fn build_setup_hold<'a>(
     b: &mut FlatBufferBuilder<'a>,
-    check: &SetupHoldRecord,
+    checks: &[&SetupHoldRecord],
 ) -> WIPOffset<ir::SetupHoldCheck<'a>> {
-    let cell_instance = b.create_string(&check.cell_instance);
-    let d_pin = b.create_string(&check.d_pin);
-    let clk_pin = b.create_string(&check.clk_pin);
-    let condition = b.create_string(&check.condition);
+    let head = checks[0];
+    let cell_instance = b.create_string(&head.cell_instance);
+    let d_pin = b.create_string(&head.d_pin);
+    let clk_pin = b.create_string(&head.clk_pin);
+    let condition = b.create_string(&head.condition);
 
-    let setup = [ir::TimingValue::new(
-        check.corner_index,
-        check.setup_min,
-        check.setup_typ,
-        check.setup_max,
-    )];
-    let hold = [ir::TimingValue::new(
-        check.corner_index,
-        check.hold_min,
-        check.hold_typ,
-        check.hold_max,
-    )];
+    let setup: Vec<_> = checks
+        .iter()
+        .map(|c| {
+            ir::TimingValue::new(c.corner_index, c.setup_min, c.setup_typ, c.setup_max)
+        })
+        .collect();
+    let hold: Vec<_> = checks
+        .iter()
+        .map(|c| ir::TimingValue::new(c.corner_index, c.hold_min, c.hold_typ, c.hold_max))
+        .collect();
     let setup_vec = b.create_vector(&setup);
     let hold_vec = b.create_vector(&hold);
 
-    let provenance = build_provenance(b, check.origin);
+    let provenance = build_provenance(b, head.origin);
 
-    let edge = match check.edge {
+    let edge = match head.edge {
         Edge::Posedge => ir::CheckEdge::Posedge,
         Edge::Negedge => ir::CheckEdge::Negedge,
     };
