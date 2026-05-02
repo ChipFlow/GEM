@@ -43,6 +43,91 @@ jobs:
       - name: Run library tests
         run: cargo test --lib
 
+  # opensta-to-ir crate is outside the root workspace; the unit-tests job
+  # above only covers `cargo test --lib`, so the corpus regression test
+  # (WS4), the CLI tests, and the OpenSTA-driven integration tests need a
+  # dedicated job that builds OpenSTA + CUDD on the runner.
+  opensta-to-ir-tests:
+    name: opensta-to-ir Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Init vendor/opensta submodule
+        run: git submodule update --init vendor/opensta
+
+      - name: Resolve OpenSTA submodule SHA
+        id: opensta-sha
+        run: |
+          sha=$(git ls-tree HEAD vendor/opensta | awk '{print $3}')
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install OpenSTA build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake bison flex swig \
+            tcl-dev tcl-tclreadline libeigen3-dev libfmt-dev wget
+
+      # CUDD isn't apt-packaged. Upstream OpenSTA's Dockerfile builds
+      # cudd-3.0.0 from davidkebo's mirror; mirror that here. Cached
+      # across runs because the version is constant.
+      - name: Cache CUDD
+        id: cache-cudd
+        uses: actions/cache@v4
+        with:
+          path: ~/cudd-3.0.0
+          key: cudd-3.0.0-v1
+
+      - name: Build CUDD from source
+        if: steps.cache-cudd.outputs.cache-hit != 'true'
+        run: |
+          cd "$HOME"
+          wget -q https://raw.githubusercontent.com/davidkebo/cudd/main/cudd_versions/cudd-3.0.0.tar.gz
+          tar -xf cudd-3.0.0.tar.gz
+          cd cudd-3.0.0
+          ./configure
+          make -j"$(nproc)"
+
+      # OpenSTA build is the long pole (~5 min from clean). Cache key is
+      # tied to the submodule SHA so a submodule bump invalidates; bump
+      # the trailing version when the build script or cudd version
+      # changes.
+      - name: Cache OpenSTA build
+        id: cache-opensta
+        uses: actions/cache@v4
+        with:
+          path: vendor/opensta/build
+          key: opensta-${{ steps.opensta-sha.outputs.sha }}-cudd-3.0.0-v1
+
+      - name: Build OpenSTA
+        if: steps.cache-opensta.outputs.cache-hit != 'true'
+        env:
+          CUDD_DIR: /home/runner/cudd-3.0.0
+        run: scripts/build-opensta.sh
+
+      - name: Cache cargo (opensta-to-ir + timing-ir)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            crates/opensta-to-ir/target/
+            crates/timing-ir/target/
+          key: ${{ runner.os }}-cargo-opensta-to-ir-${{ hashFiles('crates/opensta-to-ir/Cargo.toml', 'crates/timing-ir/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-opensta-to-ir-
+
+      - name: Run opensta-to-ir tests
+        working-directory: crates/opensta-to-ir
+        run: cargo test
+
   # Build and run Metal simulation on macOS
   metal:
     name: Metal Tests (macOS)

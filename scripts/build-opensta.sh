@@ -189,6 +189,16 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
     fi
 fi
 
+# CUDD is not packaged in apt and OpenSTA's FindCUDD only searches
+# `${CUDD_DIR}` plus default system paths. CI builds CUDD from source
+# into a non-default prefix and exports CUDD_DIR; honour it here so the
+# script doesn't need a separate CI-only entry point. Brew's mht208/formal
+# tap installs cudd in the default search path on macOS, so the env var
+# is unset there and the find_library default behaviour suffices.
+if [[ -n "${CUDD_DIR:-}" ]]; then
+    EXTRA_CMAKE_ARGS+=("-DCUDD_DIR=${CUDD_DIR}")
+fi
+
 if ! cmake -S "${SUBMODULE_PATH}" -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Release \
     "${EXTRA_CMAKE_ARGS[@]}"; then
     err "cmake configure failed"
