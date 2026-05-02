@@ -1,7 +1,18 @@
 # Handoff — Post-Cosim-Models (Phase 0 follow-ups)
 
+> **STATUS: RESOLVED 2026-05-02.** All open follow-ups in this doc were
+> picked up. Pillar B Stages 1+2 landed (commits `c403cc8`/`6767c3e`),
+> WS4 was reframed and implemented end-to-end with CI hookup
+> (`89f7aad`/`90558bb`/`6997096`/`9e25bc2`), WS5 was retroactively
+> marked done (`6183bee`), and post-supersedure docs were reconciled
+> across 9 files (`4aee1cc`). See [`post-phase-0-closure-handoff.md`](post-phase-0-closure-handoff.md)
+> for the current state and the remaining WS2.4 + sky130-corpus + Phase 1
+> trajectory. The body of this document is preserved for historical
+> context.
+
 **Created:** 2026-04-30
 **Predecessor:** [`post-ws3-handoff.md`](post-ws3-handoff.md) (now resolved)
+**Successor:** [`post-phase-0-closure-handoff.md`](post-phase-0-closure-handoff.md)
 **Working tree:** clean. `main` matches `origin/main` (12 commits pushed this session).
 
 ## Goal & next-up
