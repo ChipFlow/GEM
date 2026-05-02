@@ -40,7 +40,7 @@ OpenTimer integration was originally Phase 1's centrepiece (former WS-P1.1) but 
 ### WS-P1.1 — Structured timing output (ADR 0008 required items)
 The four required items from ADR 0008. Single workstream because they share infrastructure.
 
-- **WS-P1.1.a — Symbolic violation messages.** ~1–2 days. `src/event_buffer.rs:305-338` plus a name-resolution helper from netlistdb. No new flags; format change documented in changelog.
+- **WS-P1.1.a — Symbolic violation messages.** **Shipped 2026-05-02 in commit `0432d9a`.** New `WordSymbolMap` in `src/flatten.rs` built once at sim startup; `process_events` gained an optional resolver closure; `sim_metal` threads it through. Setup/hold violation messages now name DFFs as `top/cpu/regs[7][bit 22] [word=42]` instead of bare `word 42`. CUDA/HIP sim paths don't currently route runtime violations through `process_events` (separate plumbing gap, not blocked on this format change).
 - **WS-P1.1.b — `--timing-report <path.json>`.** ~3–5 days. End-of-run JSON document; schema versioned per ADR 0002 conventions; sample reports checked into corpus.
 - **WS-P1.1.c — `--timing-summary` text output.** ~1 day, after WS-P1.1.b. Trivial wrapper over the JSON data.
 - **WS-P1.1.d — Per-DFF worst-slack ranking.** ~1–2 days, folds into WS-P1.1.b. Top-N by closest-to-violation slack across the run.
