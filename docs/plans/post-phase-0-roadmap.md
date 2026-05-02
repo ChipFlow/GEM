@@ -21,7 +21,7 @@ The phase numbering established by Phase 0 and ADR 0006 continues:
 | **0** | Timing IR + OpenSTA preprocessor | In flight, near close |
 | **1** | Structured timing output (ADR 0008 required items) + Phase 0 carryover | ADR 0008 accepted ✓ |
 | **2** | Timing model fidelity Pillar C Tier 1 + Pillar B Stage 3 if needed (ADR 0007) | Phase 1 lands; ADR 0007 accepted |
-| **RH** | Release hardening (OpenSTA detection + version check, see § Release hardening) | Required before first release |
+| **RH** | Release hardening (OpenSTA detection + version check, see § Release hardening) | WS-RH.1 shipped ✓; no other items currently scoped |
 | **3** | Native Rust SDF→IR parser (ADR 0006) | **Deferred indefinitely** — no longer release-gating per amended ADR 0006. Picks up when bandwidth allows or commercial demand appears. |
 | **4+** | Pillar A Stage 1 (static IDM); Pillar C Tier 2; ADR 0008 optional outputs | Demand-driven; not committed |
 
@@ -115,7 +115,9 @@ Pre-first-release work that became necessary when ADR 0006 § Amendment relaxed 
 
 ### WS-RH.1 — OpenSTA detection + version check
 
-**Why:** With the shipped runtime now allowed to subprocess `opensta-to-ir`, a user invoking `jacquard sim input.sdf` on a machine without OpenSTA — or with an untested OpenSTA version — must get an actionable error rather than silent timing-data loss. Today (`src/sim/setup.rs:248-264`), missing OpenSTA only emits a `warn!` and the simulation proceeds with no timing information loaded. That is acceptable during development but ships as a UX bug.
+**Status:** **Shipped 2026-05-02 in commit `c9c393b`.** All scope items below are landed; this entry is preserved as a brief reference. Test coverage: 9 unit tests for the version parser + 6 integration tests for the locator across the missing / too-old / newer-than-tested / unparseable / failing-probe paths.
+
+**Why:** With the shipped runtime now allowed to subprocess `opensta-to-ir`, a user invoking `jacquard sim input.sdf` on a machine without OpenSTA — or with an untested OpenSTA version — must get an actionable error rather than silent timing-data loss. Pre-WS-RH.1, missing OpenSTA only emitted a `warn!` and the simulation proceeded with no timing information loaded. That was acceptable during development but shipped as a UX bug.
 
 **Scope:**
 
