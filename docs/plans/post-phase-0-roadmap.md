@@ -1,16 +1,16 @@
 # Roadmap — Post-Phase-0 work scheduling
 
-**Status:** Proposed. Awaits acceptance of ADRs 0007 and 0008.
+**Status:** Active. ADR 0008 accepted 2026-05-02. ADR 0007 still pending.
 
 This document orders the work captured in those two ADRs alongside the in-flight tail of Phase 0. It is a **scheduling** doc, not a design doc — design lives in the ADRs and in `docs/timing-model-extensions.md` / `docs/why-jacquard.md`.
 
-## Where things stand (2026-05-01)
+## Where things stand (2026-05-02)
 
 - **Phase 0 (`phase-0-ir-and-oracle.md`)**: nearing close. WS1–WS3 + WS2.2 + WS4 + WS5 landed (corpus + runner + regen + CI hookup for WS4 in 2026-05-02 commits `90558bb`/`6997096`/`9e25bc2`). Open items: **WS2.4** (multi-corner CLI flag — see § WS2.4 in the phase-0 plan for scope), **sky130-based corpus entries** (gated on a CI sky130-Liberty install strategy), and **peripheral wiring** for I²C/SPI when a fuller mcu_soc fixture lands.
 - **OpenTimer spike (`spikes/opentimer-sky130.md`)**: **resolved 2026-05-01 — Superseded.** Q1 (Liberty parse) passed cleanly on SKY130; Q2 (arrival computation) failed on the canonical OpenSTA-bundled GCD example after eight input-pipeline workarounds (bus ports, OpenROAD-emitted SPEF, modern TCL, tap cells). Per the spike's decision matrix, ADR 0003 is now Superseded (commit `d002bde`). **OpenSTA out-of-process is committed as Jacquard's sole STA path** — `opensta-to-ir` is the canonical preprocessor; no in-process reference STA is planned. A future ADR may revisit libreda-sta or an in-house walker if an in-process reference is wanted later, but not on this roadmap.
 - **Pillar B Stages 1+2 (per `adr/0007`)**: **landed.** `ClockArrival` IR table + `opensta-to-ir` Tcl emission in commit `c403cc8`; `DFFConstraint.clock_arrival_ps` + skew-aware fold-in in `build_timing_constraint_buffer` in `6767c3e`. Closed Pillar B's main accuracy lever ahead of this roadmap's original Phase 2 schedule.
-- **Phase 3 (`adr/0006-sdf-preprocessing-model.md`)**: native Rust SDF→IR parser. Lands before first release. Independent of the work in this doc.
-- **ADRs 0007 / 0008**: proposed in this round; pending review.
+- **ADR 0006 amended 2026-05-02**: subprocess invocation of user-installed OpenSTA from the shipped runtime is now permitted (no linking, no bundling). Phase 3 (native Rust SDF→IR) is **no longer release-gating** — see § Phase 3 below. New release-hardening workstream **WS-RH.1** (OpenSTA detection + version check) is required before first release; see § Release hardening.
+- **ADRs 0007 / 0008**: ADR 0008 accepted 2026-05-02; ADR 0007 still pending review.
 
 ## Phase boundaries
 
@@ -19,9 +19,10 @@ The phase numbering established by Phase 0 and ADR 0006 continues:
 | Phase | Topic | Trigger |
 |---|---|---|
 | **0** | Timing IR + OpenSTA preprocessor | In flight, near close |
-| **1** | Structured timing output (ADR 0008 required items) + Phase 0 carryover | ADR 0008 accepted |
+| **1** | Structured timing output (ADR 0008 required items) + Phase 0 carryover | ADR 0008 accepted ✓ |
 | **2** | Timing model fidelity Pillar C Tier 1 + Pillar B Stage 3 if needed (ADR 0007) | Phase 1 lands; ADR 0007 accepted |
-| **3** | Native Rust SDF→IR parser (ADR 0006) | Pre-release; can run parallel to Phase 1/2 |
+| **RH** | Release hardening (OpenSTA detection + version check, see § Release hardening) | Required before first release |
+| **3** | Native Rust SDF→IR parser (ADR 0006) | **Deferred indefinitely** — no longer release-gating per amended ADR 0006. Picks up when bandwidth allows or commercial demand appears. |
 | **4+** | Pillar A Stage 1 (static IDM); Pillar C Tier 2; ADR 0008 optional outputs | Demand-driven; not committed |
 
 **Parked (require new ADR to revive):** in-process reference STA (ADR 0003 superseded), Pillar A Stage 2 (dynamic δ(T)), Pillar A Stage 3 (sub-cycle ticks), NoC-aware partitioning hints (Pillar C Tier 3).
@@ -99,7 +100,42 @@ Small touch-ups to ensure Phase 1 outputs continue to work as model fidelity cha
 
 ## Phase 3 — Native Rust SDF→IR parser
 
-Existing per ADR 0006. Runs parallel to Phases 1/2 as bandwidth allows. Lands before first release. No additions from this roadmap.
+**Deferred indefinitely as of 2026-05-02 per amended ADR 0006.** No longer release-gating: shipped Jacquard binaries may subprocess user-installed OpenSTA via `opensta-to-ir`, provided OpenSTA is not bundled and not linked. The user-facing capability gap is "OpenSTA must be on PATH for `jacquard sim input.sdf`," surfaced by **WS-RH.1** below with a clear error message.
+
+Reasons to revive:
+- A downstream commercial integrator's legal team rejects subprocess-of-GPL-tool even with no bundling/linking.
+- OpenSTA dialect coverage gaps appear that are easier to fix in our own parser than via `opensta-to-ir` post-processing.
+- Bandwidth opens up and the team wants the zero-runtime-dependency story for its own ergonomics.
+
+Effort estimate (unchanged from the original ADR 0006 framing): grammar-based (nom / pest), validated against OpenSTA on the WS4 corpus per ADR 0001. Probably 2–3 weeks of focused work. Not scheduled.
+
+## Release hardening
+
+Pre-first-release work that became necessary when ADR 0006 § Amendment relaxed the no-runtime-subprocess rule. These are blockers for first release, not for any specific Phase.
+
+### WS-RH.1 — OpenSTA detection + version check
+
+**Why:** With the shipped runtime now allowed to subprocess `opensta-to-ir`, a user invoking `jacquard sim input.sdf` on a machine without OpenSTA — or with an untested OpenSTA version — must get an actionable error rather than silent timing-data loss. Today (`src/sim/setup.rs:248-264`), missing OpenSTA only emits a `warn!` and the simulation proceeds with no timing information loaded. That is acceptable during development but ships as a UX bug.
+
+**Scope:**
+
+- **Promote missing-OpenSTA from warning to hard error** when `--sdf` is provided. Today's silent-fallback behaviour is fine for `--liberty`-only runs but wrong when SDF was explicitly requested. Error message must name the env var (`JACQUARD_OPENSTA_BIN`), the PATH lookup, and link to install instructions. ~0.5 day.
+- **Pin a tested OpenSTA version range.** Record the version we test against in `vendor/opensta/` (already pinned via submodule per ADR 0005) and surface that as a `MIN_TESTED_OPENSTA_VERSION` / `MAX_TESTED_OPENSTA_VERSION` constant in `crates/opensta-to-ir/src/opensta.rs`. Need to choose a version-detection mechanism — OpenSTA's `-version` flag output format is the obvious target; check whether it's stable across the versions we care about. ~0.5 day.
+- **Version probe at first invocation.** On first call to `find_opensta()` per process, run `<binary> -version`, parse the version, and:
+  - If older than min-tested → hard error with remediation message ("rebuild via `scripts/build-opensta.sh` or upgrade your system OpenSTA").
+  - If newer than max-tested → warn but proceed ("untested OpenSTA version vN.M; please report any timing discrepancies").
+  - Cache the result for the rest of the process. ~1 day.
+- **Document the dependency in `docs/usage.md`.** Single section: required tooling, install paths, version range, what `jacquard sim` does and doesn't need OpenSTA for. ~0.5 day.
+- **Test coverage:** unit tests for the version-string parser (with sample `-version` outputs from the pinned version and a synthetic too-old version); an integration test that points `JACQUARD_OPENSTA_BIN` at a stub script and confirms the error path. ~0.5 day.
+- **Stale-framing cleanup** (folded in here per 2026-05-02 decision rather than spun out separately):
+  - Reword `INTERIM per ADR 0006` / `Pre-release only` markers in source: `src/sim/setup.rs:176,228,286`, `src/bin/jacquard.rs:187`, `src/sim/cosim_metal.rs:2053`, `src/testbench.rs:255-257`. Replace with "subprocess wrapper per ADR 0006 § Amendment" or similar — these paths are no longer interim.
+  - Update `docs/plans/phase-0-ir-and-oracle.md` lines 152, 161, 172 — drop "tagged for pre-release removal" framing; the subprocess wrapper is now the shipping mechanism, not a temporary bridge.
+  - Audit `docs/plans/ws3-delete-sdf-parser.md` for the same stale framing and update.
+  - ~0.5 day total for the cleanup.
+
+**Total:** ~3.5 days. Single PR, owned by whoever picks up release prep.
+
+**Open question:** does OpenSTA emit a stable `-version` string, or do we need to scrape `git describe` from a build-time-recorded commit? If `-version` is unreliable, fall back to recording the submodule commit at `crates/opensta-to-ir` build time and comparing — this is cheaper than version-string sniffing and avoids the "user has a custom build" problem.
 
 ## Phase 4+ — Demand-driven
 

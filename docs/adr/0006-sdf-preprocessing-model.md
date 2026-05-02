@@ -1,6 +1,35 @@
 # ADR 0006 — SDF preprocessing model and interim-to-release cutover
 
-**Status:** Accepted.
+**Status:** Accepted 2026-04; amended 2026-05-02 (see § Amendment).
+
+## Amendment (2026-05-02)
+
+The original Decision treated subprocess invocation of OpenSTA from the shipped Jacquard runtime as license-incompatible, requiring Phase 3 (native Rust SDF→IR converter) to land before first release. On review of GPL-3 § 5 ("aggregate") and the FSF interpretation of subprocess/IPC boundaries, this restriction is more conservative than necessary. The relevant facts:
+
+- The interface is arms-length: standard EDA interchange formats (Liberty / Verilog / SDF / SPEF / SDC) in, our own IR JSON (ADR 0002) out. No shared data structures, no headers, no linking.
+- We do not bundle OpenSTA in any Jacquard distribution. The user installs OpenSTA themselves; user-side combination of separately-distributed programs is not "distribution of a combined work" under GPL-3.
+- The original "no runtime subprocess" rule was effectively a commercial-perception buffer, not a strict licensing requirement.
+
+**Revised bright lines** (these supersede the original "Shipped release" sub-section):
+
+1. **No linking** of GPL code into the Jacquard binary. Unchanged.
+2. **No bundling** of OpenSTA (or any GPL tool) in Jacquard distribution artefacts (release tarballs, Homebrew formulae, Docker images that ship as Jacquard releases). If a packager wants to bundle, they take on GPL distribution obligations themselves.
+3. **Subprocess invocation of user-installed OpenSTA from the shipped runtime is permitted.** `jacquard sim input.sdf` may keep its `opensta-to-ir` subprocess hook in shipped releases, provided OpenSTA is discovered on PATH rather than bundled.
+
+**Phase 3 reclassification.** Native Rust SDF→IR converter is no longer release-gating. It remains a goal — for ergonomics (no OpenSTA install required) and for downstream commercial integrators whose legal teams treat any GPL touchpoint as risk — but ships when bandwidth allows, not as a release blocker. Roadmap consequences are tracked in `../plans/post-phase-0-roadmap.md` § Phase 3.
+
+**Corequisite — OpenSTA detection and version check (release-blocking).** Relaxing the no-runtime-subprocess rule is conditional on the shipped runtime giving users a meaningful error when OpenSTA is missing or out-of-date. Today (`src/sim/setup.rs:248-264`), missing OpenSTA only emits a `warn!` and the simulation proceeds with no timing data loaded — acceptable during development, ships as a UX bug. Concretely, before first release we must:
+
+1. Hard-fail (not warn) when `--sdf` is requested and OpenSTA cannot be located.
+2. Probe OpenSTA's version on first invocation and fail with a remediation message if it is older than the version pinned in `vendor/opensta/` (per ADR 0005).
+3. Warn-but-proceed if the detected version is newer than the latest tested version, naming the version in the warning.
+4. Document the OpenSTA dependency in `docs/usage.md`.
+
+Tracked as **WS-RH.1** in `../plans/post-phase-0-roadmap.md` § Release hardening.
+
+**Code-comment cleanup follow-up.** The `INTERIM per ADR 0006` / `Pre-release only` tags in `src/sim/setup.rs` (lines ~176, ~228, ~286) and `src/bin/jacquard.rs` (~187) describe a premise that no longer applies. Folded into WS-RH.1 (`../plans/post-phase-0-roadmap.md` § Release hardening) rather than spun out as a separate cleanup commit.
+
+The original Context, Decision (Phase 0 + Phase 3), and Walk-back sections below are retained for historical record. Where they conflict with the bright lines above, the bright lines win.
 
 ## Context
 

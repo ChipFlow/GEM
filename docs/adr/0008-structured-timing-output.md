@@ -1,6 +1,6 @@
 # ADR 0008 — Structured timing output as first-class deliverable
 
-**Status:** Proposed.
+**Status:** Approved.
 
 ## Context
 
