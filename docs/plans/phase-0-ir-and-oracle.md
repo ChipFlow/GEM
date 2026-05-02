@@ -99,13 +99,17 @@ What this **doesn't** catch: behavioural divergence between Jacquard and a refer
 
 ### WS5 — Parser-success assertions
 
-Deliverables:
+> **Done.** Both halves shipped pre-this-section being marked.
 
-- Assertions in Jacquard's Liberty parsing code: non-zero cells parsed on non-empty input.
-- Assertions in `opensta-to-ir` (WS2): non-zero IOPATHs / timing arcs resolved on non-trivial SDF input. Exit non-zero with a clear diagnostic when below threshold.
-- A way to override thresholds for intentionally-empty test inputs (e.g., `--allow-empty-parse` flag, used only in specific tests).
+Deliverables (all live):
 
-(Original-plan assertions for Jacquard's SDF parser are obsolete — WS3 deletes the parser they were to guard.)
+- Assertions in Jacquard's Liberty parsing code: non-zero cells parsed on non-empty input. Implemented as `TimingLibrary::parse` (`src/liberty_parser.rs:297-309`); rejects with a clear diagnostic naming the input byte count and pointing at the explicit override.
+- Assertions in `opensta-to-ir` (WS2): non-zero IOPATHs / timing arcs resolved on non-trivial SDF input. Implemented as the `--min-arcs N` CLI flag (default 1) in the binary (`crates/opensta-to-ir/src/main.rs:71-77, :112-121`); exits with code `EXIT_MIN_ARCS_FAILED = 3` (see `:17`) and a diagnostic naming the produced count, the threshold, and the override flag.
+- A way to override thresholds for intentionally-empty test inputs: `TimingLibrary::parse_unchecked` (`src/liberty_parser.rs:316`) for the Liberty path, `--allow-empty-parse` flag for the `opensta-to-ir` path.
+
+Tests covering both halves: `liberty_parser::parse_rejects_library_input_with_zero_cells` and `parse_unchecked_accepts_zero_cell_library`; `opensta-to-ir::cli::cli_min_arcs_failure_exit_3` (covers both the failure and the `--allow-empty-parse` override).
+
+(Original-plan assertions for Jacquard's SDF parser are obsolete — WS3 deleted the parser they were to guard.)
 
 ## Test plan
 

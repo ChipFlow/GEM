@@ -100,19 +100,16 @@ Option B (end-to-end cxxrtl/CVC vs Jacquard cosim event-trace diff) was deferred
 
 What remains under WS4 (scheduled as Phase-0-carryover in `post-phase-0-roadmap.md` WS-P1.2): populate `tests/timing_ir/corpus/` with `inv_chain_pnr` and an mcu_soc subset, write a CI job that runs `opensta-to-ir` + `timing-ir-diff` per entry, and a `regenerate-goldens` helper for the OpenSTA-pin-bump workflow.
 
-### 2. WS5 — parser-success assertions (small)
+### 2. WS5 — parser-success assertions — resolved 2026-05-02
 
-Per Phase 0 plan:
-> Assertions in `opensta-to-ir` (WS2): non-zero IOPATHs / timing arcs
-> resolved on non-trivial SDF input. Exit non-zero with a clear
-> diagnostic when below threshold.
-
-Currently `opensta-to-ir` will silently produce a 0-arc IR if Liberty
-/ Verilog / SDF combination doesn't link. Add a CLI flag like
-`--min-arcs N` (default 1, override for synthetic test cases) and
-exit non-zero with diagnostic. The `BuildStats` struct in
-`crates/opensta-to-ir/src/builder.rs:17-23` already counts arcs /
-interconnects / setup_holds — wire it to the binary's exit path.
+`opensta-to-ir` carries `--min-arcs N` (default 1) + `--allow-empty-parse`
+override and exits with `EXIT_MIN_ARCS_FAILED = 3` and a clear
+diagnostic naming the count, threshold, and override flag (see
+`crates/opensta-to-ir/src/main.rs:17, :71-77, :112-121`). The Liberty
+side is covered by `TimingLibrary::parse` rejecting zero-cell input
+(`src/liberty_parser.rs:297-309`), with `parse_unchecked` as the
+test-fixture override. Tests in `cli::cli_min_arcs_failure_exit_3`
+and `liberty_parser::parse_rejects_library_input_with_zero_cells`.
 
 ### 3. WS2.4 — multi-corner CLI flag (small)
 
