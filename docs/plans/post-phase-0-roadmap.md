@@ -42,7 +42,7 @@ The four required items from ADR 0008. Single workstream because they share infr
 
 - **WS-P1.1.a — Symbolic violation messages.** **Shipped 2026-05-02 in commit `0432d9a`.** New `WordSymbolMap` in `src/flatten.rs` built once at sim startup; `process_events` gained an optional resolver closure; `sim_metal` threads it through. Setup/hold violation messages now name DFFs as `top/cpu/regs[7][bit 22] [word=42]` instead of bare `word 42`. CUDA/HIP sim paths don't currently route runtime violations through `process_events` (separate plumbing gap, not blocked on this format change).
 - **WS-P1.1.b — `--timing-report <path.json>`.** **Shipped 2026-05-02 in commit `58a7a04`.** New `src/timing_report.rs` module with serde-derived `TimingReport` (schema_version 1.0.0); `process_events` takes a `ReportingCtx` bundling the optional resolver + violation observer (signature back to 5 args); `sim_metal` builds the report end-to-end. Sample fixture at `tests/timing_ir/sample_reports/two_violations.json`; schema documented in `docs/timing-violations.md`. WS-P1.1.d's worst-slack ranking is included (top-10 per kind from violation events). Caveats: closest-to-violation tracking in non-violating runs needs GPU near-miss instrumentation (deferred); violations array is unbounded (opt-in cap is the natural follow-up); CUDA/HIP/cosim paths don't route runtime violations through `process_events` yet.
-- **WS-P1.1.c — `--timing-summary` text output.** ~1 day, after WS-P1.1.b. Trivial wrapper over the JSON data.
+- **WS-P1.1.c — `--timing-summary` text output.** **Shipped 2026-05-02 in commit `44e70a0`.** New `TimingReport::format_summary()` formatter; `--timing-summary` CLI flag; `TimingReportConfig` refactored to support either / both / neither output. Text writes to stdout. Deferred from ADR 0008's wishlist: "corner" (metadata struct doesn't carry it yet) and "margin percentage" (derivable from existing fields). Both are documented in code as known gaps.
 - **WS-P1.1.d — Per-DFF worst-slack ranking.** Partially shipped in `58a7a04` alongside WS-P1.1.b: top-10 per kind from observed violation events. Remaining: closest-to-violation tracking when no violation occurred — needs GPU near-miss instrumentation, deferred to a separate workstream.
 
 Total ~2 weeks.
@@ -59,11 +59,13 @@ Tail of Phase 0 work that didn't gate WS3 completion. Listed for completeness.
 These are not gated by any new ADR; pick them up as bandwidth allows.
 
 **Exit criteria for Phase 1:**
-- Symbolic violation messages live; old state-word-index format gone.
-- `--timing-report` JSON shipping; sample golden reports in corpus.
-- `--timing-summary` available.
-- Worst-slack ranking included in both report and summary.
-- `why-jacquard.md` updated to remove "what's missing" qualifications for items 1–4.
+- ✅ Symbolic violation messages live; old state-word-index format gone (commit `0432d9a`).
+- ✅ `--timing-report` JSON shipping; sample fixture at `tests/timing_ir/sample_reports/two_violations.json` (commit `58a7a04`).
+- ✅ `--timing-summary` available (commit `44e70a0`).
+- ✅ Worst-slack ranking included in both report and summary (top-10 from violations; non-violating-run tracking still requires GPU near-miss instrumentation, separate workstream).
+- ⏳ `why-jacquard.md` updated to remove "what's missing" qualifications for items 1–4. **Open follow-up.**
+
+Phase 1 main workstream functionally complete pending the doc update.
 
 ## Phase 2 — Timing model fidelity
 
