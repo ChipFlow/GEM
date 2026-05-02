@@ -174,6 +174,13 @@ struct SimArgs {
     /// rankings always reflect every observed event regardless of cap.
     #[clap(long)]
     timing_report_max_violations: Option<usize>,
+
+    /// Select a specific PVT corner from the timing IR by name.
+    /// Defaults to corner index 0 (first declared) when unset. Required
+    /// when the IR carries multiple corners and the first isn't the
+    /// intended one.
+    #[clap(long)]
+    timing_corner: Option<String>,
 }
 
 #[derive(Parser)]
@@ -309,6 +316,7 @@ fn cmd_sim(args: SimArgs) {
         xprop: args.xprop,
         liberty: args.liberty.clone(),
         timing_ir: args.timing_ir.clone(),
+        timing_corner: args.timing_corner.clone(),
     };
 
     #[allow(unused_mut)]
@@ -1455,6 +1463,7 @@ fn cmd_dump_paths(args: DumpPathsArgs) {
         xprop: false,
         liberty: args.liberty.clone(),
         timing_ir: args.timing_ir.clone(),
+        timing_corner: None,
     };
 
     let mut design = setup::load_design(&design_args);
@@ -1537,6 +1546,7 @@ fn cmd_cosim(args: CosimArgs) {
             xprop: false, // cosim doesn't support xprop yet
             liberty: None,
             timing_ir: args.timing_ir.clone(),
+            timing_corner: None,
         };
 
         let mut design = setup::load_design(&design_args);

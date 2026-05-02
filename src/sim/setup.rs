@@ -35,6 +35,10 @@ pub struct DesignArgs {
     pub liberty: Option<PathBuf>,
     /// Path to a Jacquard timing-IR (.jtir) file. Mutually exclusive with `sdf`.
     pub timing_ir: Option<PathBuf>,
+    /// Optional `--timing-corner <NAME>`. When set, the IR's corner of
+    /// that name is selected; when unset, corner index 0 (the first
+    /// declared corner) is used.
+    pub timing_corner: Option<String>,
 }
 
 /// Result of loading a design: everything needed for simulation.
@@ -170,6 +174,7 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
             ir_path,
             args.clock_period_ps,
             args.liberty.as_deref(),
+            args.timing_corner.as_deref(),
             args.sdf_debug,
         );
     } else if let Some(ref sdf_path) = args.sdf {
@@ -187,6 +192,7 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
             args.liberty.as_deref(),
             args.top_module.as_deref(),
             args.clock_period_ps,
+            args.timing_corner.as_deref(),
             args.sdf_debug,
         );
     }
@@ -239,6 +245,7 @@ pub fn load_sdf_via_opensta_to_ir(
     liberty_path: Option<&Path>,
     top_module: Option<&str>,
     clock_period_ps: Option<u64>,
+    corner_name: Option<&str>,
     debug: bool,
 ) {
     let liberty_path = liberty_path.unwrap_or_else(|| {
@@ -299,11 +306,14 @@ pub fn load_sdf_via_opensta_to_ir(
     let liberty_fallback = crate::liberty_parser::TimingLibrary::from_file(liberty_path).ok();
 
     let ir = ir_file.view();
+    let corner_index = crate::flatten::resolve_corner_index(&ir, corner_name)
+        .unwrap_or_else(|e| panic!("--timing-corner: {e}"));
     script.load_timing_from_ir(
         aig,
         netlistdb,
         &ir,
         clock_ps,
+        corner_index,
         liberty_fallback.as_ref(),
         debug,
     );
@@ -321,6 +331,7 @@ pub fn load_timing_ir(
     ir_path: &Path,
     clock_period_ps: Option<u64>,
     liberty_fallback_path: Option<&Path>,
+    corner_name: Option<&str>,
     debug: bool,
 ) {
     let clock_ps = clock_period_ps.unwrap_or(25000);
@@ -349,11 +360,14 @@ pub fn load_timing_ir(
     });
 
     let ir = ir_file.view();
+    let corner_index = crate::flatten::resolve_corner_index(&ir, corner_name)
+        .unwrap_or_else(|e| panic!("--timing-corner: {e}"));
     script.load_timing_from_ir(
         aig,
         netlistdb,
         &ir,
         clock_ps,
+        corner_index,
         liberty_fallback.as_ref(),
         debug,
     );

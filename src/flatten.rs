@@ -1894,6 +1894,7 @@ impl FlattenedScriptV1 {
         netlistdb: &NetlistDB,
         ir: &timing_ir::TimingIR<'_>,
         clock_period_ps: u64,
+        corner_index: u32,
         liberty_fallback: Option<&TimingLibrary>,
         debug: bool,
     ) {
@@ -1937,7 +1938,7 @@ impl FlattenedScriptV1 {
             for i in 0..arrivals.len() {
                 let ca = arrivals.get(i);
                 if let Some(name) = ca.cell_instance() {
-                    let arr = ir_corner0_max(ca.arrival());
+                    let arr = ir_corner_max(ca.arrival(), corner_index);
                     let entry = arrivals_by_cell.entry(name).or_insert(0);
                     *entry = (*entry).max(arr);
                 }
@@ -1999,7 +2000,7 @@ impl FlattenedScriptV1 {
                     if let Some(slash_pos) = to_pin.rfind('/') {
                         let dest_inst = &to_pin[..slash_pos];
                         if let Some(&dest_cellid) = path_to_cellid.get(dest_inst) {
-                            let d = ir_corner0_max(ic.delay());
+                            let d = ir_corner_max(ic.delay(), corner_index);
                             let entry = wire_delays_per_cell.entry(dest_cellid).or_insert((0, 0));
                             entry.0 = entry.0.max(d);
                             entry.1 = entry.1.max(d);
@@ -2045,8 +2046,8 @@ impl FlattenedScriptV1 {
                                 .or_else(|| arcs.first());
                             if let Some(arc) = arc {
                                 any_matched = true;
-                                let rise_ps = ir_corner0_max(arc.rise_delay());
-                                let fall_ps = ir_corner0_max(arc.fall_delay());
+                                let rise_ps = ir_corner_max(arc.rise_delay(), corner_index);
+                                let fall_ps = ir_corner_max(arc.fall_delay(), corner_index);
                                 let wire = wire_delays_per_cell.get(cellid);
                                 total_rise += rise_ps + wire.map_or(0, |w| w.0);
                                 total_fall += fall_ps + wire.map_or(0, |w| w.1);
@@ -2117,8 +2118,8 @@ impl FlattenedScriptV1 {
             let (setup_ps, hold_ps) = if let Some(path) = ir_path {
                 if let Some(checks) = checks_by_cell.get(path.as_str()) {
                     if let Some(check) = checks.first() {
-                        let setup = ir_corner0_max(check.setup());
-                        let hold = ir_corner0_max(check.hold());
+                        let setup = ir_corner_max(check.setup(), corner_index);
+                        let hold = ir_corner_max(check.hold(), corner_index);
                         let setup = if setup > 0 { setup as u16 } else { lib_setup };
                         let hold = if hold > 0 { hold as u16 } else { lib_hold };
                         (setup, hold)
@@ -2206,19 +2207,76 @@ impl FlattenedScriptV1 {
     }
 }
 
-/// Extract the max value at corner 0 from an optional IR `TimingValue`
-/// vector. Returns 0 for missing or non-positive values. Rounds f64 ps
-/// to u64 ps. Used by `load_timing_from_ir`.
-fn ir_corner0_max(values: Option<timing_ir::Vector<'_, timing_ir::TimingValue>>) -> u64 {
-    if let Some(v) = values {
-        if !v.is_empty() {
-            let m = v.get(0).max();
-            if m > 0.0 {
-                return m.round() as u64;
+/// Extract the max value at the requested corner index from an optional
+/// IR `TimingValue` vector. Returns 0 for missing or non-positive
+/// values. Rounds f64 ps to u64 ps. Used by `load_timing_from_ir`.
+///
+/// If the requested corner has no entry in the vector (single-corner
+/// data + non-zero index), falls back to entry `0` so `--timing-corner`
+/// still produces a usable IR consumption when one of the cell's arcs
+/// happens to be single-corner.
+fn ir_corner_max(
+    values: Option<timing_ir::Vector<'_, timing_ir::TimingValue>>,
+    corner_index: u32,
+) -> u64 {
+    let Some(v) = values else { return 0 };
+    let extract = |idx: u32| -> Option<u64> {
+        for i in 0..v.len() {
+            let entry = v.get(i);
+            if entry.corner_index() == idx {
+                let m = entry.max();
+                return if m > 0.0 { Some(m.round() as u64) } else { Some(0) };
             }
+        }
+        None
+    };
+    if let Some(found) = extract(corner_index) {
+        return found;
+    }
+    if corner_index != 0 {
+        if let Some(found) = extract(0) {
+            return found;
+        }
+    }
+    if !v.is_empty() {
+        let m = v.get(0).max();
+        if m > 0.0 {
+            return m.round() as u64;
         }
     }
     0
+}
+
+/// Resolve `--timing-corner <NAME>` to the IR's corner index. Returns 0
+/// when no name is given or the IR has no corners table; errors when a
+/// name is given but no matching corner exists.
+pub fn resolve_corner_index(
+    ir: &timing_ir::TimingIR<'_>,
+    requested: Option<&str>,
+) -> Result<u32, String> {
+    let Some(name) = requested else {
+        return Ok(0);
+    };
+    let Some(corners) = ir.corners() else {
+        return Err(format!(
+            "--timing-corner {name} requested but the IR has no corners table"
+        ));
+    };
+    // Corners are positional in the table; the slot index *is* the
+    // value referenced by TimingValue.corner_index.
+    for i in 0..corners.len() {
+        let c = corners.get(i);
+        if c.name() == Some(name) {
+            return Ok(i as u32);
+        }
+    }
+    let names: Vec<String> = (0..corners.len())
+        .map(|i| corners.get(i).name().unwrap_or("?").to_string())
+        .collect();
+    Err(format!(
+        "--timing-corner {name} not found in IR; available corners: [{}]",
+        names.join(", ")
+    ))
 }
 
 #[cfg(test)]
@@ -2544,7 +2602,7 @@ mod ir_delay_tests {
         let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, true);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, 0, None, true);
 
         assert_eq!(
             script.gate_delays.len(),
@@ -2595,7 +2653,7 @@ mod ir_delay_tests {
         let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, false);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, 0, None, false);
 
         for aigpin in 1..=aig.num_aigpins {
             if aig.aigpin_cell_origins[aigpin].is_empty() {
@@ -2621,7 +2679,7 @@ mod ir_delay_tests {
         let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, false);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, 0, None, false);
 
         assert_eq!(
             script.dff_constraints.len(),
@@ -2697,7 +2755,7 @@ mod ir_delay_tests {
         let ir = root_as_timing_ir(&ir_buf).expect("valid IR buffer");
 
         let mut script = make_minimal_script(&aig);
-        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, None, false);
+        script.load_timing_from_ir(&aig, &netlistdb, &ir, 10000, 0, None, false);
 
         let cellid_to_ir_path = build_cellid_to_ir_path(&netlistdb);
         let by_name: HashMap<&str, &DFFConstraint> = script
