@@ -124,6 +124,113 @@ impl TimingReport {
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         Ok(())
     }
+
+    /// Render the report as a multi-line text summary suitable for
+    /// stdout. Matches `--timing-summary`. Stable enough for human
+    /// inspection but explicitly NOT a parseable contract per ADR 0008
+    /// (`--timing-report` JSON is the parseable form).
+    ///
+    /// ADR 0008 also lists "corner" and "margin percentage" as desired
+    /// summary content; both are deferred — corner because the
+    /// metadata struct doesn't carry it yet (next IR roundtrip), margin
+    /// because it duplicates information the consumer can compute from
+    /// `slack_ps` and `clock_period_ps` already in the report.
+    pub fn format_summary(&self) -> String {
+        // Top-N for the per-word count breakdown. Distinct from
+        // jacquard.rs::WORST_SLACK_TOP_N (which gates the JSON ranking
+        // capacity); this one bounds the human-facing table width.
+        const SUMMARY_TOP_N: usize = 5;
+
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        // `writeln!` into a String via fmt::Write is infallible.
+        writeln!(out, "=== Jacquard Timing Summary ===").unwrap();
+        if let Some(d) = &self.metadata.design {
+            writeln!(out, "Design:        {d}").unwrap();
+        }
+        match &self.metadata.vector_source {
+            Some(v) => writeln!(
+                out,
+                "Vectors:       {v} ({} cycles)",
+                self.metadata.cycles_run
+            )
+            .unwrap(),
+            None => writeln!(out, "Vectors:       {} cycles", self.metadata.cycles_run).unwrap(),
+        }
+        writeln!(out, "Clock period:  {} ps", self.metadata.clock_period_ps).unwrap();
+        if let Some(t) = &self.metadata.timing_source {
+            writeln!(out, "Timing source: {t}").unwrap();
+        }
+        writeln!(out).unwrap();
+
+        writeln!(out, "Violations:").unwrap();
+        writeln!(out, "  Setup: {}", self.stats.setup_violations).unwrap();
+        writeln!(out, "  Hold:  {}", self.stats.hold_violations).unwrap();
+        let total = self.stats.setup_violations + self.stats.hold_violations;
+        writeln!(out, "  Total: {total}").unwrap();
+        if self.stats.events_dropped > 0 {
+            writeln!(
+                out,
+                "  Note:  {} events dropped (buffer overflow)",
+                self.stats.events_dropped
+            )
+            .unwrap();
+        }
+        writeln!(out).unwrap();
+
+        writeln!(out, "Worst slack:").unwrap();
+        write_worst(&mut out, "Setup", self.worst_slack.setup.first());
+        write_worst(&mut out, "Hold", self.worst_slack.hold.first());
+
+        if !self.per_word.is_empty() {
+            writeln!(out).unwrap();
+            let shown = self.per_word.len().min(SUMMARY_TOP_N);
+            writeln!(
+                out,
+                "Top {shown} by violation count (of {} total words with violations):",
+                self.per_word.len()
+            )
+            .unwrap();
+            for w in self.per_word.iter().take(shown) {
+                let total = w.setup_violations + w.hold_violations;
+                writeln!(
+                    out,
+                    "  {} ({} violations): worst setup={} hold={} arrival={}",
+                    w.site,
+                    total,
+                    fmt_optional_ps(w.worst_setup_slack_ps),
+                    fmt_optional_ps(w.worst_hold_slack_ps),
+                    fmt_optional_ps(w.worst_arrival_ps.map(|a| a as i64)),
+                )
+                .unwrap();
+            }
+        }
+
+        out
+    }
+}
+
+fn write_worst(out: &mut String, label: &str, v: Option<&ViolationRecord>) {
+    use std::fmt::Write as _;
+    match v {
+        Some(v) => writeln!(
+            out,
+            "  {label}: {}ps  at {}  (cycle {})",
+            v.slack_ps, v.site, v.cycle
+        )
+        .unwrap(),
+        None => writeln!(out, "  {label}: (none)").unwrap(),
+    }
+}
+
+/// Render an `Option<i64>` (representing picoseconds) as `"-"` for
+/// `None` and `"<n>ps"` for `Some`. Generic over the integer side via
+/// the `Into<i64>` callsite cast above.
+fn fmt_optional_ps(v: Option<impl Into<i64>>) -> String {
+    match v {
+        Some(n) => format!("{}ps", n.into()),
+        None => "-".into(),
+    }
 }
 
 /// Accumulator that observes every violation as it occurs, tracking the
@@ -416,6 +523,59 @@ mod tests {
         assert_eq!(report.worst_slack.setup.len(), 2);
         assert_eq!(report.worst_slack.hold.len(), 1);
         assert_eq!(report.worst_slack.setup[0].slack_ps, -200);
+    }
+
+    #[test]
+    fn format_summary_includes_metadata_and_violation_totals() {
+        let mut b = ReportBuilder::new(
+            RunMetadata {
+                design: Some("tiny.gv".into()),
+                vector_source: Some("boot.vcd".into()),
+                timing_source: Some("tiny.jtir".into()),
+                clock_period_ps: 1000,
+                cycles_run: 0,
+                jacquard_version: "0.1.0".into(),
+            },
+            5,
+        );
+        b.observe(make_violation(10, ViolationKind::Setup, 5, -100, 1100));
+        b.observe(make_violation(11, ViolationKind::Hold, 7, -20, 30));
+        let report = b.finalize(50, ReportStats { setup_violations: 1, hold_violations: 1, events_dropped: 0 });
+        let text = report.format_summary();
+        assert!(text.contains("Design:        tiny.gv"), "got:\n{text}");
+        assert!(text.contains("Vectors:       boot.vcd (50 cycles)"), "got:\n{text}");
+        assert!(text.contains("Clock period:  1000 ps"), "got:\n{text}");
+        assert!(text.contains("Setup: 1"), "got:\n{text}");
+        assert!(text.contains("Hold:  1"), "got:\n{text}");
+        assert!(text.contains("Total: 2"), "got:\n{text}");
+        assert!(text.contains("Setup: -100ps"), "got:\n{text}");
+        assert!(text.contains("Hold: -20ps"), "got:\n{text}");
+    }
+
+    #[test]
+    fn format_summary_handles_no_violations() {
+        let report = TimingReport::new(RunMetadata {
+            design: Some("clean.gv".into()),
+            jacquard_version: "0.1.0".into(),
+            clock_period_ps: 1000,
+            cycles_run: 100,
+            ..Default::default()
+        });
+        let text = report.format_summary();
+        assert!(text.contains("Setup: 0"));
+        assert!(text.contains("Hold:  0"));
+        assert!(text.contains("Setup: (none)"));
+        assert!(text.contains("Hold: (none)"));
+        assert!(!text.contains("Top 0"), "should not print empty top-N section");
+    }
+
+    #[test]
+    fn format_summary_warns_on_dropped_events() {
+        let mut b = ReportBuilder::new(RunMetadata::default(), 5);
+        b.observe(make_violation(1, ViolationKind::Setup, 0, -10, 0));
+        let report = b.finalize(10, ReportStats { setup_violations: 1, hold_violations: 0, events_dropped: 42 });
+        let text = report.format_summary();
+        assert!(text.contains("42 events dropped"), "got:\n{text}");
     }
 
     /// The sample fixture is documentation; if it ever fails to parse

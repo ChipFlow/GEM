@@ -7,11 +7,21 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use jacquard::sim::setup::DesignArgs;
 
-/// Bundle of `--timing-report` plumbing for the GPU sim entry points.
+/// `--timing-report` / `--timing-summary` plumbing for GPU sim entry
+/// points. The report is built whenever either flag is requested; the
+/// flags then choose whether to write JSON, print text, or both.
 #[cfg(feature = "metal")]
 struct TimingReportConfig<'a> {
-    path: &'a std::path::Path,
+    json_path: Option<&'a std::path::Path>,
+    text_summary: bool,
     metadata: jacquard::timing_report::RunMetadata,
+}
+
+#[cfg(feature = "metal")]
+impl TimingReportConfig<'_> {
+    fn requested(&self) -> bool {
+        self.json_path.is_some() || self.text_summary
+    }
 }
 
 #[derive(Parser)]
@@ -148,6 +158,13 @@ struct SimArgs {
     /// Schema documented in `src/timing_report.rs` and ADR 0008.
     #[clap(long)]
     timing_report: Option<PathBuf>,
+
+    /// Print a human-readable text summary at end of run. Independent
+    /// of `--timing-report`; both may be combined. Format is for human
+    /// inspection — not a stable parseable contract; consumers that
+    /// need to script against it should use `--timing-report` JSON.
+    #[clap(long)]
+    timing_summary: bool,
 }
 
 #[derive(Parser)]
@@ -362,8 +379,9 @@ fn cmd_sim(args: SimArgs) {
     }
 
     #[cfg(feature = "metal")]
-    let report_cfg = args.timing_report.as_deref().map(|path| TimingReportConfig {
-        path,
+    let report_cfg = TimingReportConfig {
+        json_path: args.timing_report.as_deref(),
+        text_summary: args.timing_summary,
         metadata: jacquard::timing_report::RunMetadata {
             design: args
                 .netlist_verilog
@@ -385,7 +403,7 @@ fn cmd_sim(args: SimArgs) {
             cycles_run: 0,
             jacquard_version: env!("CARGO_PKG_VERSION").to_string(),
         },
-    });
+    };
 
     #[cfg(feature = "metal")]
     let gpu_states = {
@@ -394,7 +412,7 @@ fn cmd_sim(args: SimArgs) {
             &input_states,
             &offsets_timestamps,
             &timing_constraints,
-            report_cfg.as_ref(),
+            &report_cfg,
         )
     };
 
@@ -582,7 +600,7 @@ fn sim_metal(
     input_states: &[u32],
     offsets_timestamps: &[(usize, u64)],
     timing_constraints: &Option<Vec<u32>>,
-    report_cfg: Option<&TimingReportConfig<'_>>,
+    report_cfg: &TimingReportConfig<'_>,
 ) -> Vec<u32> {
     use jacquard::aig::SimControlType;
     use jacquard::display::format_display_message;
@@ -609,7 +627,8 @@ fn sim_metal(
     // Top-N for worst-slack ranking; small constant per ADR 0008 § 4.
     const WORST_SLACK_TOP_N: usize = 10;
     let mut report_builder = report_cfg
-        .map(|cfg| ReportBuilder::new(cfg.metadata.clone(), WORST_SLACK_TOP_N));
+        .requested()
+        .then(|| ReportBuilder::new(report_cfg.metadata.clone(), WORST_SLACK_TOP_N));
 
     // Initialize Metal
     let mtl_device = MTLDevice::system_default().expect("No Metal device found");
@@ -943,25 +962,32 @@ fn sim_metal(
         clilog::warn!("Total assertion failures: {}", sim_stats.assertion_failures);
     }
 
-    if let (Some(builder), Some(cfg)) = (report_builder, report_cfg) {
+    if let Some(builder) = report_builder {
         let stats = ReportStats {
             setup_violations: sim_stats.setup_violations,
             hold_violations: sim_stats.hold_violations,
             events_dropped: sim_stats.events_dropped,
         };
         let report = builder.finalize(cycles_completed as u32, stats);
-        if let Err(e) = report.write_to_path(cfg.path) {
-            clilog::error!(
-                "Failed to write timing report to {}: {}",
-                cfg.path.display(),
-                e
-            );
-        } else {
-            clilog::info!(
-                "Timing report ({} violations) written to {}",
-                report.violations.len(),
-                cfg.path.display()
-            );
+        if let Some(json_path) = report_cfg.json_path {
+            if let Err(e) = report.write_to_path(json_path) {
+                clilog::error!(
+                    "Failed to write timing report to {}: {}",
+                    json_path.display(),
+                    e
+                );
+            } else {
+                clilog::info!(
+                    "Timing report ({} violations) written to {}",
+                    report.violations.len(),
+                    json_path.display()
+                );
+            }
+        }
+        if report_cfg.text_summary {
+            // stdout (not stderr/clilog) so the summary stays separable
+            // from the violation/info noise that goes through clilog.
+            print!("{}", report.format_summary());
         }
     }
 

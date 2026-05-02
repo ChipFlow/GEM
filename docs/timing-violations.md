@@ -66,6 +66,7 @@ Setup and hold violations occur when data arrives too late (setup) or too early 
 | `--timing-clock-period <ps>` | `jacquard sim` | Clock period in picoseconds (default: 1000) |
 | `--timing-report-violations` | `jacquard sim` | Report all violations, not just summary |
 | `--timing-report <path.json>` | `jacquard sim` | Write a structured end-of-run JSON report (schema in `src/timing_report.rs`, ADR 0008). |
+| `--timing-summary` | `jacquard sim` | Print a human-readable text summary at end of run. Independent of `--timing-report`; both can be combined. |
 | `--liberty <path>` | `jacquard sim` | Liberty library for timing data (optional, falls back to AIGPDK defaults) |
 
 ### Example: inv_chain_pnr Test Case
@@ -121,6 +122,38 @@ At the end of simulation, GEM prints totals:
 ```
 Simulation complete: 1000 cycles, 5 setup violations, 0 hold violations
 ```
+
+### Text Summary (`--timing-summary`)
+
+A one-screen human summary printed to stdout at end of run. Reuses the
+same data the JSON report builds (so `--timing-report` and
+`--timing-summary` cost the same; only the output channel differs).
+Sample output:
+
+```
+=== Jacquard Timing Summary ===
+Design:        my_cpu.gv
+Vectors:       boot.vcd (1000 cycles)
+Clock period:  1000 ps
+Timing source: my_cpu.jtir
+
+Violations:
+  Setup: 5
+  Hold:  2
+  Total: 7
+
+Worst slack:
+  Setup: -150ps  at top/cpu/regs[7][bit 22] [word=5]  (cycle 87)
+  Hold:   -40ps  at top/cpu/state[bit 3] [word=12]  (cycle 91)
+
+Top 2 by violation count (of 2 total words with violations):
+  top/cpu/regs[7][bit 22] [word=5] (5 violations): worst setup=-150ps hold=- arrival=950ps
+  top/cpu/state[bit 3] [word=12] (2 violations): worst setup=- hold=-40ps arrival=10ps
+```
+
+The format is for human inspection — explicitly **not** a stable
+parseable contract. Tools that need to script against the data should
+use `--timing-report` JSON.
 
 ### Structured JSON Report (`--timing-report <path.json>`)
 
