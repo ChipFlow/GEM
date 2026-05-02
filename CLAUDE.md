@@ -172,6 +172,6 @@ See `docs/timing-violations.md` for the full guide on enabling GPU-side setup/ho
 
 ## Handoffs
 
-This project treats handoffs as ephemeral working memory, not historical record. When you write one, follow `docs/handoff-discipline.md` — markdown at `docs/plans/<topic>-handoff.md`, fold the content into ADRs / design docs / plan docs at resolution time, then delete the handoff file. Exactly one handoff exists at a time; resolved ones are removed, not archived. The `git log -- docs/plans/` history is the audit trail.
+This project treats handoffs as ephemeral working memory, not historical record. When you write one, follow `docs/handoff-discipline.md` — markdown at `docs/handoffs/<topic>-handoff.md` (sibling to `docs/plans/`, deliberately separate so the persistent plan docs aren't mixed with in-flight working memory). At resolution, fold the content into ADRs / design docs / plan docs, then delete the handoff file. Exactly one handoff exists at a time; resolved ones are removed, not archived. The `git log -- docs/handoffs/` history is the audit trail.
 
 Skill activations for `create_handoff` / `resume_handoff` from external Claude Code toolkits will sometimes default to YAML under `thoughts/shared/handoffs/` with database indexing — that doesn't apply here. Override and follow the project convention.

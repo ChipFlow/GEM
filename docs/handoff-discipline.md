@@ -21,7 +21,7 @@ The discipline closes this gap by **forcing migration before deletion**. Every l
 
 ## What a handoff IS
 
-A handoff is a single markdown file at `docs/plans/<topic>-handoff.md` containing exactly what the next session needs to pick up where you left off:
+A handoff *lives* in its own dedicated directory, separate from the persistent plan docs whose content it eventually feeds: a single markdown file at `docs/handoffs/<topic>-handoff.md` containing exactly what the next session needs to pick up where you left off:
 
 - **Goal & next-up** — what this session was trying to do, and what the *very next* concrete action is.
 - **Done this session** — commits landed, with one-line summaries.
@@ -50,6 +50,8 @@ If the session ended at a clean stopping point (everything merged, all decisions
 
 ## Resolution: fold, then delete
 
+The two-location split is deliberate: handoffs *live* at `docs/handoffs/<topic>-handoff.md` while in flight; their *content* migrates into the persistent docs (`docs/adr/`, `docs/plans/`, design docs under `docs/`) at resolution. The handoff file then gets removed; nothing about the work is lost because everything load-bearing has a permanent home elsewhere.
+
 When a handoff's work is done — whether in the next session or several sessions later — every load-bearing piece of it must be migrated to its proper home **before the handoff file is deleted**:
 
 | If the handoff says... | It belongs in... |
@@ -64,7 +66,7 @@ When a handoff's work is done — whether in the next session or several session
 After migration, the handoff file is removed in the same commit as the migration:
 
 ```bash
-git rm docs/plans/<topic>-handoff.md
+git rm docs/handoffs/<topic>-handoff.md
 git add <files-receiving-the-migrated-content>
 git commit -m "$(cat <<'EOF'
 docs: resolve <topic> handoff — fold into <where-it-went>
@@ -76,7 +78,7 @@ EOF
 )"
 ```
 
-The commit message records what migrated where — that's the audit trail. `git log -- docs/plans/` then shows the project's handoff history without needing the files themselves to live forever.
+The commit message records what migrated where — that's the audit trail. `git log -- docs/handoffs/` then shows the project's handoff history (one add, one delete per session) without needing the files themselves to live forever.
 
 ## Template
 
@@ -129,7 +131,7 @@ When you do need to write one, use this skeleton. Replace placeholders inline; d
 
 **Resume in a new session with:**
 \`\`\`
-/resume_handoff docs/plans/<topic>-handoff.md
+/resume_handoff docs/handoffs/<topic>-handoff.md
 \`\`\`
 ```
 
@@ -137,4 +139,4 @@ When you do need to write one, use this skeleton. Replace placeholders inline; d
 
 The `create_handoff` and `resume_handoff` skills (from various Claude Code orchestration toolkits) generate and consume handoffs. They're optional — the discipline above is the load-bearing artifact. A handoff written by hand following this template is just as valid.
 
-If you use one of those skills, expect it to default to YAML format under `thoughts/shared/handoffs/` with database indexing. **That doesn't apply to this project.** Override it: produce markdown at `docs/plans/<topic>-handoff.md` and skip the database step. The skill activation is informational; the project's convention takes precedence.
+If you use one of those skills, expect it to default to YAML format under `thoughts/shared/handoffs/` with database indexing. **That doesn't apply to this project.** Override it: produce markdown at `docs/handoffs/<topic>-handoff.md` and skip the database step. The skill activation is informational; the project's convention takes precedence.
