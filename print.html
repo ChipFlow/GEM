@@ -2470,6 +2470,119 @@ grep '\$var' safe_flat.vcd
 <p><strong>Document Version</strong>: 1.0
 <strong>Last Updated</strong>: 2025-01-08
 <strong>Related</strong>: simulation-architecture.md</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="handoff-discipline"><a class="header" href="#handoff-discipline">Handoff discipline</a></h1>
+<p>Handoffs in this project are <strong>ephemeral working memory</strong>, not historical record. They exist to bridge a single session boundary — when you stop working and someone else (Claude or human) picks up — and they are deleted once the work they describe is resolved.</p>
+<p>This document defines what a handoff is, what it isn't, when to write one, and exactly what to do when one is resolved.</p>
+<h2 id="why-this-discipline-exists"><a class="header" href="#why-this-discipline-exists">Why this discipline exists</a></h2>
+<p>Decision rationale, technical context, and project state all have natural homes:</p>
+<ul>
+<li><strong>ADRs</strong> (<code>docs/adr/</code>) capture architectural decisions and their <em>why</em>.</li>
+<li><strong>Design docs</strong> (<code>docs/timing-model-extensions.md</code>, etc.) capture <em>how</em> things work.</li>
+<li><strong>Plan docs</strong> (<code>docs/plans/phase-0-ir-and-oracle.md</code>, <code>post-phase-0-roadmap.md</code>) capture <em>what's left</em> and the next workstream slices.</li>
+</ul>
+<p>When that content lives in a handoff instead, two things go wrong:</p>
+<ol>
+<li><strong>It's not where contributors look.</strong> A new contributor reading the README → SUMMARY → ADR chain shouldn't have to dig through a stack of resolved handoff docs to find load-bearing decisions or the current state of a workstream.</li>
+<li><strong>It rots out of sync with reality.</strong> Handoffs are point-in-time snapshots. A "STATUS: RESOLVED" banner doesn't help when the thing referenced has moved or changed; the canonical doc is what should hold the current truth.</li>
+</ol>
+<p>The discipline closes this gap by <strong>forcing migration before deletion</strong>. Every load-bearing piece of a handoff lands in its proper home (ADR / design doc / plan doc) before the handoff file is removed.</p>
+<h2 id="what-a-handoff-is"><a class="header" href="#what-a-handoff-is">What a handoff IS</a></h2>
+<p>A handoff is a single markdown file at <code>docs/plans/&lt;topic&gt;-handoff.md</code> containing exactly what the next session needs to pick up where you left off:</p>
+<ul>
+<li><strong>Goal &amp; next-up</strong> — what this session was trying to do, and what the <em>very next</em> concrete action is.</li>
+<li><strong>Done this session</strong> — commits landed, with one-line summaries.</li>
+<li><strong>Open follow-ups</strong> — the work that wasn't done, with enough scope detail to start cold.</li>
+<li><strong>Critical context</strong> — gotchas, surprising findings, environment specifics that aren't obvious from the code or docs <em>yet</em>.</li>
+<li><strong>Verification</strong> — the command(s) the next session runs to confirm the work is in the state you say it is.</li>
+</ul>
+<p>Exactly one handoff exists at a time. There's no chain of resolved predecessors to wade through.</p>
+<h2 id="what-a-handoff-is-not"><a class="header" href="#what-a-handoff-is-not">What a handoff IS NOT</a></h2>
+<ul>
+<li><strong>Not a decision log.</strong> Decisions go in ADRs. If you find yourself writing "we chose X over Y because Z" in a handoff, that paragraph belongs in an ADR (or an existing ADR's "Consequences" / "Walk-back" section).</li>
+<li><strong>Not a design doc.</strong> "How clock arrival flows from OpenSTA Tcl through the IR into the GPU constraint buffer" is a design topic; it lives in <code>docs/timing-model-extensions.md</code> Part B, not in a handoff's "Critical context" section.</li>
+<li><strong>Not a status dashboard for the project.</strong> Workstream status lives in plan docs — <code>phase-0-ir-and-oracle.md</code> for current-phase WS state, <code>post-phase-0-roadmap.md</code> for forward-looking sequencing. A handoff cites those, doesn't reproduce them.</li>
+<li><strong>Not a historical record.</strong> <code>git log</code> is the historical record. Handoffs that survive past their resolution turn into noise that misleads new contributors.</li>
+</ul>
+<h2 id="when-to-write-one"><a class="header" href="#when-to-write-one">When to write one</a></h2>
+<p>Write a handoff at the end of any session that:</p>
+<ol>
+<li><strong>Leaves work in a partial state</strong> that someone else might pick up cold.</li>
+<li><strong>Captures non-obvious context</strong> the next session needs (e.g. "the OpenSTA Tcl <code>find_timing</code> proc rejects <code>-full_update</code>; use <code>::sta::find_timing_cmd 1</code> directly").</li>
+<li><strong>Documents the next concrete step</strong> with enough scope to start without re-discovering it.</li>
+</ol>
+<p>If the session ended at a clean stopping point (everything merged, all decisions documented in ADRs/plans, nothing surprising), don't write a handoff. The plan doc already says what's next.</p>
+<h2 id="resolution-fold-then-delete"><a class="header" href="#resolution-fold-then-delete">Resolution: fold, then delete</a></h2>
+<p>When a handoff's work is done — whether in the next session or several sessions later — every load-bearing piece of it must be migrated to its proper home <strong>before the handoff file is deleted</strong>:</p>
+<div class="table-wrapper"><table><thead><tr><th>If the handoff says...</th><th>It belongs in...</th></tr></thead><tbody>
+<tr><td>"We chose approach X over Y because Z"</td><td>The relevant ADR's Decision/Consequences section, or a new ADR if no fit exists</td></tr>
+<tr><td>"Future scope for WS-N: do A then B then C"</td><td>The plan doc's WS-N section (<code>phase-0-ir-and-oracle.md</code> or successor)</td></tr>
+<tr><td>"Gotcha: OpenSTA's Tcl X behaves Y"</td><td>A code comment near the Tcl call site, or a design doc if the gotcha cuts across files</td></tr>
+<tr><td>"Build dep Z is required on Linux"</td><td>The build script's apt-suggestion / Brewfile / README install section</td></tr>
+<tr><td>"Subsystem A doesn't yet do B"</td><td>Plan doc as a new open item, or an ADR-tracked walk-back if it's a deferred design choice</td></tr>
+<tr><td>"Run <code>cargo test --feature foo</code> to verify"</td><td>The verification block in the relevant plan doc, or a test-running section in <code>CLAUDE.md</code></td></tr>
+</tbody></table>
+</div>
+<p>After migration, the handoff file is removed in the same commit as the migration:</p>
+<pre><code class="language-bash">git rm docs/plans/&lt;topic&gt;-handoff.md
+git add &lt;files-receiving-the-migrated-content&gt;
+git commit -m "$(cat &lt;&lt;'EOF'
+docs: resolve &lt;topic&gt; handoff — fold into &lt;where-it-went&gt;
+
+&lt;one-paragraph summary of what was migrated and where&gt;
+
+Co-developed-by: Claude Code v&lt;version&gt; (&lt;model-id&gt;)
+EOF
+)"
+</code></pre>
+<p>The commit message records what migrated where — that's the audit trail. <code>git log -- docs/plans/</code> then shows the project's handoff history without needing the files themselves to live forever.</p>
+<h2 id="template"><a class="header" href="#template">Template</a></h2>
+<p>When you do need to write one, use this skeleton. Replace placeholders inline; delete sections that don't apply (better to omit a section than fill it with "N/A").</p>
+<pre><code class="language-markdown"># Handoff — &lt;Topic&gt; (one-line summary of what this session left open)
+
+**Created:** YYYY-MM-DD
+**Working tree:** clean | &lt;state if not clean&gt;
+**Branch:** main | &lt;branch&gt;
+
+## Goal &amp; next-up
+
+**Goal of this session:** &lt;what you were trying to do, in 1–3 sentences&gt;
+
+**Next session should pick up:** &lt;the very next concrete action, by name. Reference the plan doc section if applicable.&gt;
+
+**Verification command:**
+```sh
+&lt;commands the next session runs to confirm this handoff's claimed state&gt;
+# Expect: &lt;what success looks like&gt;
+</code></pre>
+<h2 id="done-this-session"><a class="header" href="#done-this-session">Done this session</a></h2>
+<div class="table-wrapper"><table><thead><tr><th>Commit</th><th>Subject</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>&lt;sha&gt;</code></td><td><subject></td><td><one-line note></td></tr>
+</tbody></table>
+</div>
+<h2 id="open-follow-ups-priority-ordered"><a class="header" href="#open-follow-ups-priority-ordered">Open follow-ups (priority-ordered)</a></h2>
+<h3 id="1--"><a class="header" href="#1--">1. <Item name> (<rough size>)</a></h3>
+<p>&lt;Concrete scope. Enough detail to start cold. Link to existing plan/ADR/design-doc sections rather than reproducing them.&gt;</p>
+<h3 id="2-"><a class="header" href="#2-">2. ...</a></h3>
+<h2 id="critical-context"><a class="header" href="#critical-context">Critical context</a></h2>
+<p>&lt;Things the next session needs to know that aren't yet in the code/docs. Be honest about what's truly load-bearing — anything obvious from <code>git log</code> or a quick <code>grep</code> doesn't belong here.&gt;</p>
+<h2 id="references-2"><a class="header" href="#references-2">References</a></h2>
+<ul>
+<li><a href="path"><code>&lt;predecessor-handoff if any&gt;</code></a> — predecessor (if relevant)</li>
+<li><a href="path"><code>&lt;plan doc&gt;</code></a> — current workstream state</li>
+<li><a href="path"><code>&lt;ADR&gt;</code></a> — relevant decision</li>
+</ul>
+<hr />
+<p><strong>Resume in a new session with:</strong>
+```
+/resume_handoff docs/plans/<topic>-handoff.md
+```</p>
+<pre><code>
+## Tooling
+
+The `create_handoff` and `resume_handoff` skills (from various Claude Code orchestration toolkits) generate and consume handoffs. They're optional — the discipline above is the load-bearing artifact. A handoff written by hand following this template is just as valid.
+
+If you use one of those skills, expect it to default to YAML format under `thoughts/shared/handoffs/` with database indexing. **That doesn't apply to this project.** Override it: produce markdown at `docs/plans/&lt;topic&gt;-handoff.md` and skip the database step. The skill activation is informational; the project's convention takes precedence.
+</code></pre>
 
                     </main>
 
