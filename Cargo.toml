@@ -2,6 +2,14 @@
 name = "jacquard"
 version = "0.1.0"
 edition = "2021"
+description = "GPU-accelerated RTL logic simulator with vector-driven setup/hold timing analysis. Maps gate-level netlists to a virtual manycore Boolean processor and runs them on Metal / CUDA / HIP."
+repository = "https://github.com/ChipFlow/Jacquard"
+homepage = "https://chipflow.io"
+keywords = ["rtl", "simulation", "gpu", "timing", "eda"]
+categories = ["simulation", "hardware-support"]
+# license: pending upstream clarification on vendor/eda-infra-rs/sverilogparse
+# (https://github.com/gzz2000/eda-infra-rs/issues/2). Top-level intent is
+# Apache-2.0 (see LICENSE); will fill in once the workspace is settled.
 links = "jacquard"
 
 [dependencies]

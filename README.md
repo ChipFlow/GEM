@@ -13,25 +13,30 @@ Jacquard builds on the excellent [GEM](https://github.com/NVlabs/GEM) research b
 - **SDF back-annotation** — post-layout timing from Standard Delay Format files
 - **Setup/hold violation detection** — both CPU and GPU-side checking
 - **Significant performance optimizations** to the partition mapping pipeline
-- **CI/CD** with automated testing across both backends
+- **CI/CD** with automated testing across all three backends
 
-### Roadmap: Timing Simulation
+### Timing simulation status
 
-The goal is GPU-accelerated gate-level simulation with real cell timing — a first for open source. Current status:
+GPU-accelerated gate-level simulation with real cell timing. What ships
+today (Phase 1 closed 2026-05-02; see [`docs/plans/post-phase-0-roadmap.md`](docs/plans/post-phase-0-roadmap.md)):
 
-| Component | Status |
-|-----------|--------|
-| Liberty file parsing | Done — loads SKY130 HD cell delays |
-| Gate delay computation | Done — per-AIG-pin delays from Liberty |
-| SDF back-annotation | Done — post-layout delays from SDF files |
-| CPU timing simulation | Done — arrival time propagation with setup/hold checking |
-| GPU timing simulation | Done — setup/hold violation detection on GPU (Metal + CUDA) |
-| SKY130 timing test suite | Done — post-P&R test circuits with SDF |
-| Unified `jacquard sim` CLI | Done — timing constraints wired to both Metal and CUDA kernels |
+| Capability | Status |
+|---|---|
+| Liberty parsing | ✅ |
+| SDF back-annotation via `opensta-to-ir` | ✅ |
+| Per-DFF clock-arrival folding (Pillar B Stages 1+2) | ✅ |
+| GPU-side setup/hold violation detection | ✅ Metal; CUDA + HIP detect, route through `process_events` is a follow-up |
+| **Symbolic violation messages** (`top/cpu/regs[7][bit 22] [word=42]`) | ✅ Metal |
+| **`--timing-report <path.json>`** structured end-of-run report | ✅ Metal |
+| **`--timing-summary`** human-readable text summary | ✅ Metal |
+| OpenSTA detection + version check | ✅ |
+| Per-receiver wire delay (Pillar C Tier 1) | ❌ Phase 2 (blocked on ADR 0007) |
+| Multi-corner SDF (`--sdf-corner`) | ⚠ Single corner (typ) only; WS2.4 open |
 
-Next steps:
-1. Timing-aware bit packing for improved GPU utilization
-2. Multi-clock domain support
+See [`docs/timing-violations.md`](docs/timing-violations.md) and
+[`docs/why-jacquard.md`](docs/why-jacquard.md) for the full output
+interface and positioning. [`CHANGELOG.md`](CHANGELOG.md) tracks
+released and unreleased changes.
 
 ## Dependencies
 
