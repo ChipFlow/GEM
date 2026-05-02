@@ -14,6 +14,8 @@ use jacquard::sim::setup::DesignArgs;
 struct TimingReportConfig<'a> {
     json_path: Option<&'a std::path::Path>,
     text_summary: bool,
+    /// Per-cycle violations cap. `None` = unbounded, `Some(n)` = cap.
+    max_violations: Option<usize>,
     metadata: jacquard::timing_report::RunMetadata,
 }
 
@@ -165,6 +167,13 @@ struct SimArgs {
     /// need to script against it should use `--timing-report` JSON.
     #[clap(long)]
     timing_summary: bool,
+
+    /// Cap the per-cycle violations list in `--timing-report`. Defaults
+    /// to 100k records (~8 MB JSON). Pass `0` for unbounded — risky on
+    /// long violation-storm runs. Setup/hold totals and worst-slack
+    /// rankings always reflect every observed event regardless of cap.
+    #[clap(long)]
+    timing_report_max_violations: Option<usize>,
 }
 
 #[derive(Parser)]
@@ -382,6 +391,13 @@ fn cmd_sim(args: SimArgs) {
     let report_cfg = TimingReportConfig {
         json_path: args.timing_report.as_deref(),
         text_summary: args.timing_summary,
+        // Translate the CLI sentinel: unset → use builder default,
+        // `Some(0)` → unbounded (None), `Some(n)` → cap at n.
+        max_violations: match args.timing_report_max_violations {
+            None => Some(jacquard::timing_report::DEFAULT_MAX_VIOLATIONS),
+            Some(0) => None,
+            Some(n) => Some(n),
+        },
         metadata: jacquard::timing_report::RunMetadata {
             design: args
                 .netlist_verilog
@@ -626,9 +642,13 @@ fn sim_metal(
 
     // Top-N for worst-slack ranking; small constant per ADR 0008 § 4.
     const WORST_SLACK_TOP_N: usize = 10;
-    let mut report_builder = report_cfg
-        .requested()
-        .then(|| ReportBuilder::new(report_cfg.metadata.clone(), WORST_SLACK_TOP_N));
+    let mut report_builder = report_cfg.requested().then(|| {
+        ReportBuilder::new(
+            report_cfg.metadata.clone(),
+            WORST_SLACK_TOP_N,
+            report_cfg.max_violations,
+        )
+    });
 
     // Initialize Metal
     let mtl_device = MTLDevice::system_default().expect("No Metal device found");
@@ -967,6 +987,8 @@ fn sim_metal(
             setup_violations: sim_stats.setup_violations,
             hold_violations: sim_stats.hold_violations,
             events_dropped: sim_stats.events_dropped,
+            // `violations_truncated` is filled in by builder.finalize().
+            violations_truncated: 0,
         };
         let report = builder.finalize(cycles_completed as u32, stats);
         if let Some(json_path) = report_cfg.json_path {

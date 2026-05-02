@@ -92,7 +92,8 @@ These items are tracked in [`docs/plans/post-phase-0-roadmap.md`](plans/post-pha
 - [ ] CUDA / HIP runtime violation routing through `process_events`
       (or document loudly that `--timing-report` is Metal-only at
       release time).
-- [ ] Bounded violations array (or document the unbounded behaviour).
+- [x] Bounded violations array (`--timing-report-max-violations`,
+      default 100k).
 - [ ] End-to-end test exercising `--timing-report` against a corpus
       design.
 

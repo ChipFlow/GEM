@@ -35,6 +35,11 @@ the authoritative record.
   of silently dropping timing data. Newer-than-tested versions warn but
   proceed. Tested against OpenSTA `3.1.0`
   (vendored at `vendor/opensta/`).
+- **`--timing-report` violations cap**: per-cycle `violations` array is
+  capped at 100k records by default (~8 MB JSON). Override with
+  `--timing-report-max-violations <N>`; `0` disables the cap.
+  `stats.violations_truncated` records overflow. Setup/hold totals
+  and worst-slack rankings always reflect every observed event.
 - **Pillar B Stages 1+2** (commits `c403cc8`, `6767c3e`): `ClockArrival`
   IR records emitted by `opensta-to-ir`; per-DFF capture-side clock
   arrival folded into setup/hold checks with `DFFConstraint::clock_arrival_ps`.
@@ -84,9 +89,10 @@ the authoritative record.
   Metal sim path. The CUDA, HIP, and cosim paths detect violations on
   the GPU but do not yet route them through `process_events`. Tracked
   as a follow-up.
-- The per-cycle `violations` array in `--timing-report` is unbounded.
-  Long violation-storm runs produce correspondingly large JSON files;
-  an opt-in cap is the natural follow-up.
+- The per-cycle `violations` array in `--timing-report` is capped at
+  100k records by default (override via `--timing-report-max-violations`).
+  Setup/hold totals + worst-slack always reflect every observed event;
+  only the per-cycle list is bounded.
 - `worst_slack` ranking is populated only from observed violation
   events. Closest-to-violation tracking on a run that *passed* timing
   needs GPU-side near-miss instrumentation; deferred.

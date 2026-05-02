@@ -67,6 +67,7 @@ Setup and hold violations occur when data arrives too late (setup) or too early 
 | `--timing-report-violations` | `jacquard sim` | Report all violations, not just summary |
 | `--timing-report <path.json>` | `jacquard sim` | Write a structured end-of-run JSON report (schema in `src/timing_report.rs`, ADR 0008). |
 | `--timing-summary` | `jacquard sim` | Print a human-readable text summary at end of run. Independent of `--timing-report`; both can be combined. |
+| `--timing-report-max-violations <N>` | `jacquard sim` | Cap on the per-cycle violations list in `--timing-report`. Default 100k. `0` = unbounded. Totals + worst-slack always reflect every event. |
 | `--liberty <path>` | `jacquard sim` | Liberty library for timing data (optional, falls back to AIGPDK defaults) |
 
 ### Example: inv_chain_pnr Test Case
@@ -197,11 +198,13 @@ Top-level shape:
 - `--timing-report` only produces output today on the Metal sim path.
   The CUDA / HIP / cosim paths do not currently route runtime violations
   through `process_events` — bringing them in is independent plumbing.
-- The `violations` array is unbounded: every violation event becomes a
-  ~80-byte record. A violation-storm run (millions of events) produces
-  a correspondingly large JSON file. If this becomes an issue in
-  practice, an opt-in cap is the next step; for v1.0.0 the per-cycle
-  list is recorded in full.
+- The `violations` array is capped at 100,000 records by default
+  (~8 MB JSON). Override or disable the cap with
+  `--timing-report-max-violations <N>` (`0` = unbounded). Setup/hold
+  totals, `events_dropped`, and `worst_slack` rankings always reflect
+  every observed event; only the per-cycle list is bounded.
+  `stats.violations_truncated` reports how many records were dropped
+  because the cap was reached.
 
 ## Tracing Violations to Source Signals
 

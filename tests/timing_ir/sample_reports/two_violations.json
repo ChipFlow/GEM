@@ -1,4 +1,5 @@
 {
+  "_comment": "Pinned at schema_version 1.0.0 to regression-test #[serde(default)] for fields added in later minor versions (e.g. stats.violations_truncated in 1.1.0).",
   "schema_version": "1.0.0",
   "metadata": {
     "design": "tiny_cpu.gv",
