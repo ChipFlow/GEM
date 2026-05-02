@@ -2,7 +2,7 @@
 name = "opensta-to-ir"
 version = "0.1.0"
 edition = "2021"
-description = "Preprocessing tool that drives OpenSTA and emits Jacquard timing IR. See docs/plans/ws2-opensta-to-ir.md and docs/adr/0006-sdf-preprocessing-model.md."
+description = "Preprocessing tool that drives OpenSTA and emits Jacquard timing IR. Lives outside the root cargo workspace; `cargo test --lib` from the repo root does NOT run its tests — use `cd crates/opensta-to-ir && cargo test` locally, or rely on the dedicated `opensta-to-ir-tests` CI job. See docs/plans/ws2-opensta-to-ir.md and docs/adr/0006-sdf-preprocessing-model.md."
 license = "Apache-2.0"
 repository = "https://github.com/chipflow/Jacquard"
 publish = false

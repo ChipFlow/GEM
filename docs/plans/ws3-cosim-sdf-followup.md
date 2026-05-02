@@ -132,19 +132,20 @@ cycles; ratio 0.984× (simulators agree on simulated time within 2%).
 
 The earlier "67 of 155 events captured" gap is **not** a budget
 issue — chipflow drives input stimulus via `design/tests/input.json`
-and reference events 69+ require those driven inputs. See
-[`post-ws3-handoff.md`](post-ws3-handoff.md) follow-ups.
+and reference events 69+ require those driven inputs. The input-stimulus
+dispatcher was added in commit `4a1a989`, and the mcu_soc/sky130 cosim
+now matches the cut-down chipflow reference 1:1 (90/90 events).
 
 The earlier "Jacquard ~14% slower per byte than cxxrtl" claim relied
 on a phantom half-cycle correction; it is also retracted. There is
 no rate gap to explain at this level.
 
-### Planned: rename `--max-cycles` → `--max-clock-edges`, switch
-### cosim's internal granularity to edges
+### Done: `--max-cycles` renamed to `--max-clock-edges` (commit `46b5c28`)
 
-Tracked as an open follow-up in `post-ws3-handoff.md`. Aligns
-Jacquard's CLI 1:1 with chipflow's `num_steps` and unlocks per-edge
-event timestamping.
+Cosim's internal granularity moved from full clock cycles to scheduler
+edges, aligning Jacquard's CLI 1:1 with chipflow's `num_steps` and
+unlocking per-edge event timestamping. Section retained for context on
+the unit conventions captured above.
 
 ## Option A — restore cosim `--sdf` ergonomics
 

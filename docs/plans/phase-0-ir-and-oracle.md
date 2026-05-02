@@ -63,6 +63,23 @@ Deliverables:
 - Assertion: if OpenSTA reports < expected-count cells, exit non-zero with a clear diagnostic.
 - Ships as part of Jacquard's release artefacts (binary distributable, documented in user-facing docs).
 
+#### WS2.4 — Multi-corner CLI flag (~3 days, open)
+
+The IR schema (`crates/timing-ir/schemas/timing_ir.fbs`) supports per-corner `TimingValue` vectors today, but every record lands in the IR with a single `TimingValue` keyed at `corner_index = 0`. Both producer (`opensta-to-ir`) and consumer (`flatten.rs`) treat the world as single-corner. Multi-corner support has three pieces:
+
+**Producer (Tcl + Rust binary):**
+- `crates/opensta-to-ir/tcl/dump_timing.tcl`: replace single `read_liberty` + hardcoded `CORNER 0 default tt 1.0 25.0` with OpenSTA's `define_corners` + per-corner `read_liberty -corner $name`. The existing arc / setup-hold / wire / clock-arrival walks already key by `(cell, …)`; wrap each in a per-corner loop and call `[edge arc_delays $arc -corner $c]`. Verify the exact `-corner` syntax against the locally built OpenSTA before relying on it (similar to the `vertex_worst_arrival_path` probe done for clock arrival in commit `c403cc8`).
+- `crates/opensta-to-ir/src/main.rs`: rework `--liberty PATH` to accept `--corner NAME=PATH[,V=…,T=…,P=…]` repeats. Validate at least one corner.
+- `crates/opensta-to-ir/src/builder.rs`: today each ARC / SETUP_HOLD / INTERCONNECT / CLOCK_ARRIVAL line lands as one IR record with one `TimingValue`. Multi-corner emits multiple lines per `(cell, driver, load, corner_index)` from Tcl; the builder dedupes them into one IR record carrying a `[TimingValue]` vector. Mechanical.
+
+**Consumer (jacquard root):**
+- Add `--timing-corner <NAME>` to `SimArgs` / `CosimArgs` in `src/bin/jacquard.rs`; resolve to an index by walking `ir.corners()`.
+- Replace `flatten.rs::ir_corner0_max(...)` (used in ~5 sites) with `ir_corner_max(idx)`. Thread the resolved index through `load_timing_from_ir`.
+
+**Fixture:** sky130 ships multi-corner Liberty (`tt_025C_1v80`, `ss_-40C_1v62`, `ff_125C_1v95`) on disk via volare under `~/.volare/...` on dev machines that have run the cosim work. Wire two corners against the existing DFF / chain integration tests for a synthetic-but-real fixture; no external decision is needed before starting.
+
+Land in this order: fixture probe (~hour, verifies the OpenSTA Tcl `-corner` flag works as expected) → producer (Tcl + binary + builder) → consumer (CLI + flatten plumbing) → integration test exercising both corners. The risk concentrates in the first hour; everything after that is mechanical.
+
 ### WS3 — Remove hand-rolled SDF parser; wire interim runtime hook
 
 Per ADR 0006, Jacquard's hand-rolled SDF parser is deleted in Phase 0 rather than maintained through later phases. The runtime gains a new IR input path; the old SDF input path becomes an interim convenience wrapper over WS2.

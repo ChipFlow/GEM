@@ -9,3 +9,4 @@
 - [Timing Model Extensions](timing-model-extensions.md)
 - [Adding a New PDK](adding-a-pdk.md)
 - [Troubleshooting VCD](troubleshooting-vcd.md)
+- [Handoff Discipline](handoff-discipline.md)

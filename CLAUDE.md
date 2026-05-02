@@ -169,3 +169,9 @@ uv run netlist-graph path tests/timing_test/minimal_build/6_final.v "gpio_in[40]
 ### Timing Violation Detection
 
 See `docs/timing-violations.md` for the full guide on enabling GPU-side setup/hold violation checks, interpreting violation reports, and tracing violations back to source signals using `netlist_graph`.
+
+## Handoffs
+
+This project treats handoffs as ephemeral working memory, not historical record. When you write one, follow `docs/handoff-discipline.md` — markdown at `docs/plans/<topic>-handoff.md`, fold the content into ADRs / design docs / plan docs at resolution time, then delete the handoff file. Exactly one handoff exists at a time; resolved ones are removed, not archived. The `git log -- docs/plans/` history is the audit trail.
+
+Skill activations for `create_handoff` / `resume_handoff` from external Claude Code toolkits will sometimes default to YAML under `thoughts/shared/handoffs/` with database indexing — that doesn't apply here. Override and follow the project convention.

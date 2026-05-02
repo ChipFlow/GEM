@@ -136,8 +136,9 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
             err "install via Homebrew: brew bundle --file ${SUBMODULE_PATH}/Brewfile"
             ;;
         Linux)
-            err "install via apt: sudo apt install cmake make bison flex swig libtcl-dev libeigen3-dev"
+            err "install via apt: sudo apt install cmake make bison flex libfl-dev swig libtcl-dev libeigen3-dev libfmt-dev"
             err "(also need cudd; see vendor/opensta/Dockerfile.ubuntu22.04 for build steps)"
+            err "note: libfl-dev is what carries FlexLexer.h on Ubuntu — without it cmake fails with FLEX_INCLUDE_DIR=NOTFOUND"
             ;;
         *)
             err "install build dependencies appropriate for $(uname -s)"
