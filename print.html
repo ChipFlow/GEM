@@ -2487,7 +2487,7 @@ grep '\$var' safe_flat.vcd
 </ol>
 <p>The discipline closes this gap by <strong>forcing migration before deletion</strong>. Every load-bearing piece of a handoff lands in its proper home (ADR / design doc / plan doc) before the handoff file is removed.</p>
 <h2 id="what-a-handoff-is"><a class="header" href="#what-a-handoff-is">What a handoff IS</a></h2>
-<p>A handoff is a single markdown file at <code>docs/plans/&lt;topic&gt;-handoff.md</code> containing exactly what the next session needs to pick up where you left off:</p>
+<p>A handoff <em>lives</em> in its own dedicated directory, separate from the persistent plan docs whose content it eventually feeds: a single markdown file at <code>docs/handoffs/&lt;topic&gt;-handoff.md</code> containing exactly what the next session needs to pick up where you left off:</p>
 <ul>
 <li><strong>Goal &amp; next-up</strong> — what this session was trying to do, and what the <em>very next</em> concrete action is.</li>
 <li><strong>Done this session</strong> — commits landed, with one-line summaries.</li>
@@ -2512,6 +2512,7 @@ grep '\$var' safe_flat.vcd
 </ol>
 <p>If the session ended at a clean stopping point (everything merged, all decisions documented in ADRs/plans, nothing surprising), don't write a handoff. The plan doc already says what's next.</p>
 <h2 id="resolution-fold-then-delete"><a class="header" href="#resolution-fold-then-delete">Resolution: fold, then delete</a></h2>
+<p>The two-location split is deliberate: handoffs <em>live</em> at <code>docs/handoffs/&lt;topic&gt;-handoff.md</code> while in flight; their <em>content</em> migrates into the persistent docs (<code>docs/adr/</code>, <code>docs/plans/</code>, design docs under <code>docs/</code>) at resolution. The handoff file then gets removed; nothing about the work is lost because everything load-bearing has a permanent home elsewhere.</p>
 <p>When a handoff's work is done — whether in the next session or several sessions later — every load-bearing piece of it must be migrated to its proper home <strong>before the handoff file is deleted</strong>:</p>
 <div class="table-wrapper"><table><thead><tr><th>If the handoff says...</th><th>It belongs in...</th></tr></thead><tbody>
 <tr><td>"We chose approach X over Y because Z"</td><td>The relevant ADR's Decision/Consequences section, or a new ADR if no fit exists</td></tr>
@@ -2523,7 +2524,7 @@ grep '\$var' safe_flat.vcd
 </tbody></table>
 </div>
 <p>After migration, the handoff file is removed in the same commit as the migration:</p>
-<pre><code class="language-bash">git rm docs/plans/&lt;topic&gt;-handoff.md
+<pre><code class="language-bash">git rm docs/handoffs/&lt;topic&gt;-handoff.md
 git add &lt;files-receiving-the-migrated-content&gt;
 git commit -m "$(cat &lt;&lt;'EOF'
 docs: resolve &lt;topic&gt; handoff — fold into &lt;where-it-went&gt;
@@ -2534,7 +2535,7 @@ Co-developed-by: Claude Code v&lt;version&gt; (&lt;model-id&gt;)
 EOF
 )"
 </code></pre>
-<p>The commit message records what migrated where — that's the audit trail. <code>git log -- docs/plans/</code> then shows the project's handoff history without needing the files themselves to live forever.</p>
+<p>The commit message records what migrated where — that's the audit trail. <code>git log -- docs/handoffs/</code> then shows the project's handoff history (one add, one delete per session) without needing the files themselves to live forever.</p>
 <h2 id="template"><a class="header" href="#template">Template</a></h2>
 <p>When you do need to write one, use this skeleton. Replace placeholders inline; delete sections that don't apply (better to omit a section than fill it with "N/A").</p>
 <pre><code class="language-markdown"># Handoff — &lt;Topic&gt; (one-line summary of what this session left open)
@@ -2574,14 +2575,14 @@ EOF
 <hr />
 <p><strong>Resume in a new session with:</strong>
 ```
-/resume_handoff docs/plans/<topic>-handoff.md
+/resume_handoff docs/handoffs/<topic>-handoff.md
 ```</p>
 <pre><code>
 ## Tooling
 
 The `create_handoff` and `resume_handoff` skills (from various Claude Code orchestration toolkits) generate and consume handoffs. They're optional — the discipline above is the load-bearing artifact. A handoff written by hand following this template is just as valid.
 
-If you use one of those skills, expect it to default to YAML format under `thoughts/shared/handoffs/` with database indexing. **That doesn't apply to this project.** Override it: produce markdown at `docs/plans/&lt;topic&gt;-handoff.md` and skip the database step. The skill activation is informational; the project's convention takes precedence.
+If you use one of those skills, expect it to default to YAML format under `thoughts/shared/handoffs/` with database indexing. **That doesn't apply to this project.** Override it: produce markdown at `docs/handoffs/&lt;topic&gt;-handoff.md` and skip the database step. The skill activation is informational; the project's convention takes precedence.
 </code></pre>
 
                     </main>
