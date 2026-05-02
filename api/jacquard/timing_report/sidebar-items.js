@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["SCHEMA_VERSION"],"enum":["ViolationKind"],"struct":["PerWordSummary","ReportBuilder","ReportStats","RunMetadata","TimingReport","ViolationRecord","WorstSlack"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_MAX_VIOLATIONS","SCHEMA_VERSION"],"enum":["ViolationKind"],"struct":["PerWordSummary","ReportBuilder","ReportStats","RunMetadata","TimingReport","ViolationRecord","WorstSlack"]};

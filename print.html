@@ -1430,6 +1430,7 @@ ls my_build/6_final.sdf
 <tr><td><code>--timing-report-violations</code></td><td><code>jacquard sim</code></td><td>Report all violations, not just summary</td></tr>
 <tr><td><code>--timing-report &lt;path.json&gt;</code></td><td><code>jacquard sim</code></td><td>Write a structured end-of-run JSON report (schema in <code>src/timing_report.rs</code>, ADR 0008).</td></tr>
 <tr><td><code>--timing-summary</code></td><td><code>jacquard sim</code></td><td>Print a human-readable text summary at end of run. Independent of <code>--timing-report</code>; both can be combined.</td></tr>
+<tr><td><code>--timing-report-max-violations &lt;N&gt;</code></td><td><code>jacquard sim</code></td><td>Cap on the per-cycle violations list in <code>--timing-report</code>. Default 100k. <code>0</code> = unbounded. Totals + worst-slack always reflect every event.</td></tr>
 <tr><td><code>--liberty &lt;path&gt;</code></td><td><code>jacquard sim</code></td><td>Liberty library for timing data (optional, falls back to AIGPDK defaults)</td></tr>
 </tbody></table>
 </div>
@@ -1536,11 +1537,13 @@ events.</li>
 <li><code>--timing-report</code> only produces output today on the Metal sim path.
 The CUDA / HIP / cosim paths do not currently route runtime violations
 through <code>process_events</code> — bringing them in is independent plumbing.</li>
-<li>The <code>violations</code> array is unbounded: every violation event becomes a
-~80-byte record. A violation-storm run (millions of events) produces
-a correspondingly large JSON file. If this becomes an issue in
-practice, an opt-in cap is the next step; for v1.0.0 the per-cycle
-list is recorded in full.</li>
+<li>The <code>violations</code> array is capped at 100,000 records by default
+(~8 MB JSON). Override or disable the cap with
+<code>--timing-report-max-violations &lt;N&gt;</code> (<code>0</code> = unbounded). Setup/hold
+totals, <code>events_dropped</code>, and <code>worst_slack</code> rankings always reflect
+every observed event; only the per-cycle list is bounded.
+<code>stats.violations_truncated</code> reports how many records were dropped
+because the cap was reached.</li>
 </ul>
 <h2 id="tracing-violations-to-source-signals"><a class="header" href="#tracing-violations-to-source-signals">Tracing Violations to Source Signals</a></h2>
 <p>When you see a violation on a specific word, follow this workflow to identify the offending signals and their logic cone.</p>
