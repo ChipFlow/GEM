@@ -346,3 +346,71 @@ fn dff_with_sdc_clock_emits_clock_arrival() {
         v.max()
     );
 }
+
+/// WS2.4 multi-corner pipeline test. Loads the same AIGPDK Liberty
+/// under two named corners (`typ`, `slow`) and verifies the IR ends
+/// up with two corner records and two TimingValue entries per timing
+/// record. Values are identical (same Liberty), so this is a
+/// structural check; per-value differences land when sky130 multi-
+/// corner Liberty is wired in.
+#[test]
+fn aigpdk_dff_emits_per_corner_timing_values() {
+    let Some(_sta) = find_opensta(None) else {
+        eprintln!("skipping: OpenSTA not built; run scripts/build-opensta.sh");
+        return;
+    };
+
+    let dir = TempDir::new().unwrap();
+    let v_path = dir.path().join("dff.v");
+    let out_path = dir.path().join("dff.jtir");
+    std::fs::write(&v_path, DFF_VERILOG).unwrap();
+
+    let lib = aigpdk_lib();
+    assert!(lib.exists(), "AIGPDK Liberty missing at {}", lib.display());
+
+    let output = Command::new(bin())
+        .arg("--liberty")
+        .arg(format!("typ={}", lib.display()))
+        .arg("--liberty")
+        .arg(format!("slow={}", lib.display()))
+        .arg("--verilog")
+        .arg(&v_path)
+        .arg("--top")
+        .arg("dff_test")
+        .arg("--output")
+        .arg(&out_path)
+        .output()
+        .expect("run opensta-to-ir");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}\nstdout: {}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+
+    let buf = std::fs::read(&out_path).expect("output IR written");
+    let ir = root_as_timing_ir(&buf).expect("readable IR");
+
+    let corners = ir.corners().expect("corners present");
+    assert_eq!(corners.len(), 2, "expected typ + slow corners");
+    assert_eq!(corners.get(0).name(), Some("typ"));
+    assert_eq!(corners.get(1).name(), Some("slow"));
+
+    // Each setup/hold record should carry one TimingValue per corner.
+    let checks = ir.setup_hold_checks().expect("checks present");
+    assert!(checks.len() > 0, "expected at least one DFF setup/hold");
+    for i in 0..checks.len() {
+        let check = checks.get(i);
+        let setup = check.setup().expect("setup vector present");
+        let hold = check.hold().expect("hold vector present");
+        assert_eq!(setup.len(), 2, "two corners → two setup TimingValues");
+        assert_eq!(hold.len(), 2, "two corners → two hold TimingValues");
+        // Corner indices are positional; entry 0 → corner 0, etc.
+        let setup_indices: Vec<u32> = (0..setup.len()).map(|j| setup.get(j).corner_index()).collect();
+        let hold_indices: Vec<u32> = (0..hold.len()).map(|j| hold.get(j).corner_index()).collect();
+        assert_eq!(setup_indices, vec![0, 1]);
+        assert_eq!(hold_indices, vec![0, 1]);
+    }
+}

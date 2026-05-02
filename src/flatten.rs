@@ -3549,3 +3549,84 @@ mod word_symbol_map_tests {
     }
 
 }
+
+#[cfg(test)]
+mod corner_resolution_tests {
+    use super::*;
+    use flatbuffers::FlatBufferBuilder;
+    use timing_ir::*;
+
+    fn build_ir_with_corners(names: &[&str]) -> Vec<u8> {
+        let mut b = FlatBufferBuilder::with_capacity(256);
+        let corners: Vec<_> = names
+            .iter()
+            .map(|n| {
+                let name = b.create_string(n);
+                let process = b.create_string("tt");
+                Corner::create(
+                    &mut b,
+                    &CornerArgs {
+                        name: Some(name),
+                        process: Some(process),
+                        voltage: 1.0,
+                        temperature: 25.0,
+                    },
+                )
+            })
+            .collect();
+        let corners_vec = b.create_vector(&corners);
+        let tool = b.create_string("test");
+        let ver = b.create_string("0");
+        let inputs: Vec<_> = vec![];
+        let inputs_vec = b.create_vector::<flatbuffers::WIPOffset<&str>>(&inputs);
+        let arcs_vec = b.create_vector::<flatbuffers::WIPOffset<TimingArc>>(&[]);
+        let ic_vec = b.create_vector::<flatbuffers::WIPOffset<InterconnectDelay>>(&[]);
+        let sh_vec = b.create_vector::<flatbuffers::WIPOffset<SetupHoldCheck>>(&[]);
+        let ca_vec = b.create_vector::<flatbuffers::WIPOffset<ClockArrival>>(&[]);
+        let ve_vec = b.create_vector::<flatbuffers::WIPOffset<VendorExtension>>(&[]);
+        let sv = SchemaVersion::new(SCHEMA_MAJOR, SCHEMA_MINOR, SCHEMA_PATCH);
+        let root = TimingIR::create(
+            &mut b,
+            &TimingIRArgs {
+                schema_version: Some(&sv),
+                corners: Some(corners_vec),
+                timing_arcs: Some(arcs_vec),
+                interconnect_delays: Some(ic_vec),
+                setup_hold_checks: Some(sh_vec),
+                clock_arrivals: Some(ca_vec),
+                vendor_extensions: Some(ve_vec),
+                generator_tool: Some(tool),
+                generator_version: Some(ver),
+                input_files: Some(inputs_vec),
+            },
+        );
+        finish_timing_ir_buffer(&mut b, root);
+        b.finished_data().to_vec()
+    }
+
+    #[test]
+    fn resolve_corner_index_default_is_zero() {
+        let buf = build_ir_with_corners(&["typ", "slow"]);
+        let ir = root_as_timing_ir(&buf).unwrap();
+        assert_eq!(resolve_corner_index(&ir, None), Ok(0));
+    }
+
+    #[test]
+    fn resolve_corner_index_finds_named_corner() {
+        let buf = build_ir_with_corners(&["typ", "slow", "fast"]);
+        let ir = root_as_timing_ir(&buf).unwrap();
+        assert_eq!(resolve_corner_index(&ir, Some("typ")), Ok(0));
+        assert_eq!(resolve_corner_index(&ir, Some("slow")), Ok(1));
+        assert_eq!(resolve_corner_index(&ir, Some("fast")), Ok(2));
+    }
+
+    #[test]
+    fn resolve_corner_index_unknown_name_lists_available() {
+        let buf = build_ir_with_corners(&["typ", "slow"]);
+        let ir = root_as_timing_ir(&buf).unwrap();
+        let err = resolve_corner_index(&ir, Some("missing")).unwrap_err();
+        assert!(err.contains("missing"), "got: {err}");
+        assert!(err.contains("typ"), "should list available: {err}");
+        assert!(err.contains("slow"), "should list available: {err}");
+    }
+}

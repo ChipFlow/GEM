@@ -12,6 +12,16 @@ the authoritative record.
 
 ### Added
 
+- **Multi-corner support** (WS2.4, commits `5822343` / `530bb36` /
+  `59fde04`). `opensta-to-ir` accepts `--liberty NAME=PATH` to attach
+  Liberty files to named PVT corners (bare paths still go to a
+  "default" corner). The Tcl driver runs `define_corners` + per-scene
+  `read_liberty -corner`, emits one record per (key, corner), and the
+  Rust builder dedupes them into IR records carrying
+  multi-`TimingValue` vectors. Consumer side: new `--timing-corner
+  <NAME>` flag on `jacquard sim` selects the corner index from
+  `ir.corners()` at load time; defaults to corner 0 when unset. Single-
+  corner data continues to work unchanged.
 - **`--timing-report <path.json>`** end-of-run structured timing report
   (commit `58a7a04`). Schema-versioned (`schema_version = "1.0.0"`,
   additive-only per ADR 0008's stability contract). Contains per-cycle
@@ -96,7 +106,9 @@ the authoritative record.
 - `worst_slack` ranking is populated only from observed violation
   events. Closest-to-violation tracking on a run that *passed* timing
   needs GPU-side near-miss instrumentation; deferred.
-- Single SDF corner only. WS2.4 (multi-corner CLI) is open in
-  `docs/plans/phase-0-ir-and-oracle.md`.
+- The `--timing-vcd` flag is wired only into the Metal sim path.
+  CUDA / HIP detect violations on the GPU but don't currently route
+  them through `process_events`; the JSON / text outputs only fire on
+  Metal today.
 
 [Unreleased]: https://github.com/ChipFlow/Jacquard/compare/HEAD

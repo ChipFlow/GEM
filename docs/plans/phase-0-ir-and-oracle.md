@@ -63,7 +63,16 @@ Deliverables:
 - Assertion: if OpenSTA reports < expected-count cells, exit non-zero with a clear diagnostic.
 - Ships as part of Jacquard's release artefacts (binary distributable, documented in user-facing docs).
 
-#### WS2.4 — Multi-corner CLI flag (~3 days, open)
+#### WS2.4 — Multi-corner CLI flag (shipped 2026-05-02)
+
+**Status:** Shipped 2026-05-02 across commits `5822343` (consumer +
+`--timing-corner` flag), `530bb36` (builder dedupe + per-corner
+`[TimingValue]` collection), `59fde04` (Tcl driver per-scene emission
++ `--liberty NAME=PATH` syntax), and the integration test
+`aigpdk_dff_emits_per_corner_timing_values`. The historical scope
+notes below are kept for reference but are no longer "open work".
+
+
 
 The IR schema (`crates/timing-ir/schemas/timing_ir.fbs`) supports per-corner `TimingValue` vectors today, but every record lands in the IR with a single `TimingValue` keyed at `corner_index = 0`. Both producer (`opensta-to-ir`) and consumer (`flatten.rs`) treat the world as single-corner. Multi-corner support has three pieces:
 

@@ -6,7 +6,7 @@ This document orders the work captured in those two ADRs alongside the in-flight
 
 ## Where things stand (2026-05-02)
 
-- **Phase 0 (`phase-0-ir-and-oracle.md`)**: nearing close. WS1–WS3 + WS2.2 + WS4 + WS5 landed (corpus + runner + regen + CI hookup for WS4 in 2026-05-02 commits `90558bb`/`6997096`/`9e25bc2`). Open items: **WS2.4** (multi-corner CLI flag — see § WS2.4 in the phase-0 plan for scope), **sky130-based corpus entries** (gated on a CI sky130-Liberty install strategy), and **peripheral wiring** for I²C/SPI when a fuller mcu_soc fixture lands.
+- **Phase 0 (`phase-0-ir-and-oracle.md`)**: WS1–WS5 + WS2.2 + WS2.4 all landed. WS2.4 multi-corner shipped 2026-05-02 across four commits (`5822343` consumer, `530bb36` builder, `59fde04` producer, plus the integration test). Open items: **sky130-based corpus entries** (gated on a CI sky130-Liberty install strategy) and **peripheral wiring** for I²C/SPI when a fuller mcu_soc fixture lands.
 - **OpenTimer spike (`spikes/opentimer-sky130.md`)**: **resolved 2026-05-01 — Superseded.** Q1 (Liberty parse) passed cleanly on SKY130; Q2 (arrival computation) failed on the canonical OpenSTA-bundled GCD example after eight input-pipeline workarounds (bus ports, OpenROAD-emitted SPEF, modern TCL, tap cells). Per the spike's decision matrix, ADR 0003 is now Superseded (commit `d002bde`). **OpenSTA out-of-process is committed as Jacquard's sole STA path** — `opensta-to-ir` is the canonical preprocessor; no in-process reference STA is planned. A future ADR may revisit libreda-sta or an in-house walker if an in-process reference is wanted later, but not on this roadmap.
 - **Pillar B Stages 1+2 (per `adr/0007`)**: **landed.** `ClockArrival` IR table + `opensta-to-ir` Tcl emission in commit `c403cc8`; `DFFConstraint.clock_arrival_ps` + skew-aware fold-in in `build_timing_constraint_buffer` in `6767c3e`. Closed Pillar B's main accuracy lever ahead of this roadmap's original Phase 2 schedule.
 - **ADR 0006 amended 2026-05-02**: subprocess invocation of user-installed OpenSTA from the shipped runtime is now permitted (no linking, no bundling). Phase 3 (native Rust SDF→IR) is **no longer release-gating** — see § Phase 3 below. New release-hardening workstream **WS-RH.1** (OpenSTA detection + version check) is required before first release; see § Release hardening.
@@ -50,7 +50,7 @@ Total ~2 weeks.
 ### WS-P1.2 — Phase 0 follow-ups (carryover)
 Tail of Phase 0 work that didn't gate WS3 completion. Listed for completeness.
 
-- WS2.4: multi-corner CLI flag in `opensta-to-ir`.
+- ~~WS2.4: multi-corner CLI flag in `opensta-to-ir`.~~ **Shipped 2026-05-02** (commits `5822343` / `530bb36` / `59fde04`).
 - WS4: corpus + runner + regen helper + CI hookup shipped 2026-05-02 with the seed entry `aigpdk_dff_chain` (covers all four IR record types). One follow-up: add sky130-based corpus entries (`inv_chain_pnr`, mcu_soc subset) once a CI sky130-Liberty install strategy is decided.
 - Peripheral wiring for I²C/SPI when a fuller mcu_soc fixture lands.
 
