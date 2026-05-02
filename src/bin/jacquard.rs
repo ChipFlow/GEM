@@ -554,6 +554,16 @@ fn sim_metal(
 
     let script = &design.script;
 
+    // WS-P1.1.a: symbol map for violation messages.
+    let word_symbol_map = script.build_word_symbol_map(&design.netlistdb);
+    if let Some(ref m) = word_symbol_map {
+        clilog::info!(
+            "Symbolic violation messages enabled: {} DFF sites across {} state words",
+            m.num_sites(),
+            m.num_words()
+        );
+    }
+
     // Initialize Metal
     let mtl_device = MTLDevice::system_default().expect("No Metal device found");
     clilog::info!("Using Metal device: {}", mtl_device.name());
@@ -675,6 +685,11 @@ fn sim_metal(
     let mut final_control = SimControl::Continue;
 
     let timer_sim = clilog::stimer!("simulation");
+
+    // Resolver lives across all cycles; capturing word_symbol_map by ref.
+    let word_resolver = word_symbol_map
+        .as_ref()
+        .map(|m| move |word_id: u32| m.describe_word(word_id, 4));
 
     for cycle_i in 0..num_cycles {
         unsafe {
@@ -826,6 +841,7 @@ fn sim_metal(
                 &*event_buffer_ptr,
                 &assert_config,
                 &mut sim_stats,
+                word_resolver.as_ref().map(|f| f as &dyn Fn(u32) -> String),
                 |msg_id, cycle, _data| {
                     clilog::debug!("[cycle {}] Event processed: message id={}", cycle, msg_id);
                 },

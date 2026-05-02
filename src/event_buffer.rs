@@ -236,7 +236,10 @@ pub struct SimStats {
 /// * `buffer` - The event buffer to process
 /// * `assert_config` - Configuration for assertion handling
 /// * `stats` - Statistics to update
-/// * `message_handler` - Optional callback for $display messages
+/// * `word_resolver` - Optional resolver mapping a state-word index to
+///   a symbolic site descriptor for setup/hold violation messages.
+///   When `None`, violation messages fall back to the raw `word=N` form.
+/// * `message_handler` - Callback for $display messages
 ///
 /// # Returns
 /// The simulation control action to take
@@ -244,11 +247,17 @@ pub fn process_events<F>(
     buffer: &EventBuffer,
     assert_config: &AssertConfig,
     stats: &mut SimStats,
+    word_resolver: Option<&dyn Fn(u32) -> String>,
     mut message_handler: F,
 ) -> SimControl
 where
     F: FnMut(u32, u32, &[u32]),
 {
+    let describe_word = |word_id: u32| -> String {
+        word_resolver
+            .map(|f| f(word_id))
+            .unwrap_or_else(|| format!("word={word_id}"))
+    };
     let mut result = SimControl::Continue;
 
     if buffer.had_overflow() {
@@ -309,10 +318,14 @@ where
                 let slack = event.data[1] as i32;
                 let arrival = event.data[2];
                 let setup = event.data[3];
+                // Bind eagerly: the resolver may have side effects (stats,
+                // future structured report) and `clilog::warn!` skips arg
+                // evaluation when warn-level logging is off.
+                let site = describe_word(word_id);
                 clilog::warn!(
-                    "[cycle {}] SETUP VIOLATION: word {} arrival={}ps setup={}ps slack={}ps",
+                    "[cycle {}] SETUP VIOLATION at {}: arrival={}ps setup={}ps slack={}ps",
                     event.cycle,
-                    word_id,
+                    site,
                     arrival,
                     setup,
                     slack
@@ -326,10 +339,11 @@ where
                 let slack = event.data[1] as i32;
                 let arrival = event.data[2];
                 let hold = event.data[3];
+                let site = describe_word(word_id);
                 clilog::warn!(
-                    "[cycle {}] HOLD VIOLATION: word {} arrival={}ps hold={}ps slack={}ps",
+                    "[cycle {}] HOLD VIOLATION at {}: arrival={}ps hold={}ps slack={}ps",
                     event.cycle,
-                    word_id,
+                    site,
                     arrival,
                     hold,
                     slack
@@ -392,7 +406,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.stop_count, 0);
@@ -407,7 +421,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Pause);
         assert_eq!(stats.stop_count, 1);
@@ -421,7 +435,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Terminate);
     }
@@ -438,7 +452,7 @@ mod tests {
         };
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.assertion_failures, 2);
@@ -455,7 +469,7 @@ mod tests {
         };
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Terminate);
         assert_eq!(stats.assertion_failures, 1);
@@ -474,7 +488,7 @@ mod tests {
         };
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         // Should terminate after 2 failures
         assert_eq!(control, SimControl::Terminate);
@@ -496,7 +510,7 @@ mod tests {
         let mut captured_msg_id = 0u32;
         let mut captured_cycle = 0u32;
 
-        let control = process_events(&buf, &config, &mut stats, |msg_id, cycle, _data| {
+        let control = process_events(&buf, &config, &mut stats, None, |msg_id, cycle, _data| {
             captured_msg_id = msg_id;
             captured_cycle = cycle;
         });
@@ -517,7 +531,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         // Finish should cause immediate termination
         assert_eq!(control, SimControl::Terminate);
@@ -553,7 +567,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         // Timing violations don't stop simulation by default
         assert_eq!(control, SimControl::Continue);
@@ -600,7 +614,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.setup_violations, 1);
@@ -616,7 +630,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.setup_violations, 0);
@@ -634,7 +648,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(
@@ -655,12 +669,40 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
 
         // $stop causes Pause, violations are counted
         assert_eq!(control, SimControl::Pause);
         assert_eq!(stats.setup_violations, 1);
         assert_eq!(stats.hold_violations, 1);
         assert_eq!(stats.stop_count, 1);
+    }
+
+    #[test]
+    fn test_word_resolver_invoked_for_violations() {
+        use std::cell::RefCell;
+        let mut buf = EventBuffer::new();
+        add_full_timing_event(&mut buf, EventType::SetupViolation, 10, 7, -50, 900, 200);
+        add_full_timing_event(&mut buf, EventType::HoldViolation, 11, 9, -20, 30, 50);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+        let seen = RefCell::new(Vec::<u32>::new());
+        let resolver = |word_id: u32| {
+            seen.borrow_mut().push(word_id);
+            format!("dff_for_word_{word_id}")
+        };
+        let control = process_events(
+            &buf,
+            &config,
+            &mut stats,
+            Some(&resolver as &dyn Fn(u32) -> String),
+            |_, _, _| {},
+        );
+
+        assert_eq!(control, SimControl::Continue);
+        assert_eq!(stats.setup_violations, 1);
+        assert_eq!(stats.hold_violations, 1);
+        assert_eq!(seen.into_inner(), vec![7, 9]);
     }
 }

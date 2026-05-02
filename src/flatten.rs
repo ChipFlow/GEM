@@ -122,6 +122,64 @@ impl DFFConstraint {
     }
 }
 
+/// One DFF's identity within a packed state word: hierarchical name
+/// plus the bit offset (0–31) inside the word.
+#[derive(Debug, Clone)]
+pub struct DffSiteName {
+    pub name: String,
+    pub bit: u8,
+}
+
+/// Maps GPU state-word indices to the DFF cells packed into each word.
+/// Built once from `FlattenedScriptV1::dff_constraints` + `NetlistDB`,
+/// consulted at runtime by `process_events` to convert opaque word
+/// indices into symbolic names in violation messages.
+#[derive(Debug, Clone, Default)]
+pub struct WordSymbolMap {
+    word_to_dffs: HashMap<u32, Vec<DffSiteName>>,
+}
+
+impl WordSymbolMap {
+    /// Construct from a pre-built map of word index to DFF sites. The
+    /// caller is responsible for sorting each word's site list by bit
+    /// offset; `build_word_symbol_map` does this, callers building the
+    /// map directly should too.
+    pub fn from_sites(word_to_dffs: HashMap<u32, Vec<DffSiteName>>) -> Self {
+        Self { word_to_dffs }
+    }
+
+    /// Format a violation message's "site" descriptor: a comma-separated
+    /// list of DFF names sharing the word, truncated to `max_names`
+    /// entries with a "+N more" suffix when overlong. Always appends
+    /// "[word=N]" so the raw word index is still grep-able.
+    pub fn describe_word(&self, word_id: u32, max_names: usize) -> String {
+        let Some(dffs) = self.word_to_dffs.get(&word_id) else {
+            return format!("<no DFF in word> [word={word_id}]");
+        };
+        let total = dffs.len();
+        let shown = total.min(max_names.max(1));
+        let mut parts: Vec<String> = dffs
+            .iter()
+            .take(shown)
+            .map(|d| format!("{}[bit {}]", d.name, d.bit))
+            .collect();
+        if total > shown {
+            parts.push(format!("+{} more", total - shown));
+        }
+        format!("{} [word={}]", parts.join(", "), word_id)
+    }
+
+    /// Total number of DFF sites mapped (across all words).
+    pub fn num_sites(&self) -> usize {
+        self.word_to_dffs.values().map(Vec::len).sum()
+    }
+
+    /// Number of distinct state words with at least one DFF site.
+    pub fn num_words(&self) -> usize {
+        self.word_to_dffs.len()
+    }
+}
+
 /// A flattened script, for partition executor version 1.
 /// See [FlattenedScriptV1::blocks_data] for the format details.
 ///
@@ -1747,6 +1805,39 @@ impl FlattenedScriptV1 {
         );
     }
 
+    /// Build a `WordSymbolMap` mapping each state-word index to the
+    /// hierarchical names of the DFFs packed into that word. Used by the
+    /// runtime violation reporter to convert opaque word indices into
+    /// symbolic names. Returns `None` if no DFF constraints are loaded.
+    pub fn build_word_symbol_map(&self, netlistdb: &NetlistDB) -> Option<WordSymbolMap> {
+        use netlistdb::GeneralHierName;
+        if self.dff_constraints.is_empty() {
+            return None;
+        }
+        let mut word_to_dffs: HashMap<u32, Vec<DffSiteName>> = HashMap::new();
+        for c in &self.dff_constraints {
+            if c.data_state_pos == u32::MAX {
+                continue;
+            }
+            let word_id = c.data_state_pos / 32;
+            let bit = (c.data_state_pos % 32) as u8;
+            let cell_idx = c.cell_id as usize;
+            let name = if cell_idx < netlistdb.cellnames.len() {
+                netlistdb.cellnames[cell_idx].dbg_fmt_hier()
+            } else {
+                format!("<cell #{cell_idx} out of range>")
+            };
+            word_to_dffs
+                .entry(word_id)
+                .or_default()
+                .push(DffSiteName { name, bit });
+        }
+        for dffs in word_to_dffs.values_mut() {
+            dffs.sort_by(|a, b| a.bit.cmp(&b.bit));
+        }
+        Some(WordSymbolMap { word_to_dffs })
+    }
+
     /// Build a per-word timing constraint buffer for GPU-side setup/hold checking.
     ///
     /// Returns `(clock_period_ps, constraints)` where `constraints` has one u32 per
@@ -3316,4 +3407,87 @@ mod xprop_tests {
         let mut script = make_xprop_script(42, false);
         script.enable_timing_arrivals(); // Should panic - timing_enabled is false
     }
+}
+
+#[cfg(test)]
+mod word_symbol_map_tests {
+    use super::*;
+
+    fn site(name: &str, bit: u8) -> DffSiteName {
+        DffSiteName {
+            name: name.to_string(),
+            bit,
+        }
+    }
+
+    fn map_with(entries: Vec<(u32, Vec<DffSiteName>)>) -> WordSymbolMap {
+        WordSymbolMap::from_sites(entries.into_iter().collect())
+    }
+
+    #[test]
+    fn describe_word_with_no_dff_in_word() {
+        let m = map_with(vec![]);
+        assert_eq!(m.describe_word(7, 4), "<no DFF in word> [word=7]");
+    }
+
+    #[test]
+    fn describe_word_with_single_dff() {
+        let m = map_with(vec![(3, vec![site("top/cpu/state", 0)])]);
+        assert_eq!(
+            m.describe_word(3, 4),
+            "top/cpu/state[bit 0] [word=3]"
+        );
+    }
+
+    #[test]
+    fn describe_word_with_multiple_dffs_under_limit() {
+        let m = map_with(vec![(
+            5,
+            vec![
+                site("top/regs[0]", 0),
+                site("top/regs[1]", 1),
+                site("top/regs[2]", 2),
+            ],
+        )]);
+        let out = m.describe_word(5, 4);
+        assert_eq!(
+            out,
+            "top/regs[0][bit 0], top/regs[1][bit 1], top/regs[2][bit 2] [word=5]"
+        );
+    }
+
+    #[test]
+    fn describe_word_truncates_with_more_suffix() {
+        let m = map_with(vec![(
+            1,
+            (0..6)
+                .map(|b| site(&format!("top/r{b}"), b as u8))
+                .collect(),
+        )]);
+        let out = m.describe_word(1, 2);
+        assert_eq!(
+            out,
+            "top/r0[bit 0], top/r1[bit 1], +4 more [word=1]"
+        );
+    }
+
+    #[test]
+    fn describe_word_max_names_zero_floor_is_one() {
+        // Defensive floor — no caller passes 0, but if one ever does we
+        // want a name shown rather than a misleading "+N more" tail.
+        let m = map_with(vec![(0, vec![site("a", 0), site("b", 1)])]);
+        let out = m.describe_word(0, 0);
+        assert!(out.starts_with("a[bit 0], +1 more"), "got: {out}");
+    }
+
+    #[test]
+    fn num_sites_and_words() {
+        let m = map_with(vec![
+            (0, vec![site("a", 0), site("b", 1)]),
+            (1, vec![site("c", 0)]),
+        ]);
+        assert_eq!(m.num_words(), 2);
+        assert_eq!(m.num_sites(), 3);
+    }
+
 }
