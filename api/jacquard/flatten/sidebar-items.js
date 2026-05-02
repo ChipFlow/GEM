@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["NUM_THREADS_V1"],"struct":["DFFConstraint","DffSiteName","FlattenedScriptV1","PackedDelay","WordSymbolMap"]};
+window.SIDEBAR_ITEMS = {"constant":["NUM_THREADS_V1"],"fn":["resolve_corner_index"],"struct":["DFFConstraint","DffSiteName","FlattenedScriptV1","PackedDelay","WordSymbolMap"]};
