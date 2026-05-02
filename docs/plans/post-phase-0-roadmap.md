@@ -6,7 +6,7 @@ This document orders the work captured in those two ADRs alongside the in-flight
 
 ## Where things stand (2026-05-01)
 
-- **Phase 0 (`phase-0-ir-and-oracle.md`)**: nearing close. WS1–WS3 landed; WS2.2 (interconnect_delays) landed in commit `67210c0`. Open items: **WS2.4** (multi-corner CLI flag), **WS4 reframing decision**, **WS5 parser-success assertions**, **peripheral wiring** for I²C/SPI when a fuller mcu_soc fixture lands. See `post-cosim-models-handoff.md`.
+- **Phase 0 (`phase-0-ir-and-oracle.md`)**: nearing close. WS1–WS3 + WS2.2 + WS4 + WS5 landed (corpus + runner + regen + CI hookup for WS4 in 2026-05-02 commits `90558bb`/`6997096`/`9e25bc2`). Open items: **WS2.4** (multi-corner CLI flag — see § WS2.4 in the phase-0 plan for scope), **sky130-based corpus entries** (gated on a CI sky130-Liberty install strategy), and **peripheral wiring** for I²C/SPI when a fuller mcu_soc fixture lands.
 - **OpenTimer spike (`spikes/opentimer-sky130.md`)**: **resolved 2026-05-01 — Superseded.** Q1 (Liberty parse) passed cleanly on SKY130; Q2 (arrival computation) failed on the canonical OpenSTA-bundled GCD example after eight input-pipeline workarounds (bus ports, OpenROAD-emitted SPEF, modern TCL, tap cells). Per the spike's decision matrix, ADR 0003 is now Superseded (commit `d002bde`). **OpenSTA out-of-process is committed as Jacquard's sole STA path** — `opensta-to-ir` is the canonical preprocessor; no in-process reference STA is planned. A future ADR may revisit libreda-sta or an in-house walker if an in-process reference is wanted later, but not on this roadmap.
 - **Pillar B Stages 1+2 (per `adr/0007`)**: **landed.** `ClockArrival` IR table + `opensta-to-ir` Tcl emission in commit `c403cc8`; `DFFConstraint.clock_arrival_ps` + skew-aware fold-in in `build_timing_constraint_buffer` in `6767c3e`. Closed Pillar B's main accuracy lever ahead of this roadmap's original Phase 2 schedule.
 - **Phase 3 (`adr/0006-sdf-preprocessing-model.md`)**: native Rust SDF→IR parser. Lands before first release. Independent of the work in this doc.
@@ -138,6 +138,5 @@ Optional optimisation that makes Tier 2 cheap on tile-decomposed designs. Lands 
 - `../why-jacquard.md` — User-facing positioning that this roadmap delivers.
 - `../timing-model-extensions.md` — Technical analysis underlying ADR 0007.
 - `../timing-validation.md` — Validation tolerances each phase updates.
-- `phase-0-ir-and-oracle.md` — Predecessor roadmap.
-- `post-cosim-models-handoff.md` — Current Phase 0 state.
+- `phase-0-ir-and-oracle.md` — Predecessor roadmap (current Phase 0 status lives there per workstream).
 - `../spikes/opentimer-sky130.md` — Spike outcome (Superseded).

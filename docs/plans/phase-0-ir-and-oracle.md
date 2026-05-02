@@ -96,7 +96,7 @@ Deliverables:
 
 ### WS4 — Diff harness and CI integration
 
-> **Reframed 2026-05-02; corpus + runner shipped 2026-05-02.** The original WS4 was framed as "WS2 vs WS3 IR diff" (OpenSTA-derived against Jacquard's hand-rolled SDF parser-derived). WS3 deleted that parser; the diff has only one side now. Three reframings were considered (see `post-cosim-models-handoff.md` § 1) — Option A (golden-IR regression corpus for `opensta-to-ir`) was chosen as the Phase 0 closure; Option B (end-to-end behavioural diff cxxrtl/CVC vs Jacquard cosim event traces) belongs in `timing-validation.md` as a Phase 1+ extension; Option C (cross-tool diff vs a future native Rust SDF→IR parser) is Phase 3 work per ADR 0006.
+> **Reframed 2026-05-02; corpus + runner shipped 2026-05-02.** The original WS4 was framed as "WS2 vs WS3 IR diff" (OpenSTA-derived against Jacquard's hand-rolled SDF parser-derived). WS3 deleted that parser; the diff has only one side now. Three reframings were considered: Option A (golden-IR regression corpus for `opensta-to-ir`) was chosen as the Phase 0 closure; Option B (end-to-end behavioural diff cxxrtl/CVC vs Jacquard cosim event traces) belongs in `timing-validation.md` as a Phase 1+ extension; Option C (cross-tool diff vs a future native Rust SDF→IR parser) is Phase 3 work per ADR 0006.
 
 Deliverables:
 
