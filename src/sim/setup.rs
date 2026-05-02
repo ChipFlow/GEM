@@ -173,11 +173,11 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
             args.sdf_debug,
         );
     } else if let Some(ref sdf_path) = args.sdf {
-        // INTERIM per ADR 0006: --sdf no longer uses the hand-rolled
-        // parser. Subprocess `opensta-to-ir` to convert SDF→IR, then
-        // consume the IR. The hand-rolled `load_sdf` function survives
-        // for callers that haven't yet migrated (cosim_metal.rs); Phase
-        // 3.4 deletes both the function and its only remaining caller.
+        // Per ADR 0006 § Amendment: --sdf is processed by subprocessing
+        // `opensta-to-ir` (and through it OpenSTA). This is the shipping
+        // mechanism, not an interim bridge. The hand-rolled `load_sdf`
+        // path is gone; only `cosim_metal.rs` still ships an unrelated
+        // pre-converted-IR-only path.
         load_sdf_via_opensta_to_ir(
             &mut script,
             &aig,
@@ -225,14 +225,10 @@ pub fn load_design(args: &DesignArgs) -> LoadedDesign {
 /// Convert SDF → IR via `opensta-to-ir` (subprocesses OpenSTA), then
 /// consume the IR through `load_timing_from_ir`.
 ///
-/// INTERIM per ADR 0006: this is the bridge that lets the existing
-/// `--sdf` CLI flag keep working without the hand-rolled SDF parser.
-/// Pre-release only; a native Rust SDF→IR converter replaces this path
-/// before first release.
-///
-/// Requires Liberty + Verilog (OpenSTA links the design from these).
-/// Without Liberty, no fallback exists in this code path — emit a
-/// clear warning and skip the SDF.
+/// Subprocess wrapper per ADR 0006 § Amendment. Requires Liberty +
+/// Verilog (OpenSTA links the design from these). Per WS-RH.1, missing
+/// or out-of-date OpenSTA — and missing Liberty when `--sdf` was
+/// requested — are hard errors, not silent fall-throughs.
 #[allow(clippy::too_many_arguments)]
 pub fn load_sdf_via_opensta_to_ir(
     script: &mut FlattenedScriptV1,
@@ -245,23 +241,27 @@ pub fn load_sdf_via_opensta_to_ir(
     clock_period_ps: Option<u64>,
     debug: bool,
 ) {
-    let Some(liberty_path) = liberty_path else {
-        clilog::warn!(
-            "--sdf without --liberty is not supported during the WS3 interim. \
-             Provide --liberty <PATH> or pre-convert the SDF with `opensta-to-ir` and use --timing-ir."
+    let liberty_path = liberty_path.unwrap_or_else(|| {
+        panic!(
+            "--sdf requires --liberty <PATH>. OpenSTA needs the Liberty library to link the \
+             design. Alternatively, pre-convert the SDF with `opensta-to-ir` and pass the \
+             result via --timing-ir."
         );
-        return;
-    };
+    });
 
     let clock_ps = clock_period_ps.unwrap_or(25000);
 
-    let binary = match opensta_to_ir::opensta::find_opensta(None) {
-        Some(p) => p,
-        None => {
-            clilog::warn!("OpenSTA not built; cannot process --sdf. Run scripts/build-opensta.sh.");
-            return;
-        }
-    };
+    let located = opensta_to_ir::opensta::locate_and_check(None).unwrap_or_else(|e| {
+        panic!("--sdf requires OpenSTA: {e}");
+    });
+    if located.version > opensta_to_ir::opensta::MAX_TESTED_OPENSTA_VERSION {
+        clilog::warn!(
+            "Detected OpenSTA v{}, newer than the latest tested version v{}. \
+             Please report any timing discrepancies.",
+            located.version,
+            opensta_to_ir::opensta::MAX_TESTED_OPENSTA_VERSION
+        );
+    }
 
     let top = top_module.unwrap_or_else(|| {
         verilog_path
@@ -283,27 +283,18 @@ pub fn load_sdf_via_opensta_to_ir(
     };
 
     clilog::info!(
-        "Loading SDF via opensta-to-ir (INTERIM): {:?} (clock_period={}ps)",
+        "Loading SDF via opensta-to-ir (OpenSTA v{}): {:?} (clock_period={}ps)",
+        located.version,
         sdf_path,
         clock_ps
     );
 
-    let doc = match opensta_to_ir::opensta::run(&binary, &invocation, false, false) {
-        Ok(d) => d,
-        Err(e) => {
-            clilog::warn!("opensta-to-ir failed: {}", e);
-            return;
-        }
-    };
+    let doc = opensta_to_ir::opensta::run(&located.binary, &invocation, false, false)
+        .unwrap_or_else(|e| panic!("opensta-to-ir failed processing {sdf_path:?}: {e}"));
 
     let (ir_buf, _stats) = opensta_to_ir::builder::build_ir(&doc, env!("CARGO_PKG_VERSION"));
-    let ir_file = match crate::sim::timing_ir_loader::TimingIrFile::from_bytes(ir_buf) {
-        Ok(f) => f,
-        Err(e) => {
-            clilog::warn!("Built IR is invalid: {}", e);
-            return;
-        }
-    };
+    let ir_file = crate::sim::timing_ir_loader::TimingIrFile::from_bytes(ir_buf)
+        .unwrap_or_else(|e| panic!("opensta-to-ir produced invalid IR: {e}"));
 
     let liberty_fallback = crate::liberty_parser::TimingLibrary::from_file(liberty_path).ok();
 

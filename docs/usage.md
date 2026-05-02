@@ -166,3 +166,40 @@ Use slash separators (`/`) for hierarchical paths, not dots. See [troubleshootin
 The simulated output ports value will be stored in `output.vcd`.
 
 **Caveat**: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing `input.vcd`. You are recommended to develop your own pipeline to feed the input waveform into Jacquard's GPU kernels.
+
+## Timing-Aware Simulation
+
+Jacquard supports two ways to feed timing data into the simulator:
+
+1. **`--timing-ir <path.jtir>`** — pre-converted Jacquard timing IR. This is the canonical path and requires no external tools at run time. Generate the IR ahead of time with the standalone `opensta-to-ir` tool (see `crates/opensta-to-ir/`).
+2. **`--sdf <path.sdf> --liberty <path.lib>`** — raw SDF, converted to IR on the fly. This subprocesses [OpenSTA](https://github.com/parallaxsw/OpenSTA), which must be installed on the user's machine.
+
+### OpenSTA dependency
+
+When using `--sdf`, Jacquard locates OpenSTA in this order:
+
+1. `JACQUARD_OPENSTA_BIN` environment variable.
+2. `<repo-root>/scripts/build-opensta.sh --print-binary` (the canonical install path during development; the script builds the version vendored at `vendor/opensta/`).
+3. `sta` on `PATH`.
+
+Jacquard requires OpenSTA **3.1.0 or newer**, matching the commit pinned at `vendor/opensta/`. The pinned version is the only one with end-to-end test coverage; newer OpenSTA versions are accepted with a warning, older versions are a hard error.
+
+The simplest way to get a known-good OpenSTA is to build the vendored copy from the Jacquard repo:
+
+```sh
+git submodule update --init --recursive
+./scripts/build-opensta.sh
+```
+
+Then either set `JACQUARD_OPENSTA_BIN` to the path printed by `./scripts/build-opensta.sh --print-binary`, or just let Jacquard find it automatically — the build script's output is searched by default.
+
+### Error messages
+
+| Symptom | Meaning | Fix |
+|---|---|---|
+| `--sdf requires OpenSTA: OpenSTA binary not found.` | OpenSTA isn't installed or isn't on PATH. | Run `./scripts/build-opensta.sh`, set `JACQUARD_OPENSTA_BIN`, or install OpenSTA system-wide. |
+| `OpenSTA at <path> is v2.4.0; Jacquard requires v3.1.0 or newer.` | Installed OpenSTA is too old. | Rebuild from `vendor/opensta/` (which is pinned at 3.1.0) or upgrade your system OpenSTA. |
+| `Detected OpenSTA v3.2.0, newer than the latest tested version v3.1.0.` (warning) | OpenSTA version is newer than what Jacquard's test corpus has been validated against. Simulation proceeds. | Report any timing discrepancies as bugs; we'll bump the tested-version range when CI catches up. |
+| `--sdf requires --liberty <PATH>.` | OpenSTA needs the Liberty library to link the design. | Pass `--liberty <PATH>` alongside `--sdf`. |
+
+For licensing context (Jacquard is permissively-licensed, OpenSTA is GPL-3, and Jacquard's runtime subprocess invocation is permitted but bundling is not), see [`adr/0006-sdf-preprocessing-model.md`](adr/0006-sdf-preprocessing-model.md).

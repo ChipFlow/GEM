@@ -154,13 +154,16 @@ fn run_opensta(args: &Args) -> Result<opensta_to_ir::dump::DumpDocument, (u8, St
         .as_deref()
         .ok_or_else(|| (EXIT_ARG_INVALID, "--top <NAME> is required".to_string()))?;
 
-    let binary =
-        opensta_to_ir::opensta::find_opensta(args.opensta_bin.as_deref()).ok_or_else(|| {
-            (
-                EXIT_OPENSTA_FAILED,
-                opensta_to_ir::opensta::InvokeError::BinaryNotFound.to_string(),
-            )
-        })?;
+    let located = opensta_to_ir::opensta::locate_and_check(args.opensta_bin.as_deref())
+        .map_err(|e| (EXIT_OPENSTA_FAILED, e.to_string()))?;
+    if located.version > opensta_to_ir::opensta::MAX_TESTED_OPENSTA_VERSION {
+        eprintln!(
+            "warning: detected OpenSTA v{}, newer than the latest tested version v{}. \
+             Please report any timing discrepancies.",
+            located.version,
+            opensta_to_ir::opensta::MAX_TESTED_OPENSTA_VERSION
+        );
+    }
 
     let invocation = opensta_to_ir::opensta::Invocation {
         liberty: &args.liberty,
@@ -171,6 +174,6 @@ fn run_opensta(args: &Args) -> Result<opensta_to_ir::dump::DumpDocument, (u8, St
         top,
         generator_version: env!("CARGO_PKG_VERSION"),
     };
-    opensta_to_ir::opensta::run(&binary, &invocation, args.keep_tmp, args.verbose)
+    opensta_to_ir::opensta::run(&located.binary, &invocation, args.keep_tmp, args.verbose)
         .map_err(|e| (EXIT_OPENSTA_FAILED, e.to_string()))
 }

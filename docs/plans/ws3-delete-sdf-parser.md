@@ -1,9 +1,10 @@
 # Plan — WS3: delete SDF parser, wire IR consumer + interim runtime hook
 
-**Status:** Design — pending review.
+**Status:** Implemented — kept as historical record. Note: the "interim" / "pre-release-only" framing throughout this document describes the original ADR 0006 model. Per ADR 0006 § Amendment (2026-05-02), the runtime subprocess wrapper is now the shipping mechanism — Phase 3 (native Rust SDF→IR) is no longer release-gating. This document is preserved for the implementation phasing record; for current shipping intent see ADR 0006 § Amendment and `post-phase-0-roadmap.md` § Phase 3.
+
 **Phase:** 0 (executes WS3 from `phase-0-ir-and-oracle.md`).
 **Predecessors:** WS2 phases 2.1 + 2.3-minimum (delay arcs + setup/hold checks landed). Sufficient IR coverage for runtime cutover.
-**ADRs:** 0002 (IR), 0006 (SDF preprocessing model + interim cutover).
+**ADRs:** 0002 (IR), 0006 (SDF preprocessing model + interim cutover; amended 2026-05-02).
 
 ## Goal
 

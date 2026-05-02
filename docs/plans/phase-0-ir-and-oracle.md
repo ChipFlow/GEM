@@ -149,7 +149,7 @@ Phase 0 is complete when **all** of the following hold:
 
 1. `schemas/timing_ir.fbs` is checked in and IR read/write works with a round-trip unit test.
 2. `opensta-to-ir` binary exists, is production-quality (stable CLI, documented exit codes), and produces IR from the primary regression corpus.
-3. `src/sdf_parser.rs` is deleted. All remaining imports are cleaned up. `jacquard sim --timing-ir <path>` is the canonical timing input path; `--timing-sdf` acts as an interim subprocess wrapper over `opensta-to-ir`, tagged for pre-release removal per ADR 0006.
+3. `src/sdf_parser.rs` is deleted. All remaining imports are cleaned up. `jacquard sim --timing-ir <path>` is the canonical timing input path; `--timing-sdf` is a subprocess wrapper over `opensta-to-ir` (per ADR 0006 § Amendment, this wrapper is the shipping mechanism, not a temporary bridge — Phase 3 is no longer release-gating).
 4. OpenSTA is vendored as a git submodule at `vendor/opensta/` (per ADR 0005).
 5. `timing-ir-diff` runs in CI on the primary corpus, passes cleanly, and fails loud on artificial regressions (verified by a mutation test).
 6. Parser-success assertions in place on the Liberty parser and on `opensta-to-ir`. Failure-mode tests demonstrate they fire.
@@ -158,7 +158,7 @@ Phase 0 is complete when **all** of the following hold:
 
 ## Out of scope (deferred to later phases)
 
-- Native Rust SDF→IR converter. The hand-rolled parser is **removed** in Phase 0 WS3 (per ADR 0006); the native Rust replacement is Phase 3 work, landing before first release. Interim SDF input is handled via the `opensta-to-ir` subprocess wrapper.
+- Native Rust SDF→IR converter. The hand-rolled parser is **removed** in Phase 0 WS3 (per ADR 0006); the native Rust replacement is Phase 3 work, **deferred indefinitely** per ADR 0006 § Amendment (no longer release-gating). SDF input ships via the `opensta-to-ir` subprocess wrapper. See `post-phase-0-roadmap.md` § Phase 3 for revival triggers.
 - OpenTimer integration. Depends on the spike; tracked in `../spikes/opentimer-sky130.md` and its resulting phase-1 plan.
 - Private PDK (GF130) test track. Tracked in ADR 0004; plumbing deferred to its own phase.
 - SPEF IR. Separate from timing-annotation IR per ADR 0002.
@@ -169,7 +169,7 @@ Phase 0 is complete when **all** of the following hold:
 - **Licensing verification on vendored OpenSTA corpus.** Per-file check needed before inclusion. May reduce corpus size if restrictive; acceptable.
 - **FlatBuffers build integration friction.** If `build.rs` codegen causes cross-compilation or CI issues, fall back to checked-in generated code with a documented `flatc` version. Pick one approach and stick to it; flip-flopping is worse than either option.
 - **Tolerance tuning.** Initial ±5% may prove too loose (hides bugs) or too tight (false positives from numerical differences). Plan to re-tune after first real-design data arrives.
-- **WS3 cutover risk.** Deleting the hand-rolled SDF parser risks regressing designs that depend on behaviour it currently provides. Exit criterion 7 requires a clean regression run before WS3 is considered complete. If coverage gaps emerge, walk-back options per ADR 0006 apply: add dialect shims to `opensta-to-ir`, or postpone deletion to Phase 3.
+- **WS3 cutover risk.** Deleting the hand-rolled SDF parser risks regressing designs that depend on behaviour it currently provides. Exit criterion 7 requires a clean regression run before WS3 is considered complete. If coverage gaps emerge, walk-back options per ADR 0006 apply: add dialect shims to `opensta-to-ir`, or (now that Phase 3 is deferred) keep the hand-rolled parser available behind a feature flag until dialect parity is reached.
 - **OpenSTA dialect coverage.** OpenSTA may not accept every SDF dialect Jacquard's hand-rolled parser has been patched to handle. Such cases are tracked as either `opensta-to-ir` post-processing fixes or upstream OpenSTA contributions. Under no condition is the fix to reinstate the hand-rolled parser unless walk-back per ADR 0006 is formally triggered.
 
 ## Links

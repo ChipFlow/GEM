@@ -185,8 +185,9 @@ struct CosimArgs {
     /// `opensta-to-ir` preprocessing tool.
     ///
     /// Cosim does not currently accept raw SDF — pre-convert with
-    /// `opensta-to-ir` and pass the IR. (See WS3 phase 3.4 followup
-    /// for the planned interim wrapper.)
+    /// `opensta-to-ir` and pass the IR. Adding a subprocess wrapper to
+    /// cosim (matching `jacquard sim --sdf`) is tracked as a follow-up
+    /// in `docs/plans/post-phase-0-roadmap.md`; not release-gating.
     #[clap(long)]
     timing_ir: Option<PathBuf>,
 
