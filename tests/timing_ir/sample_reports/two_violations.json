@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "design": "tiny_cpu.gv",
+    "vector_source": "boot.vcd",
+    "timing_source": "tiny_cpu.jtir",
+    "clock_period_ps": 1000,
+    "cycles_run": 1000,
+    "jacquard_version": "0.1.0"
+  },
+  "stats": {
+    "setup_violations": 2,
+    "hold_violations": 1,
+    "events_dropped": 0
+  },
+  "violations": [
+    {
+      "cycle": 42,
+      "kind": "setup",
+      "word_id": 5,
+      "site": "top/cpu/regs[7][bit 22] [word=5]",
+      "arrival_ps": 900,
+      "constraint_ps": 200,
+      "slack_ps": -100
+    },
+    {
+      "cycle": 87,
+      "kind": "setup",
+      "word_id": 5,
+      "site": "top/cpu/regs[7][bit 22] [word=5]",
+      "arrival_ps": 950,
+      "constraint_ps": 200,
+      "slack_ps": -150
+    },
+    {
+      "cycle": 91,
+      "kind": "hold",
+      "word_id": 12,
+      "site": "top/cpu/state[bit 3] [word=12]",
+      "arrival_ps": 10,
+      "constraint_ps": 50,
+      "slack_ps": -40
+    }
+  ],
+  "per_word": [
+    {
+      "word_id": 5,
+      "site": "top/cpu/regs[7][bit 22] [word=5]",
+      "setup_violations": 2,
+      "hold_violations": 0,
+      "worst_setup_slack_ps": -150,
+      "worst_hold_slack_ps": null,
+      "worst_arrival_ps": 950
+    },
+    {
+      "word_id": 12,
+      "site": "top/cpu/state[bit 3] [word=12]",
+      "setup_violations": 0,
+      "hold_violations": 1,
+      "worst_setup_slack_ps": null,
+      "worst_hold_slack_ps": -40,
+      "worst_arrival_ps": 10
+    }
+  ],
+  "worst_slack": {
+    "setup": [
+      {
+        "cycle": 87,
+        "kind": "setup",
+        "word_id": 5,
+        "site": "top/cpu/regs[7][bit 22] [word=5]",
+        "arrival_ps": 950,
+        "constraint_ps": 200,
+        "slack_ps": -150
+      },
+      {
+        "cycle": 42,
+        "kind": "setup",
+        "word_id": 5,
+        "site": "top/cpu/regs[7][bit 22] [word=5]",
+        "arrival_ps": 900,
+        "constraint_ps": 200,
+        "slack_ps": -100
+      }
+    ],
+    "hold": [
+      {
+        "cycle": 91,
+        "kind": "hold",
+        "word_id": 12,
+        "site": "top/cpu/state[bit 3] [word=12]",
+        "arrival_ps": 10,
+        "constraint_ps": 50,
+        "slack_ps": -40
+      }
+    ]
+  }
+}

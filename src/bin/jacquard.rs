@@ -7,6 +7,13 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use jacquard::sim::setup::DesignArgs;
 
+/// Bundle of `--timing-report` plumbing for the GPU sim entry points.
+#[cfg(feature = "metal")]
+struct TimingReportConfig<'a> {
+    path: &'a std::path::Path,
+    metadata: jacquard::timing_report::RunMetadata,
+}
+
 #[derive(Parser)]
 #[command(
     name = "jacquard",
@@ -136,6 +143,11 @@ struct SimArgs {
     /// clock edge.
     #[clap(long)]
     timing_vcd: bool,
+
+    /// Write a structured JSON timing report to <PATH> at end of run.
+    /// Schema documented in `src/timing_report.rs` and ADR 0008.
+    #[clap(long)]
+    timing_report: Option<PathBuf>,
 }
 
 #[derive(Parser)]
@@ -350,12 +362,39 @@ fn cmd_sim(args: SimArgs) {
     }
 
     #[cfg(feature = "metal")]
+    let report_cfg = args.timing_report.as_deref().map(|path| TimingReportConfig {
+        path,
+        metadata: jacquard::timing_report::RunMetadata {
+            design: args
+                .netlist_verilog
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(String::from),
+            vector_source: std::path::Path::new(&args.input_vcd)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(String::from),
+            timing_source: args
+                .timing_ir
+                .as_deref()
+                .or(args.sdf.as_deref())
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str())
+                .map(String::from),
+            clock_period_ps: design.script.clock_period_ps,
+            cycles_run: 0,
+            jacquard_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+    });
+
+    #[cfg(feature = "metal")]
     let gpu_states = {
         sim_metal(
             &design,
             &input_states,
             &offsets_timestamps,
             &timing_constraints,
+            report_cfg.as_ref(),
         )
     };
 
@@ -543,12 +582,15 @@ fn sim_metal(
     input_states: &[u32],
     offsets_timestamps: &[(usize, u64)],
     timing_constraints: &Option<Vec<u32>>,
+    report_cfg: Option<&TimingReportConfig<'_>>,
 ) -> Vec<u32> {
     use jacquard::aig::SimControlType;
     use jacquard::display::format_display_message;
     use jacquard::event_buffer::{
-        process_events, AssertConfig, EventBuffer, EventType, SimControl, SimStats, MAX_EVENTS,
+        process_events, AssertConfig, EventBuffer, EventType, ReportingCtx, SimControl, SimStats,
+        MAX_EVENTS,
     };
+    use jacquard::timing_report::{ReportBuilder, ReportStats};
     use metal::{Device as MTLDevice, MTLResourceOptions, MTLSize};
     use ulib::{AsUPtr, AsUPtrMut, Device, UVec};
 
@@ -563,6 +605,11 @@ fn sim_metal(
             m.num_words()
         );
     }
+
+    // Top-N for worst-slack ranking; small constant per ADR 0008 § 4.
+    const WORST_SLACK_TOP_N: usize = 10;
+    let mut report_builder = report_cfg
+        .map(|cfg| ReportBuilder::new(cfg.metadata.clone(), WORST_SLACK_TOP_N));
 
     // Initialize Metal
     let mtl_device = MTLDevice::system_default().expect("No Metal device found");
@@ -836,12 +883,21 @@ fn sim_metal(
         }
 
         // Process events
+        let mut violation_observer_closure = report_builder
+            .as_mut()
+            .map(|b| move |v: jacquard::timing_report::ViolationRecord| b.observe(v));
+        let reporting = ReportingCtx {
+            word_resolver: word_resolver.as_ref().map(|f| f as &dyn Fn(u32) -> String),
+            violation_observer: violation_observer_closure
+                .as_mut()
+                .map(|f| f as &mut dyn FnMut(jacquard::timing_report::ViolationRecord)),
+        };
         let control = unsafe {
             process_events(
                 &*event_buffer_ptr,
                 &assert_config,
                 &mut sim_stats,
-                word_resolver.as_ref().map(|f| f as &dyn Fn(u32) -> String),
+                reporting,
                 |msg_id, cycle, _data| {
                     clilog::debug!("[cycle {}] Event processed: message id={}", cycle, msg_id);
                 },
@@ -885,6 +941,28 @@ fn sim_metal(
 
     if sim_stats.assertion_failures > 0 {
         clilog::warn!("Total assertion failures: {}", sim_stats.assertion_failures);
+    }
+
+    if let (Some(builder), Some(cfg)) = (report_builder, report_cfg) {
+        let stats = ReportStats {
+            setup_violations: sim_stats.setup_violations,
+            hold_violations: sim_stats.hold_violations,
+            events_dropped: sim_stats.events_dropped,
+        };
+        let report = builder.finalize(cycles_completed as u32, stats);
+        if let Err(e) = report.write_to_path(cfg.path) {
+            clilog::error!(
+                "Failed to write timing report to {}: {}",
+                cfg.path.display(),
+                e
+            );
+        } else {
+            clilog::info!(
+                "Timing report ({} violations) written to {}",
+                report.violations.len(),
+                cfg.path.display()
+            );
+        }
     }
 
     // Clean up event buffer

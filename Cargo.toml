@@ -54,6 +54,7 @@ name = "jacquard"
 [dev-dependencies]
 criterion = "0.5"
 flatbuffers = "25"
+tempfile = "3"
 
 [[bench]]
 name = "event_buffer"

@@ -4,7 +4,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use jacquard::event_buffer::{
-    process_events, AssertAction, AssertConfig, Event, EventBuffer, EventType, SimStats,
+    process_events, AssertAction, AssertConfig, Event, EventBuffer, EventType, ReportingCtx,
+    SimStats,
 };
 use std::sync::atomic::Ordering;
 
@@ -41,6 +42,7 @@ fn bench_process_events(c: &mut Criterion) {
                         black_box(&buf),
                         &config,
                         &mut stats,
+                        ReportingCtx::default(),
                         |_msg_id, _cycle, _data| {
                             msg_count += 1;
                         },
@@ -62,7 +64,7 @@ fn bench_process_events(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut stats = SimStats::default();
-                    let result = process_events(black_box(&buf), &config, &mut stats, |_, _, _| {});
+                    let result = process_events(black_box(&buf), &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
                     black_box((result, stats.assertion_failures))
                 });
             },

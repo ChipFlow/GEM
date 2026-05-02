@@ -57,6 +57,8 @@ pub mod flatten;
 
 pub mod event_buffer;
 
+pub mod timing_report;
+
 pub mod display;
 
 pub mod testbench;

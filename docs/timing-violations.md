@@ -65,6 +65,7 @@ Setup and hold violations occur when data arrives too late (setup) or too early 
 | `--enable-timing` | `jacquard sim` | Enable timing analysis (arrival + violation checks) |
 | `--timing-clock-period <ps>` | `jacquard sim` | Clock period in picoseconds (default: 1000) |
 | `--timing-report-violations` | `jacquard sim` | Report all violations, not just summary |
+| `--timing-report <path.json>` | `jacquard sim` | Write a structured end-of-run JSON report (schema in `src/timing_report.rs`, ADR 0008). |
 | `--liberty <path>` | `jacquard sim` | Liberty library for timing data (optional, falls back to AIGPDK defaults) |
 
 ### Example: inv_chain_pnr Test Case
@@ -83,8 +84,13 @@ cargo run -r --features metal --bin jacquard -- sim \
 ### Setup Violation Format
 
 ```
-[cycle 42] SETUP VIOLATION: word 5 arrival=900ps setup=200ps slack=-100ps
+[cycle 42] SETUP VIOLATION at top/cpu/regs[7][bit 22] [word=5]: arrival=900ps setup=200ps slack=-100ps
 ```
+
+(WS-P1.1.a, 2026-05-02: state-word indices are now resolved to symbolic
+hierarchical signal names. The bare `[word=N]` suffix is preserved for
+grep compatibility. Words packing more than 4 DFFs truncate with a
+`+N more` suffix.)
 
 | Field | Meaning |
 |-------|---------|
@@ -97,7 +103,7 @@ cargo run -r --features metal --bin jacquard -- sim \
 ### Hold Violation Format
 
 ```
-[cycle 11] HOLD VIOLATION: word 3 arrival=10ps hold=50ps slack=-40ps
+[cycle 11] HOLD VIOLATION at top/cpu/state[bit 3] [word=3]: arrival=10ps hold=50ps slack=-40ps
 ```
 
 | Field | Meaning |
@@ -115,6 +121,54 @@ At the end of simulation, GEM prints totals:
 ```
 Simulation complete: 1000 cycles, 5 setup violations, 0 hold violations
 ```
+
+### Structured JSON Report (`--timing-report <path.json>`)
+
+For CI integration and downstream tooling, pass `--timing-report <path>`
+to get an end-of-run JSON document. The schema is versioned (ADR 0008's
+stability contract: additive-only extensions, breaking changes bump
+the major). Sample at `tests/timing_ir/sample_reports/two_violations.json`;
+authoritative type definitions in `src/timing_report.rs`.
+
+Top-level shape:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "metadata": { "design": "...", "cycles_run": 1000, "clock_period_ps": 1000, "...": "..." },
+  "stats": { "setup_violations": 5, "hold_violations": 0, "events_dropped": 0 },
+  "violations": [
+    { "cycle": 42, "kind": "setup", "word_id": 5, "site": "top/cpu/regs[7][bit 22] [word=5]",
+      "arrival_ps": 900, "constraint_ps": 200, "slack_ps": -100 }
+  ],
+  "per_word": [
+    { "word_id": 5, "site": "...", "setup_violations": 5, "hold_violations": 0,
+      "worst_setup_slack_ps": -100, "worst_hold_slack_ps": null, "worst_arrival_ps": 900 }
+  ],
+  "worst_slack": {
+    "setup": [ /* top-N most-negative slacks across the run */ ],
+    "hold":  [ /* same shape */ ]
+  }
+}
+```
+
+`per_word` is sorted by total violation count desc, then by word_id.
+`worst_slack.setup` / `.hold` are top-10 by closest-to-violation slack
+(most negative first). Caveats:
+
+- The "even when no violation occurred" half of WS-P1.1.d (per-DFF
+  closest-to-violation tracking when the design never tripped a
+  violation) needs GPU-side near-miss instrumentation and is not in
+  v1.0.0; for now, `worst_slack` is populated only from actual violation
+  events.
+- `--timing-report` only produces output today on the Metal sim path.
+  The CUDA / HIP / cosim paths do not currently route runtime violations
+  through `process_events` — bringing them in is independent plumbing.
+- The `violations` array is unbounded: every violation event becomes a
+  ~80-byte record. A violation-storm run (millions of events) produces
+  a correspondingly large JSON file. If this becomes an issue in
+  practice, an opt-in cap is the next step; for v1.0.0 the per-cycle
+  list is recorded in full.
 
 ## Tracing Violations to Source Signals
 

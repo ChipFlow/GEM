@@ -230,15 +230,23 @@ pub struct SimStats {
     pub hold_violations: u32,
 }
 
+/// Optional reporting context for `process_events`. Bundles the
+/// caller-supplied callbacks that opt the run into structured output:
+/// symbolic violation messages and the `--timing-report` JSON writer.
+/// Both fields are `None` when no structured reporting is requested.
+#[derive(Default)]
+pub struct ReportingCtx<'a> {
+    pub word_resolver: Option<&'a dyn Fn(u32) -> String>,
+    pub violation_observer: Option<&'a mut dyn FnMut(crate::timing_report::ViolationRecord)>,
+}
+
 /// Process events from the buffer and determine simulation control.
 ///
 /// # Arguments
 /// * `buffer` - The event buffer to process
 /// * `assert_config` - Configuration for assertion handling
 /// * `stats` - Statistics to update
-/// * `word_resolver` - Optional resolver mapping a state-word index to
-///   a symbolic site descriptor for setup/hold violation messages.
-///   When `None`, violation messages fall back to the raw `word=N` form.
+/// * `reporting` - Optional resolver + observer for structured output
 /// * `message_handler` - Callback for $display messages
 ///
 /// # Returns
@@ -247,14 +255,15 @@ pub fn process_events<F>(
     buffer: &EventBuffer,
     assert_config: &AssertConfig,
     stats: &mut SimStats,
-    word_resolver: Option<&dyn Fn(u32) -> String>,
+    mut reporting: ReportingCtx<'_>,
     mut message_handler: F,
 ) -> SimControl
 where
     F: FnMut(u32, u32, &[u32]),
 {
     let describe_word = |word_id: u32| -> String {
-        word_resolver
+        reporting
+            .word_resolver
             .map(|f| f(word_id))
             .unwrap_or_else(|| format!("word={word_id}"))
     };
@@ -319,7 +328,7 @@ where
                 let arrival = event.data[2];
                 let setup = event.data[3];
                 // Bind eagerly: the resolver may have side effects (stats,
-                // future structured report) and `clilog::warn!` skips arg
+                // structured report) and `clilog::warn!` skips arg
                 // evaluation when warn-level logging is off.
                 let site = describe_word(word_id);
                 clilog::warn!(
@@ -330,6 +339,17 @@ where
                     setup,
                     slack
                 );
+                if let Some(ref mut obs) = reporting.violation_observer {
+                    obs(crate::timing_report::ViolationRecord {
+                        cycle: event.cycle,
+                        kind: crate::timing_report::ViolationKind::Setup,
+                        word_id,
+                        site,
+                        arrival_ps: arrival,
+                        constraint_ps: setup,
+                        slack_ps: slack,
+                    });
+                }
                 stats.setup_violations += 1;
             }
             EventType::HoldViolation => {
@@ -348,6 +368,17 @@ where
                     hold,
                     slack
                 );
+                if let Some(ref mut obs) = reporting.violation_observer {
+                    obs(crate::timing_report::ViolationRecord {
+                        cycle: event.cycle,
+                        kind: crate::timing_report::ViolationKind::Hold,
+                        word_id,
+                        site,
+                        arrival_ps: arrival,
+                        constraint_ps: hold,
+                        slack_ps: slack,
+                    });
+                }
                 stats.hold_violations += 1;
             }
         }
@@ -406,7 +437,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.stop_count, 0);
@@ -421,7 +452,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Pause);
         assert_eq!(stats.stop_count, 1);
@@ -435,7 +466,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Terminate);
     }
@@ -452,7 +483,7 @@ mod tests {
         };
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.assertion_failures, 2);
@@ -469,7 +500,7 @@ mod tests {
         };
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Terminate);
         assert_eq!(stats.assertion_failures, 1);
@@ -488,7 +519,7 @@ mod tests {
         };
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         // Should terminate after 2 failures
         assert_eq!(control, SimControl::Terminate);
@@ -510,7 +541,7 @@ mod tests {
         let mut captured_msg_id = 0u32;
         let mut captured_cycle = 0u32;
 
-        let control = process_events(&buf, &config, &mut stats, None, |msg_id, cycle, _data| {
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |msg_id, cycle, _data| {
             captured_msg_id = msg_id;
             captured_cycle = cycle;
         });
@@ -531,7 +562,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         // Finish should cause immediate termination
         assert_eq!(control, SimControl::Terminate);
@@ -567,7 +598,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         // Timing violations don't stop simulation by default
         assert_eq!(control, SimControl::Continue);
@@ -614,7 +645,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.setup_violations, 1);
@@ -630,7 +661,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(stats.setup_violations, 0);
@@ -648,7 +679,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         assert_eq!(control, SimControl::Continue);
         assert_eq!(
@@ -669,7 +700,7 @@ mod tests {
         let config = AssertConfig::default();
         let mut stats = SimStats::default();
 
-        let control = process_events(&buf, &config, &mut stats, None, |_, _, _| {});
+        let control = process_events(&buf, &config, &mut stats, ReportingCtx::default(), |_, _, _| {});
 
         // $stop causes Pause, violations are counted
         assert_eq!(control, SimControl::Pause);
@@ -696,7 +727,10 @@ mod tests {
             &buf,
             &config,
             &mut stats,
-            Some(&resolver as &dyn Fn(u32) -> String),
+            ReportingCtx {
+                word_resolver: Some(&resolver),
+                violation_observer: None,
+            },
             |_, _, _| {},
         );
 
@@ -704,5 +738,42 @@ mod tests {
         assert_eq!(stats.setup_violations, 1);
         assert_eq!(stats.hold_violations, 1);
         assert_eq!(seen.into_inner(), vec![7, 9]);
+    }
+
+    #[test]
+    fn test_violation_observer_receives_structured_records() {
+        use crate::timing_report::{ViolationKind, ViolationRecord};
+        let mut buf = EventBuffer::new();
+        add_full_timing_event(&mut buf, EventType::SetupViolation, 10, 7, -50, 900, 200);
+        add_full_timing_event(&mut buf, EventType::HoldViolation, 11, 9, -20, 30, 50);
+
+        let config = AssertConfig::default();
+        let mut stats = SimStats::default();
+        let mut records: Vec<ViolationRecord> = Vec::new();
+        {
+            let mut obs = |v: ViolationRecord| records.push(v);
+            process_events(
+                &buf,
+                &config,
+                &mut stats,
+                ReportingCtx {
+                    word_resolver: None,
+                    violation_observer: Some(&mut obs),
+                },
+                |_, _, _| {},
+            );
+        }
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].kind, ViolationKind::Setup);
+        assert_eq!(records[0].cycle, 10);
+        assert_eq!(records[0].word_id, 7);
+        assert_eq!(records[0].slack_ps, -50);
+        assert_eq!(records[0].arrival_ps, 900);
+        assert_eq!(records[0].constraint_ps, 200);
+        assert_eq!(records[0].site, "word=7"); // resolver was None → fallback format
+        assert_eq!(records[1].kind, ViolationKind::Hold);
+        assert_eq!(records[1].cycle, 11);
+        assert_eq!(records[1].word_id, 9);
     }
 }
