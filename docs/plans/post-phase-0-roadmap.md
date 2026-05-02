@@ -50,7 +50,7 @@ Total ~2 weeks.
 Tail of Phase 0 work that didn't gate WS3 completion. Listed for completeness.
 
 - WS2.4: multi-corner CLI flag in `opensta-to-ir`.
-- WS4: corpus population + CI runner. Reframing decision was made 2026-05-02 (golden-IR regression corpus per `phase-0-ir-and-oracle.md` § WS4); what remains is populating `tests/timing_ir/corpus/` with `inv_chain_pnr` and an mcu_soc subset, plus a CI job that runs `opensta-to-ir` + `timing-ir-diff` per entry.
+- WS4: corpus + runner + regen helper shipped 2026-05-02 with the seed entry `aigpdk_dff_chain` (covers all four IR record types). Two follow-ups: (a) wire `crates/opensta-to-ir`'s test invocation into CI (currently only runs locally), (b) add sky130-based corpus entries (`inv_chain_pnr`, mcu_soc subset) once a CI sky130-Liberty install strategy is decided.
 - Peripheral wiring for I²C/SPI when a fuller mcu_soc fixture lands.
 
 (WS5 — parser-success assertions on the Liberty parser path and on `opensta-to-ir` — was already shipped; see `phase-0-ir-and-oracle.md` § WS5.)

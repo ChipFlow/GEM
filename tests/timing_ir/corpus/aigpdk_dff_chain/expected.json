@@ -1,0 +1,224 @@
+{
+  "schema_version": {
+    "major": 0,
+    "minor": 2,
+    "patch": 0
+  },
+  "corners": [
+    {
+      "name": "default",
+      "process": "tt",
+      "voltage": 1.0,
+      "temperature": 25.0
+    }
+  ],
+  "timing_arcs": [
+    {
+      "cell_instance": "a1",
+      "driver_pin": "B",
+      "load_pin": "Y",
+      "rise_delay": [
+        {
+          "corner_index": 0,
+          "min": 1.0,
+          "typ": 1.0,
+          "max": 1.0
+        }
+      ],
+      "fall_delay": [
+        {
+          "corner_index": 0,
+          "min": 1.0,
+          "typ": 1.0,
+          "max": 1.0
+        }
+      ],
+      "condition": "",
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    },
+    {
+      "cell_instance": "a1",
+      "driver_pin": "A",
+      "load_pin": "Y",
+      "rise_delay": [
+        {
+          "corner_index": 0,
+          "min": 1.0,
+          "typ": 1.0,
+          "max": 1.0
+        }
+      ],
+      "fall_delay": [
+        {
+          "corner_index": 0,
+          "min": 1.0,
+          "typ": 1.0,
+          "max": 1.0
+        }
+      ],
+      "condition": "",
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    },
+    {
+      "cell_instance": "d1",
+      "driver_pin": "CLK",
+      "load_pin": "Q",
+      "rise_delay": [
+        {
+          "corner_index": 0,
+          "min": 0.0001,
+          "typ": 0.0001,
+          "max": 0.0001
+        }
+      ],
+      "fall_delay": [
+        {
+          "corner_index": 0,
+          "min": 0.0001,
+          "typ": 0.0001,
+          "max": 0.0001
+        }
+      ],
+      "condition": "",
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    }
+  ],
+  "interconnect_delays": [
+    {
+      "net": "mid",
+      "from_pin": "d1/Q",
+      "to_pin": "a1/A",
+      "delay": [
+        {
+          "corner_index": 0,
+          "min": 45.0,
+          "typ": 55.0,
+          "max": 65.0
+        }
+      ],
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    },
+    {
+      "net": "Q",
+      "from_pin": "a1/Y",
+      "to_pin": "Q",
+      "delay": [
+        {
+          "corner_index": 0,
+          "min": 0.0,
+          "typ": 0.0,
+          "max": 0.0
+        }
+      ],
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    }
+  ],
+  "setup_hold_checks": [
+    {
+      "cell_instance": "d1",
+      "d_pin": "D",
+      "clk_pin": "CLK",
+      "edge": "Posedge",
+      "setup": [
+        {
+          "corner_index": 0,
+          "min": 0.0001,
+          "typ": 0.0001,
+          "max": 0.0001
+        }
+      ],
+      "hold": [
+        {
+          "corner_index": 0,
+          "min": 0.0001,
+          "typ": 0.0001,
+          "max": 0.0001
+        }
+      ],
+      "condition": "",
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    },
+    {
+      "cell_instance": "d1",
+      "d_pin": "D",
+      "clk_pin": "CLK",
+      "edge": "Negedge",
+      "setup": [
+        {
+          "corner_index": 0,
+          "min": 0.0001,
+          "typ": 0.0001,
+          "max": 0.0001
+        }
+      ],
+      "hold": [
+        {
+          "corner_index": 0,
+          "min": 0.0001,
+          "typ": 0.0001,
+          "max": 0.0001
+        }
+      ],
+      "condition": "",
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Asserted"
+      }
+    }
+  ],
+  "clock_arrivals": [
+    {
+      "cell_instance": "d1",
+      "clk_pin": "CLK",
+      "arrival": [
+        {
+          "corner_index": 0,
+          "min": 0.0,
+          "typ": 2.5,
+          "max": 5.0
+        }
+      ],
+      "provenance": {
+        "source_tool": "opensta-to-ir",
+        "source_file": "",
+        "origin": "Computed"
+      }
+    }
+  ],
+  "vendor_extensions": [
+
+  ],
+  "generator_tool": "opensta-to-ir 0.1.0",
+  "generator_version": "0.1.0",
+  "input_files": [
+    "/Users/roberttaylor/Code/Jacquard/tests/timing_ir/corpus/aigpdk_dff_chain/../../../../aigpdk/aigpdk_nomem.lib",
+    "/Users/roberttaylor/Code/Jacquard/tests/timing_ir/corpus/aigpdk_dff_chain/inputs/dff_chain.v",
+    "/Users/roberttaylor/Code/Jacquard/tests/timing_ir/corpus/aigpdk_dff_chain/inputs/dff_chain.sdf",
+    "/Users/roberttaylor/Code/Jacquard/tests/timing_ir/corpus/aigpdk_dff_chain/inputs/dff_chain.sdc"
+  ]
+}

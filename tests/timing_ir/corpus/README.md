@@ -42,16 +42,18 @@ primary = "@chipflow/timing"
 ## Adding a new entry
 
 1. Create `tests/timing_ir/corpus/<name>/inputs/` and copy the design files.
-2. Run `opensta-to-ir` (WS2) to produce `expected.jtir` and `expected.json`.
-3. Write `manifest.toml`. Keep tolerances tight; bump only with justification.
-4. Verify locally with `cargo test -p timing-ir` (once WS4 CI test is wired up).
-5. Commit all files together — design + expected IR + manifest — as one PR.
+2. Write `manifest.toml`. Required keys: `description`, `[opensta_to_ir]` (with `liberty`, `verilog`, `top`; optional `sdf`, `sdc`, `spef`), `[tolerance]` (`absolute_ps`, `relative`), `[ownership]` (`primary`). Paths under `[opensta_to_ir]` are resolved relative to the manifest file. Keep tolerances tight; bump only with justification.
+3. Generate the golden via `scripts/regenerate-corpus-goldens.sh <name>`. Review the produced `expected.jtir` (binary) and `expected.json` (flatc sidecar) before committing.
+4. Verify locally: `cd crates/opensta-to-ir && cargo test --test corpus`.
+5. Commit all files together — design + expected IR + JSON sidecar + manifest — as one PR.
 
 ## Entries
 
-Populated during Phase 0 once `opensta-to-ir` (WS2) can generate golden IR:
+- `aigpdk_dff_chain` — minimal aigpdk DFF + AND with back-annotated wire delay; covers ARC + SETUP_HOLD + CLOCK_ARRIVAL + INTERCONNECT in a self-contained fixture (no external PDK install needed).
 
-- `inv_chain_pnr` — simple inverter chain, post-P&R.  (pending WS2)
-- `mcu_soc` subset — representative MCU SoC blocks.   (pending WS2)
+Pending:
+
+- `inv_chain_pnr` — sky130 post-P&R inverter chain, sourced from `tests/timing_test/inv_chain_pnr/`. Lands once a CI strategy for installing sky130 Liberty (likely volare) is decided.
+- `mcu_soc` subset — representative MCU SoC blocks. Same blocker as `inv_chain_pnr`.
 
 Do not add entries without golden IR — half-populated entries hide CI regressions.

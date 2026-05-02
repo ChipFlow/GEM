@@ -1,0 +1,22 @@
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (DESIGN "dff_chain")
+  (DATE "Mon Jan 01 00:00:00 2026")
+  (VENDOR "test")
+  (PROGRAM "test")
+  (VERSION "0.0.0")
+  (DIVIDER /)
+  (VOLTAGE 1.800::1.800)
+  (PROCESS "typical")
+  (TEMPERATURE 25.000::25.000)
+  (TIMESCALE 1ns)
+  (CELL
+    (CELLTYPE "dff_chain")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (INTERCONNECT d1/Q a1/A (0.040:0.050:0.060) (0.045:0.055:0.065))
+      )
+    )
+  )
+)

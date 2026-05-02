@@ -32,6 +32,10 @@ tb_verify_sim
 # pretty-printed output) instead — *.jtir.json is intentionally not
 # ignored so those can be checked in.
 *.jtir
+# WS4 corpus goldens are the deliberate exception — the .jtir is the
+# canonical binary the regression test diffs against; the .json sidecar
+# is for PR-time review. Both ship.
+!tests/timing_ir/corpus/**/*.jtir
 
 # Build output directories
 **/build/results/

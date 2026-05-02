@@ -1,0 +1,30 @@
+# Corpus entry: aigpdk_dff_chain.
+#
+# Minimal AIGPDK design exercising all four timing-IR record types
+# (ARC + SETUP_HOLD + CLOCK_ARRIVAL + INTERCONNECT). Self-contained —
+# the only external dependency is the in-repo aigpdk Liberty.
+#
+# See ../README.md for the full schema.
+
+description = "Minimal aigpdk DFF + AND with back-annotated wire delay; covers all four IR record types."
+source = "synthetic — derived from CHAIN_VERILOG / DFF_VERILOG fixtures in crates/opensta-to-ir/tests/opensta_integration.rs"
+
+# opensta-to-ir invocation. Paths are relative to this manifest file.
+# `liberty` and `verilog` are list-valued; `sdf`, `sdc`, `spef` are
+# optional single paths.
+[opensta_to_ir]
+liberty = ["../../../../aigpdk/aigpdk_nomem.lib"]
+verilog = ["inputs/dff_chain.v"]
+sdf = "inputs/dff_chain.sdf"
+sdc = "inputs/dff_chain.sdc"
+top = "dff_chain"
+
+# Per-design timing-ir-diff tolerance. The defaults match
+# timing-validation.md's ±5% / ±5 ps floor convention; bump only with
+# justification.
+[tolerance]
+absolute_ps = 5
+relative = 0.02
+
+[ownership]
+primary = "@chipflow/timing"

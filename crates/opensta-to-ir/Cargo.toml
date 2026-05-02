@@ -21,4 +21,6 @@ tempfile = "3"
 timing-ir = { path = "../timing-ir" }
 
 [dev-dependencies]
+serde = { version = "1.0", features = ["derive"] }
 tempfile = "3"
+toml = "0.8"
