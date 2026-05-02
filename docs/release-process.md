@@ -84,11 +84,15 @@ These items are tracked in [`docs/plans/post-phase-0-roadmap.md`](plans/post-pha
 - [x] WS-RH.1 (OpenSTA detection + version check) shipped.
 - [ ] All three GPU CI jobs green on main (currently disabled awaiting
       runner restoration; see `.github/workflows/ci.yml`).
-- [ ] Vendored-dep license posture confirmed (currently pending
-      [gzz2000/eda-infra-rs#2](https://github.com/gzz2000/eda-infra-rs/issues/2)
-      resolution; see "License posture" below).
-- [ ] `Cargo.toml::license` field populated.
-- [ ] `NOTICE` file enumerating vendored deps + their licenses.
+- [x] Vendored-dep license posture confirmed
+      ([gzz2000/eda-infra-rs#2](https://github.com/gzz2000/eda-infra-rs/issues/2#issuecomment-4363789319)
+      — sverilogparse AGPL declaration acknowledged as a typo; workspace
+      Apache-2.0 governs).
+- [x] `Cargo.toml::license = "Apache-2.0"` set.
+- [x] `NOTICE` file enumerating vendored deps + their licenses.
+- [ ] Bump `vendor/eda-infra-rs` submodule once upstream pushes the
+      sverilogparse `Cargo.toml` correction; remove the corresponding
+      footnote in `NOTICE`.
 - [ ] CUDA / HIP runtime violation routing through `process_events`
       (or document loudly that `--timing-report` is Metal-only at
       release time).
@@ -97,23 +101,20 @@ These items are tracked in [`docs/plans/post-phase-0-roadmap.md`](plans/post-pha
 - [ ] End-to-end test exercising `--timing-report` against a corpus
       design.
 
-## License posture (open)
+## License posture
 
-Top-level project intent is Apache-2.0 (see `LICENSE`). Vendored deps:
+Project license is Apache-2.0 (`LICENSE`). Vendored-dep posture is
+enumerated in `NOTICE`. Summary:
 
-- `vendor/eda-infra-rs/` — Apache-2.0 at the workspace root. **Open
-  question:** `sverilogparse` sub-crate declares `AGPL-3.0-only` in
-  its `Cargo.toml`. If retained, that linkage would propagate AGPL to
-  the Jacquard binary, contradicting `docs/project-scope.md`'s
-  permissive-only rule. Awaiting upstream clarification at
-  [gzz2000/eda-infra-rs#2](https://github.com/gzz2000/eda-infra-rs/issues/2).
-  Fallback: replace with `OpenTimer/Parser-Verilog` or bind
-  [slang](https://sv-lang.com/namespaceslang_1_1parsing.html) via FFI.
+- `vendor/eda-infra-rs/` — Apache-2.0 (workspace). The `sverilogparse`
+  sub-crate's stale `AGPL-3.0-only` declaration in `Cargo.toml` is a
+  typo per upstream maintainer
+  ([gzz2000/eda-infra-rs#2](https://github.com/gzz2000/eda-infra-rs/issues/2#issuecomment-4363789319));
+  governed by the workspace LICENSE. Submodule pin will be bumped when
+  upstream pushes the correction.
 - `vendor/sky130_fd_sc_hd/` — Apache-2.0.
 - `vendor/opensta/` — GPL-3 (subprocess only per ADR 0001 + ADR 0006
   § Amendment; never linked, never bundled).
-
-The `NOTICE` file lands once the sverilogparse question resolves.
 
 ## Cross-references
 

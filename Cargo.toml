@@ -7,9 +7,7 @@ repository = "https://github.com/ChipFlow/Jacquard"
 homepage = "https://chipflow.io"
 keywords = ["rtl", "simulation", "gpu", "timing", "eda"]
 categories = ["simulation", "hardware-support"]
-# license: pending upstream clarification on vendor/eda-infra-rs/sverilogparse
-# (https://github.com/gzz2000/eda-infra-rs/issues/2). Top-level intent is
-# Apache-2.0 (see LICENSE); will fill in once the workspace is settled.
+license = "Apache-2.0"
 links = "jacquard"
 
 [dependencies]

@@ -1,0 +1,67 @@
+Jacquard
+Copyright 2024-2026 ChipFlow
+
+Jacquard is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Jacquard builds on the GEM research project from NVIDIA Research (Zizheng
+Guo, Yanqing Zhang, Runsheng Wang, Yibo Lin, and Haoxing Ren), released
+under Apache-2.0. See https://github.com/NVlabs/GEM.
+
+==============================================================================
+Vendored dependencies
+==============================================================================
+
+The following submodules are vendored under `vendor/`. Each ships under
+its own license; nothing under a copyleft license is linked into the
+shipped Jacquard binary (see `docs/project-scope.md`).
+
+------------------------------------------------------------------------------
+vendor/eda-infra-rs/                           Apache-2.0
+------------------------------------------------------------------------------
+
+Open-source Rust gate-level EDA infrastructure
+(https://github.com/gzz2000/eda-infra-rs). Workspace-level license is
+Apache-2.0 (vendor/eda-infra-rs/LICENSE).
+
+Per-crate license declarations as of 2026-05-02:
+
+  - clilog                 — Apache-2.0 (workspace)
+  - netlistdb              — Apache-2.0 (workspace)
+  - sverilogparse          — Apache-2.0 (workspace; see note below)
+  - ucc                    — Apache-2.0 (workspace)
+  - ulib                   — Apache-2.0 (workspace)
+  - ulib_zeroable_derive   — MIT OR Apache-2.0
+  - vcd-ng                 — MIT (Copyright 2015 Kevin Mehall)
+
+NOTE: at the current submodule pin, `sverilogparse/Cargo.toml` still
+declares `license = "AGPL-3.0-only"`. Per upstream maintainer
+clarification (https://github.com/gzz2000/eda-infra-rs/issues/2#issuecomment-4363789319)
+this is an unintentional declaration; the crate is governed by the
+workspace LICENSE (Apache-2.0). Tracked as a follow-up to bump the
+submodule pin once upstream pushes the fix; no Jacquard release ships
+sverilogparse linked under AGPL terms.
+
+------------------------------------------------------------------------------
+vendor/sky130_fd_sc_hd/                        Apache-2.0
+------------------------------------------------------------------------------
+
+SKY130 standard-cell library data files
+(https://github.com/google/skywater-pdk-libs-sky130_fd_sc_hd).
+
+------------------------------------------------------------------------------
+vendor/opensta/                                GPL-3.0
+------------------------------------------------------------------------------
+
+OpenSTA static-timing analyzer (https://github.com/parallaxsw/OpenSTA).
+GPL-3.0-licensed; **never linked, never bundled** into the shipped
+Jacquard binary. Subprocess invocation only, per ADR 0001 and
+ADR 0006 § Amendment. The vendored submodule is used by the
+opensta-to-ir preprocessing tool and the timing-correctness CI corpus.
+
+==============================================================================
+Runtime dependencies discovered at build time
+==============================================================================
+
+Crate dependencies declared in Cargo.toml (and their transitive deps)
+each carry their own licenses. Run `cargo license` or
+`cargo about generate` against a tagged release for the full enumeration.
