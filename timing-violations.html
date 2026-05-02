@@ -211,6 +211,7 @@ ls my_build/6_final.sdf
 <tr><td><code>--timing-clock-period &lt;ps&gt;</code></td><td><code>jacquard sim</code></td><td>Clock period in picoseconds (default: 1000)</td></tr>
 <tr><td><code>--timing-report-violations</code></td><td><code>jacquard sim</code></td><td>Report all violations, not just summary</td></tr>
 <tr><td><code>--timing-report &lt;path.json&gt;</code></td><td><code>jacquard sim</code></td><td>Write a structured end-of-run JSON report (schema in <code>src/timing_report.rs</code>, ADR 0008).</td></tr>
+<tr><td><code>--timing-summary</code></td><td><code>jacquard sim</code></td><td>Print a human-readable text summary at end of run. Independent of <code>--timing-report</code>; both can be combined.</td></tr>
 <tr><td><code>--liberty &lt;path&gt;</code></td><td><code>jacquard sim</code></td><td>Liberty library for timing data (optional, falls back to AIGPDK defaults)</td></tr>
 </tbody></table>
 </div>
@@ -253,6 +254,33 @@ grep compatibility. Words packing more than 4 DFFs truncate with a
 <p>At the end of simulation, GEM prints totals:</p>
 <pre><code>Simulation complete: 1000 cycles, 5 setup violations, 0 hold violations
 </code></pre>
+<h3 id="text-summary---timing-summary"><a class="header" href="#text-summary---timing-summary">Text Summary (<code>--timing-summary</code>)</a></h3>
+<p>A one-screen human summary printed to stdout at end of run. Reuses the
+same data the JSON report builds (so <code>--timing-report</code> and
+<code>--timing-summary</code> cost the same; only the output channel differs).
+Sample output:</p>
+<pre><code>=== Jacquard Timing Summary ===
+Design:        my_cpu.gv
+Vectors:       boot.vcd (1000 cycles)
+Clock period:  1000 ps
+Timing source: my_cpu.jtir
+
+Violations:
+  Setup: 5
+  Hold:  2
+  Total: 7
+
+Worst slack:
+  Setup: -150ps  at top/cpu/regs[7][bit 22] [word=5]  (cycle 87)
+  Hold:   -40ps  at top/cpu/state[bit 3] [word=12]  (cycle 91)
+
+Top 2 by violation count (of 2 total words with violations):
+  top/cpu/regs[7][bit 22] [word=5] (5 violations): worst setup=-150ps hold=- arrival=950ps
+  top/cpu/state[bit 3] [word=12] (2 violations): worst setup=- hold=-40ps arrival=10ps
+</code></pre>
+<p>The format is for human inspection — explicitly <strong>not</strong> a stable
+parseable contract. Tools that need to script against the data should
+use <code>--timing-report</code> JSON.</p>
 <h3 id="structured-json-report---timing-report-pathjson"><a class="header" href="#structured-json-report---timing-report-pathjson">Structured JSON Report (<code>--timing-report &lt;path.json&gt;</code>)</a></h3>
 <p>For CI integration and downstream tooling, pass <code>--timing-report &lt;path&gt;</code>
 to get an end-of-run JSON document. The schema is versioned (ADR 0008's
