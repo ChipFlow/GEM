@@ -70,8 +70,15 @@ jobs:
       - name: Install OpenSTA build deps
         run: |
           sudo apt-get update
+          # libfl-dev is what carries FlexLexer.h on Ubuntu (the `flex`
+          # package only ships /usr/bin/flex). Without it, OpenSTA's
+          # find_package(FLEX) leaves FLEX_INCLUDE_DIR=NOTFOUND and
+          # cmake configure fails. Upstream's Dockerfile.ubuntu22.04
+          # gets away without it because it's running on a different
+          # base image; on actions/ubuntu-latest the explicit dep is
+          # required.
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake bison flex swig \
+            build-essential cmake bison flex libfl-dev swig \
             tcl-dev tcl-tclreadline libeigen3-dev libfmt-dev wget
 
       # CUDD isn't apt-packaged. Upstream OpenSTA's Dockerfile builds
