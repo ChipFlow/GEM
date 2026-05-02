@@ -92,24 +92,13 @@ Plus VCD-verified peripheral driving: GPIO `set "10101010"` → 0xAA on
 
 ## Open follow-ups (priority-ordered)
 
-### 1. WS4 reframing — still open (small, decision)
+### 1. WS4 reframing — resolved 2026-05-02
 
-Same as post-ws3-handoff. Original WS4 ("Diff harness comparing
-WS2's IR vs WS3's IR") doesn't apply post-WS3-deletion. Plausible
-reframings:
+Decision: **Option A — golden-IR regression corpus for `opensta-to-ir`.** Cheap, mechanical, builds on the corpus + manifest infra already specced under `tests/timing_ir/{corpus,stress}/` and on the existing `timing-ir-diff` binary. § WS4 in `phase-0-ir-and-oracle.md` was updated to match.
 
-- `opensta-to-ir` regression corpus: `(Liberty, Verilog, SDF) →
-  expected-IR-fingerprint` triples. Catches regressions on OpenSTA
-  upgrades or dump-format parser changes.
-- End-to-end behavioural diff: cxxrtl vs jacquard cosim on a corpus,
-  comparing event traces. The mcu_soc work this session is a
-  one-design instance; generalizing is large but high-value now that
-  we have an event match working.
-- Cross-tool diff: `opensta-to-ir` vs a future native Rust SDF→IR
-  converter. Phase 3 work, not Phase 0.
+Option B (end-to-end cxxrtl/CVC vs Jacquard cosim event-trace diff) was deferred to `timing-validation.md`'s scope as a Phase 1+ extension; the mcu_soc/sky130 90/90 reference match is the current one-design instance, generalisable later. Option C (cross-tool diff vs a native Rust SDF→IR parser) is Phase 3 per ADR 0006 — the parser doesn't exist yet.
 
-Worth deciding before starting WS4. Update
-`docs/plans/phase-0-ir-and-oracle.md` § WS4 to match.
+What remains under WS4 (scheduled as Phase-0-carryover in `post-phase-0-roadmap.md` WS-P1.2): populate `tests/timing_ir/corpus/` with `inv_chain_pnr` and an mcu_soc subset, write a CI job that runs `opensta-to-ir` + `timing-ir-diff` per entry, and a `regenerate-goldens` helper for the OpenSTA-pin-bump workflow.
 
 ### 2. WS5 — parser-success assertions (small)
 

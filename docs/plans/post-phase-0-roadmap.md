@@ -50,7 +50,7 @@ Total ~2 weeks.
 Tail of Phase 0 work that didn't gate WS3 completion. Listed for completeness.
 
 - WS2.4: multi-corner CLI flag in `opensta-to-ir`.
-- WS4 reframing: decide whether `timing-ir-diff` continues as authored or is folded into a wider regression harness.
+- WS4: corpus population + CI runner. Reframing decision was made 2026-05-02 (golden-IR regression corpus per `phase-0-ir-and-oracle.md` § WS4); what remains is populating `tests/timing_ir/corpus/` with `inv_chain_pnr` and an mcu_soc subset, plus a CI job that runs `opensta-to-ir` + `timing-ir-diff` per entry.
 - WS5: parser-success assertions on the Liberty parser path.
 - Peripheral wiring for I²C/SPI when a fuller mcu_soc fixture lands.
 

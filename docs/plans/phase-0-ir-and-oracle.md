@@ -79,16 +79,23 @@ Deliverables:
 
 ### WS4 — Diff harness and CI integration
 
+> **Reframed 2026-05-02.** The original WS4 was framed as "WS2 vs WS3 IR diff" (OpenSTA-derived against Jacquard's hand-rolled SDF parser-derived). WS3 deleted that parser; the diff has only one side now. Three reframings were considered (see `post-cosim-models-handoff.md` § 1) — Option A (golden-IR regression corpus for `opensta-to-ir`) was chosen as the Phase 0 closure; Option B (end-to-end behavioural diff cxxrtl/CVC vs Jacquard cosim event traces) belongs in `timing-validation.md` as a Phase 1+ extension; Option C (cross-tool diff vs a future native Rust SDF→IR parser) is Phase 3 work per ADR 0006.
+
 Deliverables:
 
-- A test binary `timing-ir-diff` that reads two IR files and produces a structured diff (missing arcs, mismatched delays past tolerance, mismatched provenance).
-- OpenSTA vendored as a git submodule at `vendor/opensta/`. Not built from Jacquard's build; present for CI version pinning and stress-corpus access (see ADR 0005).
-- A primary regression corpus at `tests/timing_ir/corpus/` — Jacquard-specific designs with expected golden IR (initial entry: `inv_chain_pnr`; MCU SoC subset follows). Run on every CI execution.
-- A stress corpus at `tests/timing_ir/stress/` — a manifest file listing paths into `vendor/opensta/<test-tree-subdir>/`. Run nightly or pre-release. Exit criterion: no crashes, no hangs, no malformed IR; numerical agreement with OpenSTA not required.
+- A test binary `timing-ir-diff` that reads two IR files and produces a structured diff (missing arcs, mismatched delays past tolerance, mismatched provenance). **Already shipped** in `crates/timing-ir/src/bin/timing-ir-diff.rs`.
+- OpenSTA vendored as a git submodule at `vendor/opensta/`. Not built from Jacquard's build at runtime; present for CI version pinning, the `opensta-to-ir` integration tests, and stress-corpus access (see ADR 0005). **Already shipped.**
+- A primary regression corpus at `tests/timing_ir/corpus/` — Jacquard-specific designs with checked-in `expected.jtir` (and a `expected.json` sidecar via `flatc --json` for human-readable diffs). Initial entries: `inv_chain_pnr`, `mcu_soc` subset. Run on every CI execution. **Corpus directory + per-entry layout + manifest schema specced in `tests/timing_ir/corpus/README.md`; entries pending.**
+- A stress corpus at `tests/timing_ir/stress/` — a manifest file listing paths into `vendor/opensta/<test-tree-subdir>/`. Run nightly or pre-release. Exit criterion: no crashes, no hangs, no malformed IR; numerical agreement with OpenSTA not required. **Manifest format specced in `tests/timing_ir/stress/README.md`; entries pending.**
 - A CI job that:
-  1. Runs WS2 (OpenSTA) and WS3 (Jacquard) on each corpus design.
-  2. Runs `timing-ir-diff` on the two outputs.
-  3. Fails if diffs exceed declared tolerance or if either converter exits non-zero.
+  1. For each design in the primary corpus, runs `opensta-to-ir` on its inputs.
+  2. Runs `timing-ir-diff` between the freshly produced IR and the checked-in `expected.jtir`.
+  3. Fails if diffs exceed the per-design tolerance from `manifest.toml` or if `opensta-to-ir` exits non-zero.
+- A `regenerate-goldens` helper (a thin wrapper script or `cargo xtask`) that re-runs `opensta-to-ir` over every corpus entry and overwrites the goldens. Required for the OpenSTA-pin-bump workflow: bump submodule, run regen, review the diff, commit golden + submodule together.
+
+What this catches: OpenSTA upstream regressions, dump-format / Tcl-driver regressions, accidental schema-breaking changes in `timing_ir.fbs`, builder bugs in `opensta-to-ir/src/builder.rs`, and the diff machinery itself (via a mutation test that perturbs an IR and asserts `timing-ir-diff` flags the perturbation).
+
+What this **doesn't** catch: behavioural divergence between Jacquard and a reference simulator. That's `timing-validation.md`'s job (CVC/iverilog event-trace comparison) — the mcu_soc/sky130 90/90 reference match is the current one-design instance, generalisable in Phase 1+.
 
 ### WS5 — Parser-success assertions
 
@@ -107,13 +114,13 @@ Tests live in `tests/timing_ir/`.
 1. **Schema round-trip** (WS1). Construct a small IR in Rust, serialize to binary, deserialize, assert equality. Same for JSON.
 2. **OpenSTA converter unit tests** (WS2). For a hand-crafted tiny design, invoke the converter, assert IR contents match expectation.
 3. **Jacquard converter unit tests** (WS3). Same, on the same tiny design, through Jacquard's parser.
-4. **Corpus diff** (WS4). For each design in the corpus, WS2 vs WS3 outputs diff clean within tolerance.
+4. **Corpus diff** (WS4). For each design in the primary corpus, freshly produced `opensta-to-ir` output diffs clean against the checked-in golden `expected.jtir` within per-design tolerance.
 5. **Parser-success assertion tests** (WS5). Feed empty Liberty, empty SDF, and non-empty-but-no-match Liberty. Each should fail loud with a clear diagnostic, not proceed silently.
 
 Tolerances:
 
-- Delay values: ±5% or ±5 ps absolute floor, whichever is larger. Rationale: matches the existing `timing-validation.md` convention, at least until phase 2 refines tolerances with OpenTimer data.
-- Missing arcs: zero tolerance. Every arc in OpenSTA's output must appear in Jacquard's or be explained by an annotation-type that Jacquard deliberately does not consume.
+- Delay values: ±5% or ±5 ps absolute floor, whichever is larger. Rationale: matches the existing `timing-validation.md` convention; per-design overrides allowed via `manifest.toml`.
+- Missing arcs: zero tolerance. Every arc in the golden IR must appear in the freshly produced one (and vice versa).
 
 ## Exit criteria
 
