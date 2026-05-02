@@ -277,10 +277,12 @@ pub fn load_sdf_via_opensta_to_ir(
             .unwrap_or("top")
     });
 
-    let liberty_paths = vec![liberty_path.to_path_buf()];
+    let corners = vec![opensta_to_ir::opensta::CornerSpec::single_default(vec![
+        liberty_path.to_path_buf(),
+    ])];
     let verilog_paths = vec![verilog_path.to_path_buf()];
     let invocation = opensta_to_ir::opensta::Invocation {
-        liberty: &liberty_paths,
+        corners: &corners,
         verilog: &verilog_paths,
         sdf: Some(sdf_path),
         spef: None,

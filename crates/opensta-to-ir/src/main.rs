@@ -25,9 +25,14 @@ const EXIT_ARG_INVALID: u8 = 4;
                   docs/plans/ws2-opensta-to-ir.md."
 )]
 struct Args {
-    /// Liberty cell library files. Repeatable.
-    #[arg(long = "liberty", value_name = "PATH")]
-    liberty: Vec<PathBuf>,
+    /// Liberty cell library files. Repeatable. To split Liberty files
+    /// across multiple PVT corners, prefix each with `<corner_name>=`
+    /// — e.g. `--liberty typ=typ.lib --liberty slow=ss.lib`. Bare
+    /// paths (no `=`) attach to a default corner named "default".
+    /// All Liberty files sharing a corner name are loaded into that
+    /// corner.
+    #[arg(long = "liberty", value_name = "[NAME=]PATH")]
+    liberty: Vec<String>,
 
     /// Verilog netlists. Repeatable.
     #[arg(long = "verilog", value_name = "PATH")]
@@ -48,10 +53,6 @@ struct Args {
     /// Top-level module name.
     #[arg(long = "top", value_name = "NAME")]
     top: Option<String>,
-
-    /// Corner names (repeatable). Defaults to a single "default" corner.
-    #[arg(long = "corner", value_name = "NAME")]
-    corner: Vec<String>,
 
     /// IR output path (.jtir).
     #[arg(long = "output", value_name = "PATH")]
@@ -136,13 +137,43 @@ fn run(args: &Args) -> Result<u8, (u8, String)> {
     Ok(EXIT_OK)
 }
 
-fn run_opensta(args: &Args) -> Result<opensta_to_ir::dump::DumpDocument, (u8, String)> {
-    if args.liberty.is_empty() {
-        return Err((
-            EXIT_ARG_INVALID,
-            "at least one --liberty is required".into(),
-        ));
+fn parse_corner_specs(
+    liberty_args: &[String],
+) -> Result<Vec<opensta_to_ir::opensta::CornerSpec>, String> {
+    use indexmap::IndexMap;
+    if liberty_args.is_empty() {
+        return Err("at least one --liberty is required".into());
     }
+    let mut by_name: IndexMap<String, Vec<PathBuf>> = IndexMap::new();
+    for arg in liberty_args {
+        let (name, path) = match arg.split_once('=') {
+            Some((name, path)) => (name.to_string(), path),
+            None => ("default".to_string(), arg.as_str()),
+        };
+        if name.is_empty() {
+            return Err(format!(
+                "--liberty {arg}: corner name before '=' must be non-empty"
+            ));
+        }
+        by_name.entry(name).or_default().push(PathBuf::from(path));
+    }
+    Ok(by_name
+        .into_iter()
+        .map(
+            |(name, liberty)| opensta_to_ir::opensta::CornerSpec {
+                name,
+                process: "tt".into(),
+                voltage: 1.0,
+                temperature: 25.0,
+                liberty,
+            },
+        )
+        .collect())
+}
+
+fn run_opensta(args: &Args) -> Result<opensta_to_ir::dump::DumpDocument, (u8, String)> {
+    let corners =
+        parse_corner_specs(&args.liberty).map_err(|e| (EXIT_ARG_INVALID, e))?;
     if args.verilog.is_empty() {
         return Err((
             EXIT_ARG_INVALID,
@@ -166,7 +197,7 @@ fn run_opensta(args: &Args) -> Result<opensta_to_ir::dump::DumpDocument, (u8, St
     }
 
     let invocation = opensta_to_ir::opensta::Invocation {
-        liberty: &args.liberty,
+        corners: &corners,
         verilog: &args.verilog,
         sdf: args.sdf.as_deref(),
         spef: args.spef.as_deref(),

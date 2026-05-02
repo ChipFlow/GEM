@@ -203,9 +203,39 @@ pub fn locate_and_check(explicit: Option<&Path>) -> Result<LocatedOpensta, Locat
 /// the binary is self-contained.
 const TCL_DRIVER: &str = include_str!("../tcl/dump_timing.tcl");
 
+/// One PVT corner the producer should define inside OpenSTA. Each
+/// corner gets its own `read_liberty -corner <name>` calls, its own
+/// CORNER record in the dump, and contributes one TimingValue entry
+/// per timing record (keyed by `corner_index = position in this
+/// slice`).
+#[derive(Debug, Clone)]
+pub struct CornerSpec {
+    pub name: String,
+    pub process: String,
+    pub voltage: f64,
+    pub temperature: f64,
+    pub liberty: Vec<PathBuf>,
+}
+
+impl CornerSpec {
+    /// Build a single-corner spec from a list of Liberty files. Used
+    /// by the `--liberty` backward-compat path in `main.rs` and by the
+    /// internal subprocess in `src/sim/setup.rs`. Process / voltage /
+    /// temperature default to `tt / 1.0V / 25C`.
+    pub fn single_default(liberty: Vec<PathBuf>) -> Self {
+        Self {
+            name: "default".to_string(),
+            process: "tt".to_string(),
+            voltage: 1.0,
+            temperature: 25.0,
+            liberty,
+        }
+    }
+}
+
 /// Inputs to a single OpenSTA invocation.
 pub struct Invocation<'a> {
-    pub liberty: &'a [PathBuf],
+    pub corners: &'a [CornerSpec],
     pub verilog: &'a [PathBuf],
     pub sdf: Option<&'a Path>,
     pub spef: Option<&'a Path>,
@@ -327,7 +357,30 @@ pub fn run(
     let dump_path = dir.path().join("dump.osd");
     std::fs::write(&script_path, TCL_DRIVER).map_err(InvokeError::Spawn)?;
 
-    let liberty_arg = paths_to_lines(inv.liberty);
+    if inv.corners.is_empty() {
+        return Err(InvokeError::Spawn(std::io::Error::other(
+            "opensta-to-ir: at least one corner is required",
+        )));
+    }
+    // Encode corners as TAB-separated rows, one per line. Tcl side
+    // splits on \n then \t. Order: name, process, voltage, temperature,
+    // liberty_path1, liberty_path2, ...
+    let corners_arg = inv
+        .corners
+        .iter()
+        .map(|c| {
+            let mut row = format!(
+                "{}\t{}\t{}\t{}",
+                c.name, c.process, c.voltage, c.temperature
+            );
+            for p in &c.liberty {
+                row.push('\t');
+                row.push_str(&p.display().to_string());
+            }
+            row
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let verilog_arg = paths_to_lines(inv.verilog);
 
     let mut cmd = Command::new(binary);
@@ -336,7 +389,7 @@ pub fn run(
         .arg("-exit")
         .arg(&script_path);
     cmd.env("JACQUARD_DUMP_PATH", &dump_path);
-    cmd.env("JACQUARD_LIBERTY_FILES", liberty_arg);
+    cmd.env("JACQUARD_CORNERS", corners_arg);
     cmd.env("JACQUARD_VERILOG_FILES", verilog_arg);
     cmd.env("JACQUARD_TOP", inv.top);
     cmd.env("JACQUARD_GENERATOR_VERSION", inv.generator_version);
