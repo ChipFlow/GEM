@@ -431,6 +431,34 @@ cargo run -r --features cuda --bin jacquard -- sim path/to/gatelevel.gv path/to/
 <p>Use slash separators (<code>/</code>) for hierarchical paths, not dots. See <a href="troubleshooting-vcd.html">troubleshooting-vcd.md</a> for details.</p>
 <p>The simulated output ports value will be stored in <code>output.vcd</code>.</p>
 <p><strong>Caveat</strong>: The actual GPU simulation runtime will also be outputted. You might see a long time before GPU enters due to reading and parsing <code>input.vcd</code>. You are recommended to develop your own pipeline to feed the input waveform into Jacquard's GPU kernels.</p>
+<h2 id="timing-aware-simulation"><a class="header" href="#timing-aware-simulation">Timing-Aware Simulation</a></h2>
+<p>Jacquard supports two ways to feed timing data into the simulator:</p>
+<ol>
+<li><strong><code>--timing-ir &lt;path.jtir&gt;</code></strong> — pre-converted Jacquard timing IR. This is the canonical path and requires no external tools at run time. Generate the IR ahead of time with the standalone <code>opensta-to-ir</code> tool (see <code>crates/opensta-to-ir/</code>).</li>
+<li><strong><code>--sdf &lt;path.sdf&gt; --liberty &lt;path.lib&gt;</code></strong> — raw SDF, converted to IR on the fly. This subprocesses <a href="https://github.com/parallaxsw/OpenSTA">OpenSTA</a>, which must be installed on the user's machine.</li>
+</ol>
+<h3 id="opensta-dependency"><a class="header" href="#opensta-dependency">OpenSTA dependency</a></h3>
+<p>When using <code>--sdf</code>, Jacquard locates OpenSTA in this order:</p>
+<ol>
+<li><code>JACQUARD_OPENSTA_BIN</code> environment variable.</li>
+<li><code>&lt;repo-root&gt;/scripts/build-opensta.sh --print-binary</code> (the canonical install path during development; the script builds the version vendored at <code>vendor/opensta/</code>).</li>
+<li><code>sta</code> on <code>PATH</code>.</li>
+</ol>
+<p>Jacquard requires OpenSTA <strong>3.1.0 or newer</strong>, matching the commit pinned at <code>vendor/opensta/</code>. The pinned version is the only one with end-to-end test coverage; newer OpenSTA versions are accepted with a warning, older versions are a hard error.</p>
+<p>The simplest way to get a known-good OpenSTA is to build the vendored copy from the Jacquard repo:</p>
+<pre><code class="language-sh">git submodule update --init --recursive
+./scripts/build-opensta.sh
+</code></pre>
+<p>Then either set <code>JACQUARD_OPENSTA_BIN</code> to the path printed by <code>./scripts/build-opensta.sh --print-binary</code>, or just let Jacquard find it automatically — the build script's output is searched by default.</p>
+<h3 id="error-messages"><a class="header" href="#error-messages">Error messages</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Symptom</th><th>Meaning</th><th>Fix</th></tr></thead><tbody>
+<tr><td><code>--sdf requires OpenSTA: OpenSTA binary not found.</code></td><td>OpenSTA isn't installed or isn't on PATH.</td><td>Run <code>./scripts/build-opensta.sh</code>, set <code>JACQUARD_OPENSTA_BIN</code>, or install OpenSTA system-wide.</td></tr>
+<tr><td><code>OpenSTA at &lt;path&gt; is v2.4.0; Jacquard requires v3.1.0 or newer.</code></td><td>Installed OpenSTA is too old.</td><td>Rebuild from <code>vendor/opensta/</code> (which is pinned at 3.1.0) or upgrade your system OpenSTA.</td></tr>
+<tr><td><code>Detected OpenSTA v3.2.0, newer than the latest tested version v3.1.0.</code> (warning)</td><td>OpenSTA version is newer than what Jacquard's test corpus has been validated against. Simulation proceeds.</td><td>Report any timing discrepancies as bugs; we'll bump the tested-version range when CI catches up.</td></tr>
+<tr><td><code>--sdf requires --liberty &lt;PATH&gt;.</code></td><td>OpenSTA needs the Liberty library to link the design.</td><td>Pass <code>--liberty &lt;PATH&gt;</code> alongside <code>--sdf</code>.</td></tr>
+</tbody></table>
+</div>
+<p>For licensing context (Jacquard is permissively-licensed, OpenSTA is GPL-3, and Jacquard's runtime subprocess invocation is permitted but bundling is not), see <a href="adr/0006-sdf-preprocessing-model.html"><code>adr/0006-sdf-preprocessing-model.md</code></a>.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="why-jacquard--positioning-and-output-interface"><a class="header" href="#why-jacquard--positioning-and-output-interface">Why Jacquard — positioning and output interface</a></h1>
 <p><strong>Status:</strong> Honest assessment of where Jacquard fits in an EDA flow alongside dedicated STA tools (OpenTimer/OpenSTA) and event-driven simulators (Verilator, iverilog, CVC). Includes a survey of what timing information Jacquard exposes today and what would let users actually consume it.</p>
 <p>This is not a marketing document. The goal is for a contributor or user to read it and decide accurately whether Jacquard helps them — and, if it does, how to extract the answer they need.</p>
