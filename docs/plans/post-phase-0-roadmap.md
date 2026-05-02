@@ -63,9 +63,9 @@ These are not gated by any new ADR; pick them up as bandwidth allows.
 - ✅ `--timing-report` JSON shipping; sample fixture at `tests/timing_ir/sample_reports/two_violations.json` (commit `58a7a04`).
 - ✅ `--timing-summary` available (commit `44e70a0`).
 - ✅ Worst-slack ranking included in both report and summary (top-10 from violations; non-violating-run tracking still requires GPU near-miss instrumentation, separate workstream).
-- ⏳ `why-jacquard.md` updated to remove "what's missing" qualifications for items 1–4. **Open follow-up.**
+- ✅ `why-jacquard.md` updated; old "Output interface" section now describes the shipped surface, "Still on the wishlist" carries the deferred items.
 
-Phase 1 main workstream functionally complete pending the doc update.
+**Phase 1 closed.** Phase 2 entry now blocked only on ADR 0007 acceptance.
 
 ## Phase 2 — Timing model fidelity
 

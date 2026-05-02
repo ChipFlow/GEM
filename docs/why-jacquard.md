@@ -76,92 +76,88 @@ Jacquard's timing fidelity gap with CVC is closeable. The work in [`timing-model
 
 ## Output interface — what Jacquard exposes today
 
-Jacquard's unique value depends on getting the timing information *out* of a run in a form users can act on. Today the surface area is functional but limited.
+Jacquard's unique value depends on getting the timing information *out* of a run in a form users can act on. Phase 1 of the post-Phase-0 roadmap (ADR 0008) closed the gap between "data Jacquard has" and "answers users want" for setup/hold violations.
+
+### Symbolic stderr violation messages
+The kernel writes setup/hold violation events to a per-block event buffer (`csrc/kernel_v1.metal:554-576`). The host drains the buffer each cycle (`src/event_buffer.rs`), resolves the state-word index to a hierarchical DFF site name via `WordSymbolMap`, and emits:
+
+```
+[cycle 12847] SETUP VIOLATION at top/cpu/regs[7][bit 22] [word=412]: arrival=2150ps setup=80ps slack=-30ps
+[cycle 12847] HOLD VIOLATION at top/cpu/state[bit 3] [word=412]: arrival=12ps hold=20ps slack=-8ps
+```
+
+The bare `[word=N]` suffix is preserved for grep/tooling compatibility; up to four DFFs per word are named, with `+N more` truncation beyond that.
+
+### Structured timing report (`--timing-report <path.json>`)
+Schema-versioned JSON document written at end of run. Contents:
+- Per-cycle violation list (cycle, kind, word, site, arrival, constraint, slack).
+- Per-word aggregate: violation counts and worst slack (sorted by total violations).
+- Top-N worst-slack ranking per kind (setup, hold).
+- Run metadata: design, vector source, timing source, clock period, cycles run, Jacquard version.
+- Aggregate stats: setup/hold totals, dropped events.
+
+Machine-readable, CI-friendly. Sample at `tests/timing_ir/sample_reports/two_violations.json`; full schema in `src/timing_report.rs` (`SCHEMA_VERSION = "1.0.0"`). Stability contract per ADR 0008: additive-only extensions, breaking changes bump the major.
+
+### Text summary (`--timing-summary`)
+One-screen human summary on stdout. Same data as the JSON report, different channel; either or both flags can be set:
+
+```
+=== Jacquard Timing Summary ===
+Design:        my_cpu.gv
+Vectors:       boot.vcd (1000 cycles)
+Clock period:  1000 ps
+Timing source: my_cpu.jtir
+
+Violations:
+  Setup: 5
+  Hold:  2
+  Total: 7
+
+Worst slack:
+  Setup: -150ps  at top/cpu/regs[7][bit 22] [word=5]  (cycle 87)
+  Hold:   -40ps  at top/cpu/state[bit 3] [word=12]  (cycle 91)
+
+Top 2 by violation count (of 2 total words with violations):
+  top/cpu/regs[7][bit 22] [word=5] (5 violations): worst setup=-150ps hold=- arrival=950ps
+  top/cpu/state[bit 3] [word=12] (2 violations): worst setup=- hold=-40ps arrival=10ps
+```
+
+Format is for human inspection — explicitly **not** a stable parseable contract. Tools should use `--timing-report` JSON.
 
 ### Timed VCD (`--timing-vcd`)
 Annotates the output VCD with per-signal arrival times. Largest, most detailed output; suitable for waveform-level inspection.
 
 - **What you get:** per-signal arrival ps at each writeout cycle.
-- **What's missing:** the VCD doesn't carry slack relative to the clock edge — you compute it yourself.
+- **Caveat:** the VCD doesn't carry slack relative to the clock edge — you compute it yourself.
 - **Cost:** doubles VCD size. Not appropriate for long workloads on large designs.
 
-### Stderr violation messages
-The kernel writes setup/hold violation events to a per-block event buffer (`csrc/kernel_v1.metal:554-576`). The host drains the buffer each cycle (`src/event_buffer.rs:305-338`) and emits human-readable warnings:
-
-```
-[cycle 12847] SETUP VIOLATION: word 412 arrival=2150ps setup=80ps slack=-30ps
-[cycle 12847] HOLD VIOLATION: word 412 arrival=12ps hold=20ps slack=-8ps
-```
-
-- **What you get:** every violation, in real time, tagged with cycle and state-word.
-- **What's missing:** the message identifies a *state-word index*, not a signal name. Mapping back to "which DFF, which path" is currently a manual exercise. Volume on a violating design can be enormous (one warning per word per cycle per type).
-
 ### `SimStats` aggregate counts (in-process)
-`SimStats { setup_violations, hold_violations, ... }` is available to in-process consumers (`src/event_buffer.rs:218-231`). Only counts; no detail.
+`SimStats { setup_violations, hold_violations, ... }` is available to in-process consumers (`src/event_buffer.rs`). Only counts; full detail flows through the structured report path.
 
-### The event buffer (raw)
-Each violation event in the buffer carries `cycle`, `data[0]` = state-word, `data[1]` = signed slack ps, `data[2]` = arrival ps, `data[3]` = constraint ps (`src/event_buffer.rs:305-338`). This is the most structured violation data Jacquard produces, but it's only consumed by the logging path — there's no public dump-to-file mechanism today.
+## Still on the wishlist
 
-### What's missing — the gap between "data Jacquard has" and "answers users want"
+Items captured in ADR 0008's "Optional / later outputs" plus a few caveats on what shipped. Demand-driven; not scheduled.
 
-| User question | Today | What's needed |
-|---|---|---|
-| "Did my workload trip any violations?" | `SimStats` counts | Already available in-process; needs CLI exposure |
-| "Which DFFs nearly missed timing?" | Not extractable without parsing stderr | Per-DFF worst-slack ranking written at end-of-run |
-| "Show me arrival distribution per signal" | Reconstructable from --timing-vcd via post-processing | Native histogram output, opt-in per signal pattern |
-| "Which DFF was that violation on?" | State-word index + manual lookup | Symbolic mapping in violation reports (signal name, hierarchical path) |
-| "What path caused the worst arrival?" | Not available | Path-back-trace from worst-arrival DFF through max-of-fanin chain to source |
-| "What activity factor did each signal see?" | Not available | Per-signal transition-count alongside arrival data |
-| "Did my stimulus exercise these critical paths from STA?" | Not available | Coverage report: cross-reference STA's critical-path list vs. observed arrival peaks |
-| "Run this in CI and fail if any violation" | Possible via stderr grep | Structured exit-code semantics + machine-readable summary |
+### Closest-to-violation tracking when no violation occurred
+The shipped `worst_slack` ranking is populated only from observed violation events. Surfacing "where am I close to the edge" on a run that *passed* timing requires GPU-side near-miss instrumentation (emit slack events whenever |slack| falls below a configurable threshold). Useful for proactive signoff regression. Separate workstream — needs a kernel change.
 
-## Proposed output interface
+### Arrival histogram (`--arrival-histogram <pattern>`)
+Per-signal arrival histogram dump for matched signal patterns, as JSON or CSV. Foundation for activity-based power analysis and "is my actual timing margin healthy" reporting.
 
-What follows is design intent, not implementation. It belongs in [`timing-model-extensions.md`](timing-model-extensions.md) once scoped, but is captured here as the "what's the user-visible win" framing.
+### STA cross-reference (`--sta-cross-reference <opensta-paths.txt>`)
+Read OpenSTA's worst-N critical-path report and produce coverage output: of those paths, which were exercised by the stimulus, at what observed arrival. Closes the loop between vector-driven and static analysis.
 
-### Structured timing report (`--timing-report path.json`)
-Write a JSON document at end-of-run with:
+### Path back-trace from worst-arrival DFF
+Given a flagged DFF, walk the max-of-fanin chain backward to the source AIG pin / primary input, emitting per-edge contributions. Most expensive item on the wishlist; only useful once symbolic names are in place (which they now are).
 
-- Per-DFF worst arrival, worst slack, violation count over the run (top-N or all).
-- Per-cycle violation list (cycle, signal name, hierarchical path, arrival, constraint, slack).
-- Aggregate stats: total violations, distribution buckets, peak arrival per clock domain.
-- Activity per signal: transition count, average/max arrival, idle cycles.
-- Run metadata: clock period, SDF/IR file, design hash, vector source.
+### CUDA / HIP / cosim runtime violation routing
+The current Metal sim path routes runtime violations through `process_events` (which is what feeds the resolver, structured report, and text summary). The CUDA, HIP, and cosim paths don't yet share that plumbing — they detect violations on the GPU but don't drain through `process_events`. Independent plumbing follow-up; doesn't affect the Metal user experience.
 
-Machine-readable, CI-friendly, post-processable. The single most useful addition for actually using Jacquard's timing output.
+### Per-signal activity / transition counts
+Listed in ADR 0008 as part of the JSON report's wishlist. Not in v1.0.0 of the schema; will be added (additively) when the GPU kernel emits transition events.
 
-### Timing summary (`--timing-summary`)
-Fast text summary, no VCD. Designed for scripts and dashboards:
-
-```
-Jacquard timing summary
-  design: nvdla_post_pnr     vectors: 100000 cycles
-  clock:  1.2 ns             SDF corner: typ
-  violations:  setup=0  hold=0
-  worst slack:  setup=+213ps (DFF nvdla/conv/regs[42])
-                hold=+18ps   (DFF nvdla/dma/state[3])
-  peak arrival per writeout: 987ps  (clock budget 1200ps, 17.7% margin)
-```
-
-### Symbolic violation messages
-Replace state-word indices with hierarchical signal names (`nvdla/conv/regs[42]`) in stderr violation messages. Pure UX improvement; the mapping data already exists in the netlistdb.
-
-### Arrival histogram output (`--arrival-histogram`)
-Optional per-signal arrival histogram dump. For a flagged signal pattern, write a CSV/JSON of arrival distribution across the run. Foundation for activity-based power analysis and "is my actual timing margin healthy" reporting.
-
-### Optional: STA cross-reference (`--sta-cross-reference path.txt`)
-Read OpenSTA's critical-path report and produce a coverage-style output: which of STA's worst-N paths were actually exercised by the stimulus, and what was their observed worst arrival. Closes the loop between vector-driven and static analysis.
-
-## Priority
-
-For a user trying to actually extract Jacquard's unique value today, the gap is biggest at:
-
-1. **Symbolic violation messages.** Cheapest fix, biggest UX win. Without this, every violation requires manual investigation.
-2. **`--timing-report` JSON.** Required for CI integration and for any downstream tooling.
-3. **`--timing-summary` text.** Required for human inspection of long runs.
-4. **Per-DFF worst-slack ranking.** Required for "where am I close to the edge" analysis.
-
-The other items (histograms, path-back-trace, STA cross-reference) are higher-value but lower-priority — they make Jacquard a *better* timing-analysis tool, while the first four make Jacquard *useful at all* for non-expert users running it in a real flow.
+### "Corner" and "margin percentage" in the text summary
+ADR 0008's summary template includes both. Corner is missing because the metadata struct doesn't carry it through from the IR yet; margin percentage is trivially derivable from `slack_ps / clock_period_ps` and was omitted to keep the v1 summary terse.
 
 ---
 
